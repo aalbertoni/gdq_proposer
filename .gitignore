@@ -7,6 +7,7 @@ __pycache__/
 # Ambiente
 .env
 .env.local
+.env.dev
 .env.prod
 
 # IDE
@@ -26,6 +27,8 @@ mock_data/*.csv
 
 # AWS test data (gerado por scripts/generate_aws_test_data.py)
 aws_test_data/data/
+aws_test_data/.aws_setup_state.json
+aws_test_data/.tmp_*
 !aws_test_data/.gitkeep
 
 # Outputs
