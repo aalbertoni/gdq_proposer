@@ -150,6 +150,54 @@ class QueryBuilder:
             base_filter=base_filter,
         )
 
+    def build_categorical_distribution(
+        self,
+        schema: str,
+        table: str,
+        col: str,
+        date_expression: str,
+        lookback_value: int,
+        base_filter: str = "",
+    ) -> str:
+        """Query para distribuicao de valores categoricos por periodo."""
+        template = self.env.get_template("categorical_distribution.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            col=col,
+            date_expression=date_expression,
+            date_lookback_expr=adapt_function(
+                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
+            ),
+            base_filter=base_filter,
+        )
+
+    def build_categorical_domain(
+        self,
+        schema: str,
+        table: str,
+        col: str,
+        date_expression: str,
+        lookback_value: int,
+        base_filter: str = "",
+        limit: int = 0,
+    ) -> str:
+        """Query para valores distintos e frequencia global."""
+        template = self.env.get_template("categorical_domain.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            col=col,
+            date_expression=date_expression,
+            date_lookback_expr=adapt_function(
+                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
+            ),
+            base_filter=base_filter,
+            limit=limit,
+        )
+
     def build_numeric_history(
         self,
         schema: str,

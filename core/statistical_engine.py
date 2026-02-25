@@ -152,6 +152,7 @@ def compute_frequency_band(
     pct_series: list[float],
     n_periods: int,
     margin_pct: float = 0.05,
+    n_sigma: float = 2.0,
 ) -> dict:
     """Calcula banda para frequência percentual de categoria.
 
@@ -159,10 +160,11 @@ def compute_frequency_band(
         pct_series: Série de proporções (0-100) da categoria.
         n_periods: Número de períodos recentes.
         margin_pct: Margem absoluta em pontos percentuais.
+        n_sigma: Multiplicador de desvio padrão.
 
     Returns:
-        {"lower": float, "upper": float, "center": float,
-         "margin_pct": float, "n_periods_used": int}
+        {"lower": float, "upper": float, "center": float, "std": float,
+         "n_sigma": float, "margin_pct": float, "n_periods_used": int}
     """
     subset = _last_n(pct_series, n_periods)
     if len(subset) < 3:
@@ -172,13 +174,15 @@ def compute_frequency_band(
 
     center = _mean(subset)
     std = _stddev(subset)
-    lower = max(center - 2 * std - margin_pct, -0.01)
-    upper = min(center + 2 * std + margin_pct, 100.01)
+    lower = max(center - n_sigma * std - margin_pct, -0.01)
+    upper = min(center + n_sigma * std + margin_pct, 100.01)
 
     return {
         "lower": lower,
         "upper": upper,
         "center": center,
+        "std": std,
+        "n_sigma": n_sigma,
         "margin_pct": margin_pct,
         "n_periods_used": len(subset),
     }

@@ -124,6 +124,118 @@ class AnalysisService:
 
         return result.sort_values("period").reset_index(drop=True)
 
+    def get_categorical_distribution(
+        self,
+        config: DatasetConfig,
+        column: str,
+    ) -> pd.DataFrame:
+        """Distribuicao de valores categoricos por periodo.
+
+        Args:
+            config: Configuracao da tabela alvo.
+            column: Coluna categorica.
+
+        Returns:
+            DataFrame [period, category_value, value_count, value_pct]
+        """
+        validate_identifier(config.schema)
+        validate_identifier(config.table)
+        validate_identifier(column)
+
+        date_expr = self.builder.resolve_date_expression(
+            config.effective_temporal_axis, config.date_expression or "",
+        )
+
+        base_filter = ""
+        if config.base_filter_sql:
+            base_filter = sanitize_filter(config.base_filter_sql)
+
+        sql = self.builder.build_categorical_distribution(
+            schema=config.schema,
+            table=config.table,
+            col=column,
+            date_expression=date_expr,
+            lookback_value=config.lookback_value,
+            base_filter=base_filter,
+        )
+
+        df = self.client.execute_df(
+            sql,
+            query_name="categorical_distribution",
+            dataset=f"{config.schema}.{config.table}",
+            column=column,
+        )
+
+        if df.empty:
+            return pd.DataFrame(columns=[
+                "period", "category_value", "value_count", "value_pct",
+            ])
+
+        result = pd.DataFrame()
+        result["period"] = df["processing_period"].astype(str)
+        result["category_value"] = df["category_value"].astype(str)
+        result["value_count"] = pd.to_numeric(df["value_count"], errors="coerce").fillna(0).astype(int)
+        result["value_pct"] = pd.to_numeric(df["value_pct"], errors="coerce").fillna(0.0)
+
+        return result.sort_values(["period", "value_pct"], ascending=[True, False]).reset_index(drop=True)
+
+    def get_categorical_domain(
+        self,
+        config: DatasetConfig,
+        column: str,
+        limit: int = 0,
+    ) -> pd.DataFrame:
+        """Valores distintos e frequencia global.
+
+        Args:
+            config: Configuracao da tabela alvo.
+            column: Coluna categorica.
+            limit: Max categorias (0 = all).
+
+        Returns:
+            DataFrame [category_value, value_count, value_pct]
+        """
+        validate_identifier(config.schema)
+        validate_identifier(config.table)
+        validate_identifier(column)
+
+        date_expr = self.builder.resolve_date_expression(
+            config.effective_temporal_axis, config.date_expression or "",
+        )
+
+        base_filter = ""
+        if config.base_filter_sql:
+            base_filter = sanitize_filter(config.base_filter_sql)
+
+        sql = self.builder.build_categorical_domain(
+            schema=config.schema,
+            table=config.table,
+            col=column,
+            date_expression=date_expr,
+            lookback_value=config.lookback_value,
+            base_filter=base_filter,
+            limit=limit,
+        )
+
+        df = self.client.execute_df(
+            sql,
+            query_name="categorical_domain",
+            dataset=f"{config.schema}.{config.table}",
+            column=column,
+        )
+
+        if df.empty:
+            return pd.DataFrame(columns=[
+                "category_value", "value_count", "value_pct",
+            ])
+
+        result = pd.DataFrame()
+        result["category_value"] = df["category_value"].astype(str)
+        result["value_count"] = pd.to_numeric(df["value_count"], errors="coerce").fillna(0).astype(int)
+        result["value_pct"] = pd.to_numeric(df["value_pct"], errors="coerce").fillna(0.0)
+
+        return result.sort_values("value_count", ascending=False).reset_index(drop=True)
+
     def _normalize_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """Normaliza o DataFrame: renomeia colunas e expande percentis."""
         result = pd.DataFrame()

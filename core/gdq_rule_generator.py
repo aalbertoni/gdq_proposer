@@ -51,6 +51,10 @@ class GDQRuleGenerator:
             return self._generate_distinct_count(proposal, overrides)
         elif proposal.rule_type == RuleType.IS_PRIMARY_KEY:
             return self._generate_primary_key(proposal)
+        elif proposal.rule_type == RuleType.CATEGORY_FREQUENCY_STATIC:
+            return self._generate_category_frequency_static(proposal, overrides)
+        elif proposal.rule_type == RuleType.DISTINCT_COUNT_RANGE:
+            return self._generate_distinct_count_range(proposal, overrides)
         else:
             raise ValueError(f"Tipo de regra não suportado: {proposal.rule_type}")
 
@@ -118,3 +122,43 @@ class GDQRuleGenerator:
     def _generate_primary_key(self, proposal: RuleProposal) -> str:
         cols = proposal.suggested_values or []
         return f"IsPrimaryKey {' '.join(cols)}"
+
+    def _generate_category_frequency_static(
+        self,
+        proposal: RuleProposal,
+        overrides: UserOverride | None,
+    ) -> str:
+        """CustomSql static frequency for a single category value."""
+        col = proposal.target_column
+        value = proposal.category_value or ""
+        lower = proposal.suggested_lower or 0.0
+        upper = proposal.suggested_upper or 100.0
+        if overrides:
+            if overrides.custom_lower is not None:
+                lower = overrides.custom_lower
+            if overrides.custom_upper is not None:
+                upper = overrides.custom_upper
+        sql_inner = (
+            f"select cast(sum(case when {col} = '{value}' "
+            f"then 1 else 0 end) as double) * 100.0 / count(*) from primary"
+        )
+        return f'CustomSql "{sql_inner}" between {lower:.2f} and {upper:.2f}'
+
+    def _generate_distinct_count_range(
+        self,
+        proposal: RuleProposal,
+        overrides: UserOverride | None,
+    ) -> str:
+        """(DistinctValuesCount COL >= X) AND (DistinctValuesCount COL <= Y)."""
+        col = proposal.target_column
+        lower = int(proposal.suggested_lower) if proposal.suggested_lower else 0
+        upper = int(proposal.suggested_upper) if proposal.suggested_upper else 0
+        if overrides:
+            if overrides.custom_lower is not None:
+                lower = int(overrides.custom_lower)
+            if overrides.custom_upper is not None:
+                upper = int(overrides.custom_upper)
+        return (
+            f"(DistinctValuesCount {col} >= {lower}) AND "
+            f"(DistinctValuesCount {col} <= {upper})"
+        )

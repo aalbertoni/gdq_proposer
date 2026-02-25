@@ -39,6 +39,7 @@ class RuleProposal:
     suggested_lower: Optional[float] = None
     suggested_upper: Optional[float] = None
     suggested_values: Optional[list[str]] = None  # para allowed_values
+    category_value: Optional[str] = None  # para regras de frequencia: qual valor monitorar
 
     # Baseline
     baseline_method: Optional[BaselineMethod] = None

@@ -115,8 +115,9 @@ st.markdown(
     "- Adicionar regras aprovadas ao carrinho"
 )
 st.markdown(
-    "A pagina tem 3 abas: **Numericas** (Mean, StdDev, Completeness por coluna), "
-    "**Tabela** (RowCount) e **Resumo** (lista das regras ja adicionadas ao carrinho)."
+    "A pagina tem 4 abas: **Numericas** (Mean, StdDev, Completeness por coluna), "
+    "**Categoricas** (AllowedValues, DistinctValuesCount, Frequencia por coluna), "
+    "**Tabela** (RowCount) e **Resumo** (regras no carrinho)."
 )
 
 st.subheader("Etapa 4 — Review & Export")
@@ -251,6 +252,20 @@ with st.expander("Tipos de regra"):
         "nao-nulos esta acima de um limite. Util para colunas que devem "
         "estar sempre preenchidas."
     )
+    st.markdown("**Regras de coluna categorica:**")
+    st.markdown(
+        "- **AllowedValues (valores permitidos):** verifica se todos os valores "
+        "da coluna pertencem a uma lista fixa. Qualquer valor fora da lista "
+        "reprova a regra. Util para colunas com dominio estavel (ex: UF, status).\n"
+        "- **DistinctValuesCount (distintos):** verifica se o numero de valores "
+        "distintos esta correto (exato ou dentro de um range). Detecta se valores "
+        "sumiram ou apareceram.\n"
+        "- **Frequencia de categoria (CustomSql):** verifica se a proporcao de "
+        "cada valor esta dentro de uma faixa esperada. Detecta mudancas na "
+        "distribuicao dos dados (ex: um valor que era 30% passou a ser 10%).\n"
+        "- **IsPrimaryKey (chave primaria):** verifica se uma combinacao de "
+        "colunas nao tem duplicatas. Util para validar integridade referencial."
+    )
     st.markdown("**Regras de tabela:**")
     st.markdown(
         "- **RowCount (volume):** verifica se a quantidade de linhas por periodo "
@@ -274,6 +289,40 @@ with st.expander("Classificacao de colunas (profiling)"):
         "como chaves.\n\n"
         "Voce pode alterar a classificacao manualmente no passo 6 do Setup "
         "se a inferencia automatica nao estiver correta."
+    )
+
+with st.expander("Cardinalidade de colunas categoricas"):
+    st.markdown(
+        "A **cardinalidade** indica quantos valores distintos uma coluna categorica "
+        "possui. A ferramenta classifica automaticamente em tres niveis:\n\n"
+        "- **Baixa (low):** ate ~50 valores distintos. Dominio fixo e pequeno. "
+        "Exemplos: UF, status, tipo de operacao. "
+        "Gera regras de: valores permitidos, contagem de distintos (exata), "
+        "frequencia por categoria, completude.\n"
+        "- **Media (mid):** entre ~50 e ~500 valores distintos. "
+        "Exemplos: cidade, codigo de produto. "
+        "Gera regras de: contagem de distintos (range), frequencia top-K, completude.\n"
+        "- **Alta (high):** mais de ~500 valores distintos. "
+        "Exemplos: CPF, ID de transacao. "
+        "Gera apenas: completude. Regras de dominio nao sao recomendadas."
+    )
+
+with st.expander("Regras estaticas vs. dinamicas"):
+    st.markdown(
+        "As regras da ferramenta se dividem em dois tipos:\n\n"
+        "**Regras dinamicas** (numericas e volume):\n"
+        "- Mean, StdDev, RowCount\n"
+        "- Usam funcoes `avg(last(N))` e `std(last(N))` na sintaxe GDQ\n"
+        "- O GDQ **recalcula automaticamente** os limites a cada execucao\n"
+        "- Nao precisam de manutencao manual\n\n"
+        "**Regras estaticas** (categoricas):\n"
+        "- AllowedValues, DistinctValuesCount, CategoryFrequency, IsPrimaryKey\n"
+        "- Os valores/limites sao **fixos** na sintaxe GDQ\n"
+        "- Calculados pela ferramenta com base no historico, mas uma vez "
+        "exportados, nao mudam sozinhos\n"
+        "- Podem precisar de atualizacao se o dominio mudar\n\n"
+        "**Dica:** para categoricas, revise as regras periodicamente ou use "
+        "a ferramenta novamente quando houver mudancas no dominio."
     )
 
 

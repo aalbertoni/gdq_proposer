@@ -12,6 +12,7 @@ import math
 from core.models.rule_proposal import BacktestSummary
 from core.statistical_engine import (
     compute_dynamic_band,
+    compute_frequency_band,
     compute_margin_band,
     detect_drift,
     _filter_valid,
@@ -170,6 +171,165 @@ def _compute_stability(
                 center_change = abs(band_test["center"] - band_base["center"]) / abs(band_base["center"])
             else:
                 center_change = abs(band_test["center"] - band_base["center"])
+            width_base = band_base["upper"] - band_base["lower"]
+            width_test = band_test["upper"] - band_test["lower"]
+            if width_base > 0:
+                width_change = abs(width_test - width_base) / width_base
+            else:
+                width_change = 0.0
+            variations.append(max(center_change, width_change))
+        except ValueError:
+            variations.append(0.5)
+
+    max_variation = max(variations) if variations else 0.0
+
+    if max_variation < 0.05:
+        return 1.0
+    elif max_variation < 0.10:
+        return 0.8
+    elif max_variation < 0.20:
+        return 0.6
+    elif max_variation < 0.30:
+        return 0.4
+    else:
+        return 0.2
+
+
+def backtest_frequency_band(
+    pct_series: list[float],
+    dates: list[str],
+    n_periods: int,
+    margin_pct: float = 5.0,
+    n_sigma: float = 2.0,
+    min_history: int = 7,
+) -> BacktestSummary:
+    """Executa backtest de banda de frequencia no historico.
+
+    Para cada ponto i, usa pct_series[max(0,i-n_periods):i] como baseline.
+    Calcula banda via compute_frequency_band e verifica se o ponto esta dentro.
+
+    Args:
+        pct_series: Serie de porcentagens (0-100) da categoria por periodo.
+        dates: Datas correspondentes (mesmo length).
+        n_periods: Janela de lookback para baseline.
+        margin_pct: Margem absoluta em pontos percentuais.
+        n_sigma: Multiplicador de desvio padrao.
+        min_history: Minimo de pontos na baseline para avaliar.
+
+    Returns:
+        BacktestSummary com metricas de cobertura e estabilidade.
+    """
+    n = len(pct_series)
+    if n == 0:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    valid_values = _filter_valid(pct_series)
+    if len(valid_values) < min_history:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    periods_pass = 0
+    periods_fail = 0
+    outlier_periods = []
+    false_positive_proxy = 0
+    last_band = None
+
+    # Global stats for FP proxy
+    global_mean = sum(valid_values) / len(valid_values)
+    global_std = math.sqrt(
+        sum((v - global_mean) ** 2 for v in valid_values) / max(len(valid_values) - 1, 1)
+    )
+
+    for i in range(n):
+        current = pct_series[i]
+        if current is None or (isinstance(current, float) and math.isnan(current)):
+            continue
+
+        baseline = _filter_valid(pct_series[max(0, i - n_periods):i])
+        if len(baseline) < min_history:
+            continue
+
+        try:
+            band = compute_frequency_band(baseline, n_periods, margin_pct, n_sigma)
+        except ValueError:
+            continue
+
+        last_band = band
+
+        if band["lower"] <= current <= band["upper"]:
+            periods_pass += 1
+        else:
+            periods_fail += 1
+            if i < len(dates):
+                outlier_periods.append(dates[i])
+            if global_std > 0 and abs(current - global_mean) < 4 * global_std:
+                false_positive_proxy += 1
+
+    total_periods = periods_pass + periods_fail
+    coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+
+    band_width_ratio = 0.0
+    if last_band:
+        width = last_band["upper"] - last_band["lower"]
+        if last_band["center"] > 1.0:
+            band_width_ratio = width / last_band["center"]
+        else:
+            band_width_ratio = width / 100.0
+
+    stability_score = _compute_frequency_stability(
+        pct_series, n_periods, margin_pct, n_sigma, min_history,
+    )
+
+    drift_result = detect_drift(pct_series)
+
+    return BacktestSummary(
+        total_periods=total_periods,
+        periods_pass=periods_pass,
+        periods_fail=periods_fail,
+        coverage_pct=coverage_pct,
+        false_positive_proxy=false_positive_proxy,
+        band_width_ratio=band_width_ratio,
+        stability_score=stability_score,
+        has_drift=drift_result["has_drift"],
+        outlier_periods=outlier_periods,
+    )
+
+
+def _compute_frequency_stability(
+    pct_series: list[float],
+    n_periods: int,
+    margin_pct: float,
+    n_sigma: float,
+    min_history: int,
+) -> float:
+    """Calcula score de estabilidade para banda de frequencia."""
+    valid = _filter_valid(pct_series)
+    if len(valid) < min_history + 4:
+        return 0.5
+
+    try:
+        band_base = compute_frequency_band(valid, n_periods, margin_pct, n_sigma)
+    except ValueError:
+        return 0.5
+
+    variations = []
+    for delta in [-2, 2]:
+        n_test = max(min_history, n_periods + delta)
+        try:
+            band_test = compute_frequency_band(valid, n_test, margin_pct, n_sigma)
+            if band_base["center"] > 1.0:
+                center_change = abs(band_test["center"] - band_base["center"]) / band_base["center"]
+            else:
+                center_change = abs(band_test["center"] - band_base["center"]) / 100.0
             width_base = band_base["upper"] - band_base["lower"]
             width_test = band_test["upper"] - band_test["lower"]
             if width_base > 0:

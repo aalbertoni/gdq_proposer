@@ -11,17 +11,23 @@ import uuid
 
 import pandas as pd
 
-from core.backtest import backtest_band
+from core.backtest import backtest_band, backtest_frequency_band
 from core.gdq_rule_generator import GDQRuleGenerator
 from core.models.baseline import BaselineStrategy
 from core.models.enums import (
     BaselineMethod,
     RuleType,
+    SemanticType,
 )
+from core.models.column_profile import ColumnProfile
 from core.models.rule_proposal import RuleProposal
 from core.models.rule_selection import UserOverride
 from core.rule_scoring import score_proposal
-from core.statistical_engine import compute_dynamic_band, compute_margin_band
+from core.statistical_engine import (
+    compute_dynamic_band,
+    compute_frequency_band,
+    compute_margin_band,
+)
 
 
 class ProposalService:
@@ -130,6 +136,178 @@ class ProposalService:
             return []
 
         return [proposal]
+
+    def propose_categorical_rules(
+        self,
+        distribution: pd.DataFrame,
+        domain: pd.DataFrame,
+        column: str,
+        table: str,
+        profile: ColumnProfile,
+        baseline: BaselineStrategy,
+    ) -> list[RuleProposal]:
+        """Gera propostas de regra para coluna categorica.
+
+        Args:
+            distribution: DataFrame [period, category_value, value_count, value_pct]
+            domain: DataFrame [category_value, value_count, value_pct]
+            column: Nome da coluna.
+            table: Nome da tabela.
+            profile: ColumnProfile com effective_type.
+            baseline: Estrategia de baseline.
+
+        Returns:
+            Lista de RuleProposal.
+        """
+        proposals = []
+        if domain.empty:
+            return proposals
+
+        effective = profile.effective_type
+        domain_values = domain["category_value"].tolist()
+        n_distinct = len(domain_values)
+
+        is_low = effective == SemanticType.CATEGORICAL_LOW_CARDINALITY
+        is_mid = effective == SemanticType.CATEGORICAL_MID_CARDINALITY
+
+        # --- AllowedValues (CAT_LOW only) ---
+        if is_low:
+            av_proposal = RuleProposal(
+                id=str(uuid.uuid4()),
+                target_column=column,
+                target_table=table,
+                rule_type=RuleType.ALLOWED_VALUES,
+                metric_name="allowed_values",
+                suggested_values=domain_values,
+            )
+            av_proposal.gdq_syntax_preview = self.generator.generate(av_proposal)
+            proposals.append(av_proposal)
+
+        # --- DistinctValuesCount ---
+        if is_low:
+            dc_proposal = RuleProposal(
+                id=str(uuid.uuid4()),
+                target_column=column,
+                target_table=table,
+                rule_type=RuleType.DISTINCT_COUNT_EXACT,
+                metric_name="distinct_count",
+                suggested_lower=float(n_distinct),
+            )
+            dc_proposal.gdq_syntax_preview = self.generator.generate(dc_proposal)
+            proposals.append(dc_proposal)
+        elif is_mid:
+            # Range: +/- 10% or at least +/- 2
+            margin = max(int(n_distinct * 0.10), 2)
+            dc_proposal = RuleProposal(
+                id=str(uuid.uuid4()),
+                target_column=column,
+                target_table=table,
+                rule_type=RuleType.DISTINCT_COUNT_RANGE,
+                metric_name="distinct_count_range",
+                suggested_lower=float(max(1, n_distinct - margin)),
+                suggested_upper=float(n_distinct + margin),
+            )
+            dc_proposal.gdq_syntax_preview = self.generator.generate(dc_proposal)
+            proposals.append(dc_proposal)
+
+        # --- Category Frequency Static (CAT_LOW: all, CAT_MID: top-K) ---
+        if (is_low or is_mid) and not distribution.empty:
+            values_to_monitor = domain_values if is_low else domain_values[:20]
+            for cat_value in values_to_monitor:
+                freq_proposal = self._build_frequency_proposal(
+                    distribution=distribution,
+                    column=column,
+                    table=table,
+                    cat_value=cat_value,
+                    baseline=baseline,
+                )
+                if freq_proposal:
+                    proposals.append(freq_proposal)
+
+        # --- Completeness ---
+        if profile.null_ratio <= 0.10:
+            completeness = 1.0 - profile.null_ratio
+            threshold = round(completeness, 2)
+            comp_proposal = RuleProposal(
+                id=str(uuid.uuid4()),
+                target_column=column,
+                target_table=table,
+                rule_type=RuleType.COMPLETENESS,
+                metric_name="completeness",
+                suggested_lower=threshold,
+            )
+            comp_proposal.gdq_syntax_preview = self.generator.generate(comp_proposal)
+            proposals.append(comp_proposal)
+
+        return proposals
+
+    def _build_frequency_proposal(
+        self,
+        distribution: pd.DataFrame,
+        column: str,
+        table: str,
+        cat_value: str,
+        baseline: BaselineStrategy,
+    ) -> RuleProposal | None:
+        """Constroi proposta de frequencia para um valor categorico."""
+        mask = distribution["category_value"] == cat_value
+        value_df = distribution[mask].sort_values("period")
+
+        if value_df.empty:
+            return None
+
+        pct_series = value_df["value_pct"].tolist()
+        dates = value_df["period"].tolist()
+
+        if len(pct_series) < 3:
+            return None
+
+        try:
+            band = compute_frequency_band(
+                pct_series,
+                baseline.n_periods,
+                margin_pct=baseline.margin_pct * 100,  # convert 0.10 -> 10pp
+                n_sigma=baseline.n_sigma,
+            )
+        except ValueError:
+            return None
+
+        proposal = RuleProposal(
+            id=str(uuid.uuid4()),
+            target_column=column,
+            target_table=table,
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            metric_name=f"cat_freq_{cat_value}",
+            category_value=cat_value,
+            suggested_lower=round(band["lower"], 2),
+            suggested_upper=round(band["upper"], 2),
+            baseline_method=baseline.method,
+            baseline_window=baseline.n_periods,
+            baseline_n_sigma=baseline.n_sigma,
+            baseline_margin_pct=baseline.margin_pct,
+            history_dates=dates,
+            history_values=pct_series,
+        )
+
+        # Backtest
+        proposal.backtest = backtest_frequency_band(
+            pct_series=pct_series,
+            dates=dates,
+            n_periods=baseline.n_periods,
+            margin_pct=baseline.margin_pct * 100,
+            n_sigma=baseline.n_sigma,
+            min_history=baseline.min_history_points,
+        )
+
+        # Score
+        score = score_proposal(proposal, pct_series)
+        proposal.confidence = score.confidence
+        proposal.warnings = score.warnings
+
+        # Syntax
+        proposal.gdq_syntax_preview = self.generator.generate(proposal)
+
+        return proposal
 
     def recalculate_proposal(
         self,

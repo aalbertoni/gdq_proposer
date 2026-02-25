@@ -32,6 +32,8 @@ def explain_rule(proposal: RuleProposal) -> str:
         return _explain_allowed_values(proposal)
     elif rt == RuleType.DISTINCT_COUNT_EXACT:
         return _explain_distinct_count(proposal)
+    elif rt == RuleType.DISTINCT_COUNT_RANGE:
+        return _explain_distinct_count_range(proposal)
     elif rt == RuleType.IS_PRIMARY_KEY:
         return _explain_primary_key(proposal)
     elif rt in (
@@ -166,8 +168,27 @@ def _explain_primary_key(p: RuleProposal) -> str:
     )
 
 
+def _explain_distinct_count_range(p: RuleProposal) -> str:
+    col = p.target_column
+    lower = int(p.suggested_lower) if p.suggested_lower else 0
+    upper = int(p.suggested_upper) if p.suggested_upper else 0
+    return (
+        f"Verifica se a coluna `{col}` tem entre **{lower}** e **{upper} valores distintos**. "
+        f"Permite variacao natural sem disparar alarme para cada novo valor."
+    )
+
+
 def _explain_category_frequency(p: RuleProposal) -> str:
     col = p.target_column
+    value = p.category_value
+    lower = p.suggested_lower or 0.0
+    upper = p.suggested_upper or 100.0
+    if value:
+        return (
+            f"Verifica se a **frequencia** do valor `{value}` na coluna `{col}` "
+            f"esta entre **{lower:.1f}%** e **{upper:.1f}%** das linhas. "
+            f"Se a proporcao cair fora dessa faixa, a regra falha."
+        )
     return (
         f"Verifica se a **frequencia relativa** dos valores da coluna `{col}` "
         f"esta dentro do esperado. Detecta mudancas na distribuicao "
@@ -209,6 +230,25 @@ def _explain_params(p: RuleProposal) -> str:
     elif rt == RuleType.DISTINCT_COUNT_EXACT:
         count = int(p.suggested_lower) if p.suggested_lower else 0
         return f"- **Contagem esperada:** {count} distintos"
+
+    elif rt == RuleType.DISTINCT_COUNT_RANGE:
+        lower = int(p.suggested_lower) if p.suggested_lower else 0
+        upper = int(p.suggested_upper) if p.suggested_upper else 0
+        return f"- **Faixa de distintos:** {lower} a {upper}"
+
+    elif rt in (
+        RuleType.CATEGORY_FREQUENCY_STATIC,
+        RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+        RuleType.CATEGORY_FREQUENCY_HYBRID,
+    ):
+        lower = p.suggested_lower or 0.0
+        upper = p.suggested_upper or 100.0
+        value_str = f" (`{p.category_value}`)" if p.category_value else ""
+        return f"- **Faixa{value_str}:** {lower:.1f}% a {upper:.1f}%"
+
+    elif rt == RuleType.IS_PRIMARY_KEY:
+        cols = p.suggested_values or []
+        return f"- **Colunas:** {', '.join(cols)}"
 
     return ""
 

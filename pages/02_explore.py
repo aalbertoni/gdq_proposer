@@ -1,14 +1,16 @@
 """
-Pagina 02 — Explore: Calibracao de regras numericas e de tabela.
+Pagina 02 — Explore: Calibracao de regras numericas, categoricas e de tabela.
 
 Tabs:
 - Numericas: para cada coluna numerica, grafico + bandas + backtest + carrinho
+- Categoricas: AllowedValues, DistinctValuesCount, CategoryFrequency, Completeness
 - Tabela: RowCount com mesmos controles de calibracao
+- Resumo: lista das regras adicionadas ao carrinho
 
 Cada regra tem controles de parametros independentes (inline).
 Graficos mostram bandas rolantes (media movel) em vez de bandas fixas.
 
-Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2 + B1).
+Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2 + B1 + B2).
 """
 
 import streamlit as st
@@ -16,7 +18,7 @@ import plotly.graph_objects as go
 
 from config import load_config, AthenaMode
 from core.models.baseline import BaselineStrategy
-from core.models.enums import BaselineMethod, ConfidenceLevel, SemanticType
+from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, SemanticType
 from core.models.rule_selection import RuleSelection
 from core.rule_explainer import explain_rule, explain_rule_detail
 from infra.athena_client import AthenaClient
@@ -329,7 +331,8 @@ with st.sidebar:
 
     n_sel = len(dataset_config.selected_columns) if dataset_config.selected_columns else 0
     n_num = len(numeric_profiles)
-    st.caption(f"{n_sel} colunas selecionadas ({n_num} numericas)")
+    n_cat = len(cat_profiles)
+    st.caption(f"{n_sel} colunas selecionadas ({n_num} num, {n_cat} cat)")
 
     if dataset_config.date_expression:
         st.caption(f"Data: `{dataset_config.date_expression}`")
@@ -401,11 +404,25 @@ def fetch_row_count_history(_config_dict):
     return analysis_svc.get_row_count_history(config)
 
 
+@st.cache_data(ttl=900, show_spinner="Consultando distribuicao categorica...")
+def fetch_categorical_distribution(_config_dict, column):
+    config = _build_config_from_dict(_config_dict)
+    return analysis_svc.get_categorical_distribution(config, column)
+
+
+@st.cache_data(ttl=900, show_spinner="Consultando dominio categorico...")
+def fetch_categorical_domain(_config_dict, column):
+    config = _build_config_from_dict(_config_dict)
+    return analysis_svc.get_categorical_domain(config, column)
+
+
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_numericas, tab_tabela, tab_resumo = st.tabs(["Numericas", "Tabela", "Resumo"])
+tab_numericas, tab_categoricas, tab_tabela, tab_resumo = st.tabs(
+    ["Numericas", "Categoricas", "Tabela", "Resumo"],
+)
 
 
 # ===========================================================================
@@ -562,6 +579,237 @@ with tab_numericas:
 
 
 # ===========================================================================
+# Tab: Categoricas
+# ===========================================================================
+
+with tab_categoricas:
+    if not cat_profiles:
+        st.info("Nenhuma coluna categorica selecionada. Volte ao **Setup** para selecionar colunas.")
+    else:
+        cat_col_names = [p.column_name for p in cat_profiles]
+        selected_cat_col = st.selectbox(
+            "Coluna categorica:",
+            cat_col_names,
+            key="explore_selected_cat_col",
+            help="Selecione a coluna para configurar regras categoricas. "
+                 "As regras disponiveis dependem da cardinalidade (low/mid/high).",
+        )
+
+        # Get profile for selected column
+        cat_profile = next(p for p in cat_profiles if p.column_name == selected_cat_col)
+        effective = cat_profile.effective_type
+
+        # Cardinality badge
+        card_labels = {
+            SemanticType.CATEGORICAL_LOW_CARDINALITY: (
+                ":green[Low cardinality]",
+                "Dominio fixo com poucos valores. Todas as regras categoricas estao disponiveis.",
+            ),
+            SemanticType.CATEGORICAL_MID_CARDINALITY: (
+                ":orange[Mid cardinality]",
+                "Muitos valores distintos. Monitoramento limitado aos top-K mais frequentes.",
+            ),
+            SemanticType.CATEGORICAL_HIGH_CARDINALITY: (
+                ":red[High cardinality]",
+                "Alta cardinalidade. Apenas completude e contagem de distintos.",
+            ),
+        }
+        badge, caption = card_labels.get(effective, ("", ""))
+        st.markdown(f"**Classificacao:** {badge} ({cat_profile.distinct_count} valores distintos)")
+        st.caption(caption)
+
+        with st.expander("O que e cardinalidade?", expanded=False):
+            st.markdown(
+                "A **cardinalidade** indica quantos valores distintos uma coluna tem:\n\n"
+                "- **Baixa (low):** ate ~50 valores (ex: UF, status). "
+                "Gera: valores permitidos, contagem de distintos, frequencia por valor, completude.\n"
+                "- **Media (mid):** ~50 a ~500 valores (ex: cidade, produto). "
+                "Gera: contagem de distintos (range), frequencia top-K, completude.\n"
+                "- **Alta (high):** mais de ~500 valores (ex: CPF, ID). "
+                "Gera apenas completude.\n\n"
+                "A classificacao e feita automaticamente no profiling (Setup, passo 5)."
+            )
+
+        st.divider()
+
+        # --- Fetch data ---
+        try:
+            cat_dist_df = fetch_categorical_distribution(config_dict, selected_cat_col)
+            cat_domain_df = fetch_categorical_domain(config_dict, selected_cat_col)
+        except Exception as e:
+            st.error(f"Erro ao consultar dados categoricos: {e}")
+            st.stop()
+
+        if cat_domain_df.empty:
+            st.warning(f"Nenhum dado encontrado para `{selected_cat_col}`.")
+        else:
+            is_low = effective == SemanticType.CATEGORICAL_LOW_CARDINALITY
+            is_mid = effective == SemanticType.CATEGORICAL_MID_CARDINALITY
+            is_high = effective == SemanticType.CATEGORICAL_HIGH_CARDINALITY
+
+            cat_margin_pct = st.slider(
+                "Margem (pp):", min_value=1, max_value=30, value=10,
+                key=f"cat_margin_{selected_cat_col}",
+                help="Margem em pontos percentuais sobre a frequencia media para "
+                     "definir a faixa aceitavel. Mais alto = regra mais tolerante.",
+            ) if (is_low or is_mid) else 10
+
+            cat_baseline = BaselineStrategy(
+                method=BaselineMethod.LAST_N_PERIODS,
+                n_periods=20,
+                n_sigma=2.0,
+                margin_pct=cat_margin_pct / 100.0,
+            )
+
+            cat_cache_key = (
+                f"cat_proposals_{selected_cat_col}_{cat_margin_pct}"
+            )
+            cat_proposals = _get_cached_proposals(
+                cat_cache_key,
+                lambda: proposal_svc.propose_categorical_rules(
+                    cat_dist_df, cat_domain_df, selected_cat_col,
+                    dataset_config.table, cat_profile, cat_baseline,
+                ),
+            )
+
+            if is_high:
+                st.warning(
+                    "Coluna com alta cardinalidade. "
+                    "Regras de valores permitidos e frequencia nao sao recomendadas."
+                )
+
+            # ---- Distribution chart (CAT_LOW / CAT_MID) ----
+            if (is_low or is_mid) and not cat_dist_df.empty:
+                domain_values = cat_domain_df["category_value"].tolist()
+                periods = sorted(cat_dist_df["period"].unique())
+
+                fig = go.Figure()
+                for val in domain_values[:20]:
+                    mask = cat_dist_df["category_value"] == val
+                    val_df = cat_dist_df[mask].sort_values("period")
+                    fig.add_trace(go.Bar(
+                        x=val_df["period"].tolist(),
+                        y=val_df["value_pct"].tolist(),
+                        name=str(val),
+                    ))
+
+                fig.update_layout(
+                    barmode="stack",
+                    height=350,
+                    margin=dict(l=50, r=20, t=30, b=30),
+                    xaxis_title="Periodo",
+                    yaxis_title="Frequencia (%)",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            # ---- AllowedValues (CAT_LOW) ----
+            av_proposals = [p for p in cat_proposals if p.rule_type == RuleType.ALLOWED_VALUES]
+            if av_proposals:
+                st.subheader("Valores Permitidos (AllowedValues)")
+                st.caption(
+                    "Verifica que todos os valores da coluna pertencem a lista abaixo. "
+                    "Qualquer valor novo faz a regra falhar."
+                )
+                _render_add_to_cart(
+                    av_proposals[0], "AllowedValues",
+                    f"av_{selected_cat_col}",
+                )
+                st.divider()
+
+            # ---- DistinctValuesCount ----
+            dc_proposals = [
+                p for p in cat_proposals
+                if p.rule_type in (RuleType.DISTINCT_COUNT_EXACT, RuleType.DISTINCT_COUNT_RANGE)
+            ]
+            if dc_proposals:
+                st.subheader("Contagem de Distintos (DistinctValuesCount)")
+                proposal = dc_proposals[0]
+                if proposal.rule_type == RuleType.DISTINCT_COUNT_EXACT:
+                    st.caption(
+                        f"Verifica que a coluna tem exatamente "
+                        f"{int(proposal.suggested_lower)} valores distintos."
+                    )
+                else:
+                    st.caption(
+                        f"Verifica que a coluna tem entre "
+                        f"{int(proposal.suggested_lower)} e {int(proposal.suggested_upper)} valores distintos."
+                    )
+                _render_add_to_cart(
+                    proposal, "DistinctValuesCount",
+                    f"dc_{selected_cat_col}",
+                )
+                st.divider()
+
+            # ---- Category Frequency Static ----
+            freq_proposals = [
+                p for p in cat_proposals
+                if p.rule_type == RuleType.CATEGORY_FREQUENCY_STATIC
+            ]
+            if freq_proposals:
+                st.subheader("Frequencia por Valor (CustomSql)")
+                st.caption(
+                    "Para cada valor, verifica que sua proporcao (%) esta dentro da faixa esperada. "
+                    "Detecta mudancas na distribuicao dos dados."
+                )
+
+                with st.expander("Como funciona a frequencia de categorias?", expanded=False):
+                    st.markdown(
+                        "Para cada valor da coluna, a ferramenta calcula a **frequencia relativa** "
+                        "(porcentagem de linhas com aquele valor) em cada periodo.\n\n"
+                        "Os limites sao calculados com base no historico e podem ser ajustados "
+                        "via slider de margem. Os valores sao em **percentual (0 a 100)**.\n\n"
+                        "**Nota:** estas regras usam valores fixos (estaticos). "
+                        "Na versao futura, sera possivel usar regras dinamicas."
+                    )
+
+                for fp in freq_proposals:
+                    cat_val = fp.category_value
+                    st.markdown(f"**Valor: `{cat_val}`** — faixa: {fp.suggested_lower:.1f}% a {fp.suggested_upper:.1f}%")
+
+                    _render_backtest_metrics(fp)
+                    _render_add_to_cart(
+                        fp, f"Freq({cat_val})",
+                        f"freq_{selected_cat_col}_{cat_val}",
+                    )
+
+                if len(freq_proposals) > 1:
+                    # Bulk add button
+                    existing_ids = {s.proposal_id for s in st.session_state["rule_cart"]}
+                    not_in_cart = [p for p in freq_proposals if p.id not in existing_ids]
+                    if not_in_cart and st.button(
+                        f"Adicionar todas {len(not_in_cart)} frequencias ao carrinho",
+                        key=f"freq_bulk_{selected_cat_col}",
+                    ):
+                        for fp in not_in_cart:
+                            from core.models.rule_selection import RuleSelection as RS
+                            st.session_state["rule_cart"].append(RS(
+                                proposal_id=fp.id,
+                                proposal=fp,
+                                final_gdq_syntax=fp.gdq_syntax_preview,
+                            ))
+                        st.rerun()
+
+                st.divider()
+
+            # ---- Completeness ----
+            comp_proposals = [p for p in cat_proposals if p.rule_type == RuleType.COMPLETENESS]
+            if comp_proposals:
+                with st.expander(f"Completeness {selected_cat_col}", expanded=False):
+                    st.caption(
+                        "Regra de completude: verifica que a porcentagem de valores nao-nulos "
+                        "esta acima de um limite."
+                    )
+                    proposal = comp_proposals[0]
+                    st.code(proposal.gdq_syntax_preview)
+                    _render_add_to_cart(
+                        proposal, "Completeness",
+                        f"cat_comp_{selected_cat_col}",
+                        show_syntax=False,
+                    )
+
+
+# ===========================================================================
 # Tab: Tabela (RowCount)
 # ===========================================================================
 
@@ -629,7 +877,7 @@ with tab_resumo:
     if not cart:
         st.info(
             "Nenhuma regra no carrinho ainda. "
-            "Use as abas **Numericas** e **Tabela** para calibrar e adicionar regras."
+            "Use as abas **Numericas**, **Categoricas** e **Tabela** para calibrar e adicionar regras."
         )
     else:
         for sel in cart:
