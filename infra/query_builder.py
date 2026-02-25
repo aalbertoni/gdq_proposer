@@ -89,6 +89,20 @@ class QueryBuilder:
             partition_col=partition_col,
         )
 
+    def _auto_date_expression(self, temporal_col: str, date_expression: str) -> str:
+        """Auto-generate a date expression for DuckDB when none is provided.
+
+        DuckDB cannot compare VARCHAR columns to DATE values directly.
+        When no date_expression is given, this wraps the column in
+        TRY_CAST(... AS DATE) for DuckDB to handle string date columns.
+        For Athena, Presto handles VARCHAR-to-DATE coercion implicitly.
+        """
+        if date_expression:
+            return date_expression
+        if self.dialect == SQLDialect.DUCKDB:
+            return f'TRY_CAST("{temporal_col}" AS DATE)'
+        return ""
+
     def build_column_sample(
         self,
         schema: str,
@@ -107,7 +121,7 @@ class QueryBuilder:
             ),
             col=col,
             temporal_col=temporal_col,
-            date_expression=date_expression,
+            date_expression=self._auto_date_expression(temporal_col, date_expression),
             date_lookback_expr=adapt_function(
                 "DATE_SUBTRACT_DAYS", self.dialect, n=sample_periods,
             ),
