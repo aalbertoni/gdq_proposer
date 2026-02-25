@@ -1,11 +1,12 @@
 """
-Integration test: Sprint A2 flow against real Athena.
+Integration test: Sprint A2 + B1 flow against real Athena.
 
 Tests the full pipeline:
 1. AnalysisService.get_numeric_history() against real Athena table
 2. ProposalService.propose_numeric_rules() with real data
-3. GDQ syntax generation and validation
-4. Export
+3. AnalysisService.get_row_count_history() + propose_table_rules()
+4. GDQ syntax generation and validation
+5. Export
 
 Run with: GDQ_ENV=dev python scripts/test_athena_integration.py
 """
@@ -127,6 +128,28 @@ def main():
         print(f"      syntax: {p.gdq_syntax_preview[:80]}...")
     print()
 
+    # --- Step 3b: RowCount proposals ---
+    print(f"[3b] Getting row count history...")
+    rc_history_df = analysis_svc.get_row_count_history(dataset_config)
+    print(f"     Rows returned: {len(rc_history_df)}")
+    if not rc_history_df.empty:
+        print(f"     Period range: {rc_history_df['period'].iloc[0]} to {rc_history_df['period'].iloc[-1]}")
+        print(f"     Row count range: {rc_history_df['row_count'].min():.0f} to {rc_history_df['row_count'].max():.0f}")
+
+    rc_proposals = proposal_svc.propose_table_rules(
+        rc_history_df, table, baseline,
+    )
+    print(f"     RowCount proposals: {len(rc_proposals)}")
+    for p in rc_proposals:
+        print(f"     - {p.rule_type.value}: confidence={p.confidence.value}")
+        if p.backtest:
+            print(f"       coverage={p.backtest.coverage_pct:.1f}%, "
+                  f"stability={p.backtest.stability_score:.2f}, "
+                  f"drift={p.backtest.has_drift}")
+        print(f"       syntax: {p.gdq_syntax_preview[:80]}...")
+    all_proposals = proposals + rc_proposals
+    print()
+
     # --- Step 4: Export ---
     export_svc = ExportService()
     selections = [
@@ -135,7 +158,7 @@ def main():
             proposal=p,
             final_gdq_syntax=p.gdq_syntax_preview,
         )
-        for p in proposals
+        for p in all_proposals
     ]
 
     result = export_svc.export(selections)
@@ -149,8 +172,8 @@ def main():
 
     print("=" * 60)
     print("INTEGRATION TEST PASSED")
-    print(f"Full pipeline: table validation -> numeric history -> "
-          f"{len(proposals)} proposals -> export")
+    print(f"Full pipeline: table validation -> numeric history -> row count -> "
+          f"{len(all_proposals)} proposals -> export")
     print("=" * 60)
 
 
