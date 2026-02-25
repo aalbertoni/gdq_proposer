@@ -45,7 +45,9 @@ class AnalysisService:
         validate_identifier(config.table)
         validate_identifier(column)
 
-        date_expr = config.date_expression or f'"{config.effective_temporal_axis}"'
+        date_expr = self.builder.resolve_date_expression(
+            config.effective_temporal_axis, config.date_expression or "",
+        )
 
         base_filter = ""
         if config.base_filter_sql:
@@ -91,7 +93,9 @@ class AnalysisService:
         validate_identifier(config.schema)
         validate_identifier(config.table)
 
-        date_expr = config.date_expression or f'"{config.effective_temporal_axis}"'
+        date_expr = self.builder.resolve_date_expression(
+            config.effective_temporal_axis, config.date_expression or "",
+        )
 
         base_filter = ""
         if config.base_filter_sql:
