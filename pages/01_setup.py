@@ -376,16 +376,6 @@ if needs_date_expression:
     if is_integer_temporal:
         _DATE_PATTERNS = [
             (
-                "Epoch segundos (ex: 1705276800)",
-                'CAST(FROM_UNIXTIME("{col}") AS DATE)',
-                'CAST(EPOCH_MS("{col}" * 1000) AS DATE)',
-            ),
-            (
-                "Epoch milissegundos (ex: 1705276800000)",
-                'CAST(FROM_UNIXTIME("{col}" / 1000) AS DATE)',
-                'CAST(EPOCH_MS("{col}") AS DATE)',
-            ),
-            (
                 "yyyyMMdd como inteiro (ex: 20240115)",
                 'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m%d\')',
                 'STRPTIME(CAST("{col}" AS VARCHAR), \'%Y%m%d\')::DATE',
@@ -394,6 +384,16 @@ if needs_date_expression:
                 "yyyyMM como inteiro (ex: 202401)",
                 'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m\')',
                 'STRPTIME(CAST("{col}" AS VARCHAR), \'%Y%m\')::DATE',
+            ),
+            (
+                "Epoch segundos (ex: 1705276800)",
+                'CAST(FROM_UNIXTIME("{col}") AS DATE)',
+                'CAST(EPOCH_MS("{col}" * 1000) AS DATE)',
+            ),
+            (
+                "Epoch milissegundos (ex: 1705276800000)",
+                'CAST(FROM_UNIXTIME("{col}" / 1000) AS DATE)',
+                'CAST(EPOCH_MS("{col}") AS DATE)',
             ),
             (
                 "Customizado (digitar manualmente)",
