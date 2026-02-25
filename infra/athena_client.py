@@ -65,6 +65,7 @@ class AthenaClient:
 
         if self.config.athena.aws_profile:
             import boto3
+            os.environ.setdefault("AWS_PROFILE", self.config.athena.aws_profile)
             session = boto3.Session(profile_name=self.config.athena.aws_profile)
             connect_kwargs["boto3_session"] = session
 

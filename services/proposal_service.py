@@ -1,0 +1,249 @@
+"""
+Camada D: Geração e recalibração de propostas de regras.
+
+Orquestra statistical_engine + backtest + rule_scoring + gdq_rule_generator
+para gerar propostas completas com evidência.
+
+Definido conforme docs/technical_spec_v1.md seção 4.4.
+"""
+
+import uuid
+
+import pandas as pd
+
+from core.backtest import backtest_band
+from core.gdq_rule_generator import GDQRuleGenerator
+from core.models.baseline import BaselineStrategy
+from core.models.enums import (
+    BaselineMethod,
+    RuleType,
+)
+from core.models.rule_proposal import RuleProposal
+from core.models.rule_selection import UserOverride
+from core.rule_scoring import score_proposal
+from core.statistical_engine import compute_dynamic_band, compute_margin_band
+
+
+class ProposalService:
+    """Geração e recalibração de propostas de regras numéricas."""
+
+    def __init__(self):
+        self.generator = GDQRuleGenerator()
+
+    def propose_numeric_rules(
+        self,
+        history: pd.DataFrame,
+        column: str,
+        table: str,
+        baseline: BaselineStrategy,
+    ) -> list[RuleProposal]:
+        """Gera propostas de regra para coluna numérica.
+
+        Args:
+            history: DataFrame do get_numeric_history (com colunas mean, stddev, etc.)
+            column: Nome da coluna.
+            table: Nome da tabela.
+            baseline: Estratégia de baseline.
+
+        Returns:
+            Lista de RuleProposal (Mean + StdDev + Completeness).
+        """
+        proposals = []
+
+        if history.empty:
+            return proposals
+
+        # --- Mean Dual Guard ---
+        mean_proposal = self._build_dual_guard_proposal(
+            series=history["mean"].tolist(),
+            dates=history["period"].tolist(),
+            column=column,
+            table=table,
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            metric_name="mean",
+            baseline=baseline,
+        )
+        if mean_proposal:
+            proposals.append(mean_proposal)
+
+        # --- StdDev Dual Guard ---
+        stddev_values = history["stddev"].tolist()
+        # Filtrar NaN de stddev (DuckDB retorna None para grupos com 1 row)
+        has_valid_stddev = any(
+            v is not None and not (isinstance(v, float) and v != v)
+            for v in stddev_values
+        )
+        if has_valid_stddev:
+            stddev_proposal = self._build_dual_guard_proposal(
+                series=stddev_values,
+                dates=history["period"].tolist(),
+                column=column,
+                table=table,
+                rule_type=RuleType.STDDEV_DUAL_GUARD,
+                metric_name="stddev",
+                baseline=baseline,
+            )
+            if stddev_proposal:
+                proposals.append(stddev_proposal)
+
+        # --- Completeness ---
+        completeness_proposal = self._build_completeness_proposal(
+            history=history,
+            column=column,
+            table=table,
+        )
+        if completeness_proposal:
+            proposals.append(completeness_proposal)
+
+        return proposals
+
+    def recalculate_proposal(
+        self,
+        proposal: RuleProposal,
+        new_baseline: BaselineStrategy,
+    ) -> RuleProposal:
+        """Recalcula uma proposta com novos parâmetros de baseline.
+
+        Usado quando o usuário ajusta sliders na UI.
+        """
+        values = proposal.history_values
+        dates = proposal.history_dates
+
+        if not values:
+            return proposal
+
+        # Recalcular banda
+        try:
+            sigma_band = compute_dynamic_band(
+                values, new_baseline.n_periods, new_baseline.n_sigma,
+            )
+            margin_band = compute_margin_band(
+                values, new_baseline.n_periods, new_baseline.margin_pct,
+            )
+        except ValueError:
+            return proposal
+
+        proposal.suggested_lower = min(sigma_band["lower"], margin_band["lower"])
+        proposal.suggested_upper = max(sigma_band["upper"], margin_band["upper"])
+        proposal.baseline_window = new_baseline.n_periods
+        proposal.baseline_n_sigma = new_baseline.n_sigma
+        proposal.baseline_method = new_baseline.method
+
+        # Recalcular backtest
+        proposal.backtest = backtest_band(
+            values=values,
+            dates=dates,
+            n_periods=new_baseline.n_periods,
+            n_sigma=new_baseline.n_sigma,
+            margin_pct=new_baseline.margin_pct,
+            min_history=new_baseline.min_history_points,
+        )
+
+        # Recalcular score
+        score = score_proposal(proposal, values)
+        proposal.confidence = score.confidence
+        proposal.warnings = score.warnings
+
+        # Regenerar sintaxe
+        overrides = UserOverride(
+            custom_n_periods=new_baseline.n_periods,
+            custom_n_sigma=new_baseline.n_sigma,
+        )
+        proposal.gdq_syntax_preview = self.generator.generate(proposal, overrides)
+
+        return proposal
+
+    def _build_dual_guard_proposal(
+        self,
+        series: list,
+        dates: list[str],
+        column: str,
+        table: str,
+        rule_type: RuleType,
+        metric_name: str,
+        baseline: BaselineStrategy,
+    ) -> RuleProposal | None:
+        """Constrói uma proposta dual guard completa com backtest e score."""
+        # Filtrar valores válidos (float, não NaN/None)
+        clean = []
+        for v in series:
+            if v is None:
+                clean.append(float("nan"))
+            elif isinstance(v, (int, float)):
+                clean.append(float(v))
+            else:
+                clean.append(float("nan"))
+
+        try:
+            sigma_band = compute_dynamic_band(
+                clean, baseline.n_periods, baseline.n_sigma,
+            )
+            margin_band = compute_margin_band(
+                clean, baseline.n_periods, baseline.margin_pct,
+            )
+        except ValueError:
+            return None
+
+        proposal = RuleProposal(
+            id=str(uuid.uuid4()),
+            target_column=column,
+            target_table=table,
+            rule_type=rule_type,
+            metric_name=metric_name,
+            suggested_lower=min(sigma_band["lower"], margin_band["lower"]),
+            suggested_upper=max(sigma_band["upper"], margin_band["upper"]),
+            baseline_method=baseline.method,
+            baseline_window=baseline.n_periods,
+            baseline_n_sigma=baseline.n_sigma,
+            history_dates=dates,
+            history_values=clean,
+        )
+
+        # Backtest
+        proposal.backtest = backtest_band(
+            values=clean,
+            dates=dates,
+            n_periods=baseline.n_periods,
+            n_sigma=baseline.n_sigma,
+            margin_pct=baseline.margin_pct,
+            min_history=baseline.min_history_points,
+        )
+
+        # Score
+        score = score_proposal(proposal, clean)
+        proposal.confidence = score.confidence
+        proposal.warnings = score.warnings
+
+        # Sintaxe GDQ
+        proposal.gdq_syntax_preview = self.generator.generate(proposal)
+
+        return proposal
+
+    def _build_completeness_proposal(
+        self,
+        history: pd.DataFrame,
+        column: str,
+        table: str,
+    ) -> RuleProposal | None:
+        """Constrói proposta de Completeness baseada no histórico."""
+        total = history["total_count"].sum()
+        non_null = history["non_null_count"].sum()
+        if total == 0:
+            return None
+
+        completeness = non_null / total
+        # Só sugerir se completeness >= 0.90
+        if completeness < 0.90:
+            return None
+
+        threshold = round(completeness, 2)
+        proposal = RuleProposal(
+            id=str(uuid.uuid4()),
+            target_column=column,
+            target_table=table,
+            rule_type=RuleType.COMPLETENESS,
+            metric_name="completeness",
+            suggested_lower=threshold,
+        )
+        proposal.gdq_syntax_preview = self.generator.generate(proposal)
+        return proposal

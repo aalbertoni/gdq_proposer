@@ -1,0 +1,144 @@
+"""Testes para services/analysis_service.py.
+
+Usa DuckDB (MockAthenaBackend) para validar query numeric_history
+end-to-end: SQL → DataFrame normalizado com percentis expandidos.
+"""
+
+import math
+from datetime import date, timedelta
+
+import pandas as pd
+import pytest
+
+from config import AppConfig, AthenaConfig, AthenaMode
+from infra.athena_client import AthenaClient
+from infra.query_builder import QueryBuilder
+from infra.sql_dialect import SQLDialect
+from services.analysis_service import AnalysisService
+from core.models.dataset_config import DatasetConfig
+from core.models.enums import PartitionMethod
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_client(tmp_path):
+    """Cria AthenaClient com tabela numérica para teste de histórico."""
+    config = AppConfig(
+        athena=AthenaConfig(mode=AthenaMode.MOCK, mock_data_dir=str(tmp_path))
+    )
+
+    # Gerar dados com 30 dias de datas recentes
+    today = date.today()
+    rows = []
+    for day_offset in range(30):
+        dt = (today - timedelta(days=day_offset)).isoformat()
+        for j in range(100):
+            rows.append({
+                "dt_ref": dt,
+                "VLR_SALDO": 100.0 + day_offset * 0.5 + j * 0.01,
+                "QTD_PARCELAS": float(j % 12 + 1),
+            })
+
+    df = pd.DataFrame(rows)
+    parquet_path = tmp_path / "tb_numeric.parquet"
+    df.to_parquet(parquet_path)
+
+    client = AthenaClient(config)
+    client._backend.load_table("mock_db", "tb_numeric", str(parquet_path))
+    return client
+
+
+@pytest.fixture
+def builder():
+    return QueryBuilder(dialect=SQLDialect.DUCKDB)
+
+
+@pytest.fixture
+def service(mock_client, builder):
+    return AnalysisService(client=mock_client, builder=builder)
+
+
+@pytest.fixture
+def base_config():
+    return DatasetConfig(
+        schema="mock_db",
+        table="tb_numeric",
+        partition_method=PartitionMethod.INCREMENTAL,
+        partition_column="dt_ref",
+        date_column="dt_ref",
+        date_expression='CAST("dt_ref" AS DATE)',
+        lookback_value=60,
+    )
+
+
+# ---------------------------------------------------------------------------
+# get_numeric_history
+# ---------------------------------------------------------------------------
+
+class TestGetNumericHistory:
+    def test_returns_dataframe_with_expected_columns(self, service, base_config):
+        df = service.get_numeric_history(base_config, "VLR_SALDO")
+        expected_cols = {
+            "period", "mean", "stddev", "min", "max",
+            "p01", "p05", "p25", "p50", "p75", "p95", "p99",
+            "non_null_count", "null_count", "total_count",
+        }
+        assert set(df.columns) == expected_cols
+
+    def test_has_30_periods(self, service, base_config):
+        df = service.get_numeric_history(base_config, "VLR_SALDO")
+        assert len(df) == 30
+
+    def test_mean_values_reasonable(self, service, base_config):
+        df = service.get_numeric_history(base_config, "VLR_SALDO")
+        # Mean should be around 100.x (base 100 + small offsets)
+        assert all(95 < m < 120 for m in df["mean"])
+
+    def test_stddev_values_positive(self, service, base_config):
+        df = service.get_numeric_history(base_config, "VLR_SALDO")
+        assert all(s > 0 for s in df["stddev"] if not math.isnan(s))
+
+    def test_percentiles_expanded(self, service, base_config):
+        df = service.get_numeric_history(base_config, "VLR_SALDO")
+        # P01 < P25 < P50 < P75 < P99
+        row = df.iloc[0]
+        assert row["p01"] <= row["p25"] <= row["p50"] <= row["p75"] <= row["p99"]
+
+    def test_total_count_per_period(self, service, base_config):
+        df = service.get_numeric_history(base_config, "VLR_SALDO")
+        # Each day has 100 rows
+        assert all(df["total_count"] == 100)
+
+    def test_null_count_zero(self, service, base_config):
+        df = service.get_numeric_history(base_config, "VLR_SALDO")
+        assert all(df["null_count"] == 0)
+
+    def test_sorted_by_period(self, service, base_config):
+        df = service.get_numeric_history(base_config, "VLR_SALDO")
+        periods = list(df["period"])
+        assert periods == sorted(periods)
+
+
+# ---------------------------------------------------------------------------
+# _parse_percentile_array
+# ---------------------------------------------------------------------------
+
+class TestParsePercentileArray:
+    def test_list_input(self):
+        result = AnalysisService._parse_percentile_array([1.0, 2.0, 3.0])
+        assert result == [1.0, 2.0, 3.0]
+
+    def test_string_input_json(self):
+        result = AnalysisService._parse_percentile_array("[1.0, 2.0, 3.0]")
+        assert result == [1.0, 2.0, 3.0]
+
+    def test_none_input(self):
+        result = AnalysisService._parse_percentile_array(None)
+        assert result is None
+
+    def test_tuple_input(self):
+        result = AnalysisService._parse_percentile_array((1.0, 2.0))
+        assert result == [1.0, 2.0]
