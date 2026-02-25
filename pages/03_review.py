@@ -138,7 +138,7 @@ st.caption(
 result = export_svc.export(cart)
 
 if result.warnings:
-    st.caption("A validacao de sintaxe encontrou problemas. Revise antes de exportar.")
+    st.caption("A validacao encontrou problemas. Revise antes de exportar.")
     for w in result.warnings:
         st.warning(w)
 
@@ -188,3 +188,29 @@ with col2:
         )
     else:
         st.caption("Habilite ao menos uma regra para exportar.")
+
+
+# ---------------------------------------------------------------------------
+# Relatorio Analitico
+# ---------------------------------------------------------------------------
+
+st.divider()
+st.header("Relatorio Analitico")
+st.caption(
+    "Relatorio detalhado em markdown com evidencia, racional e recomendacoes "
+    "para cada regra. Ideal para documentacao e aprovacao tecnica."
+)
+
+if result.rules_text:
+    report = export_svc.export_analytical_report(cart)
+    with st.expander("Preview do relatorio", expanded=False):
+        st.markdown(report)
+    st.download_button(
+        label="Baixar relatorio.md",
+        data=report,
+        file_name="gdq_analytical_report.md",
+        mime="text/markdown",
+        disabled=not result.rules_text,
+    )
+else:
+    st.info("Habilite ao menos uma regra para gerar o relatorio.")
