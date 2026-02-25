@@ -32,7 +32,7 @@ TABLE_FULL = "tb_cadastro_full"
 QUERIES = [
     {
         "name": f"DESCRIBE {TABLE_INC}",
-        "sql": f'DESCRIBE "{DATABASE}"."{TABLE_INC}"',
+        "sql": f"DESCRIBE {DATABASE}.{TABLE_INC}",
         "description": "Colunas da tabela incremental",
     },
     {
@@ -46,7 +46,7 @@ QUERIES = [
     },
     {
         "name": f"DESCRIBE {TABLE_FULL}",
-        "sql": f'DESCRIBE "{DATABASE}"."{TABLE_FULL}"',
+        "sql": f"DESCRIBE {DATABASE}.{TABLE_FULL}",
         "description": "Colunas da tabela full snapshot",
     },
     {
@@ -128,9 +128,9 @@ def main() -> None:
     # Summary
     print("=" * 50)
     if failed == 0:
-        print(f"\n\u2705 Conexao AWS OK! ({passed}/{passed + failed} queries passed)")
+        print(f"\n[OK] Conexao AWS OK! ({passed}/{passed + failed} queries passed)")
     else:
-        print(f"\n\u274c {failed} query(ies) failed, {passed} passed.")
+        print(f"\n[FAIL] {failed} query(ies) failed, {passed} passed.")
         print("  Check your AWS setup (run: python scripts/aws_setup.py --status)")
         sys.exit(1)
 

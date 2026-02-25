@@ -136,7 +136,7 @@ class AthenaClient:
             return self._backend.get_columns(table)
         else:
             df = self.execute_df(
-                f'DESCRIBE "{schema}"."{table}"',
+                f"DESCRIBE {schema}.{table}",
                 query_name="describe_table",
                 dataset=f"{schema}.{table}",
             )
