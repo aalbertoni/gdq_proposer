@@ -142,3 +142,31 @@ class TestParsePercentileArray:
     def test_tuple_input(self):
         result = AnalysisService._parse_percentile_array((1.0, 2.0))
         assert result == [1.0, 2.0]
+
+
+# ---------------------------------------------------------------------------
+# get_row_count_history
+# ---------------------------------------------------------------------------
+
+class TestGetRowCountHistory:
+    def test_returns_dataframe_with_expected_columns(self, service, base_config):
+        df = service.get_row_count_history(base_config)
+        assert set(df.columns) == {"period", "row_count"}
+
+    def test_has_30_periods(self, service, base_config):
+        df = service.get_row_count_history(base_config)
+        assert len(df) == 30
+
+    def test_row_count_is_100_per_period(self, service, base_config):
+        df = service.get_row_count_history(base_config)
+        # Each day has 100 rows in our mock data
+        assert all(df["row_count"] == 100.0)
+
+    def test_sorted_by_period(self, service, base_config):
+        df = service.get_row_count_history(base_config)
+        periods = list(df["period"])
+        assert periods == sorted(periods)
+
+    def test_row_count_is_float(self, service, base_config):
+        df = service.get_row_count_history(base_config)
+        assert df["row_count"].dtype == float

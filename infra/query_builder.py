@@ -114,6 +114,27 @@ class QueryBuilder:
             base_filter=base_filter,
         )
 
+    def build_row_count_history(
+        self,
+        schema: str,
+        table: str,
+        date_expression: str,
+        lookback_value: int,
+        base_filter: str = "",
+    ) -> str:
+        """Query para row count por periodo (analise RowCount)."""
+        template = self.env.get_template("row_count_history.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            date_expression=date_expression,
+            date_lookback_expr=adapt_function(
+                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
+            ),
+            base_filter=base_filter,
+        )
+
     def build_numeric_history(
         self,
         schema: str,

@@ -76,6 +76,50 @@ class AnalysisService:
 
         return self._normalize_df(df)
 
+    def get_row_count_history(
+        self,
+        config: DatasetConfig,
+    ) -> pd.DataFrame:
+        """Row count por periodo para analise de regra RowCount.
+
+        Args:
+            config: Configuracao da tabela alvo.
+
+        Returns:
+            DataFrame com colunas: [period, row_count]
+        """
+        validate_identifier(config.schema)
+        validate_identifier(config.table)
+
+        date_expr = config.date_expression or f'"{config.effective_temporal_axis}"'
+
+        base_filter = ""
+        if config.base_filter_sql:
+            base_filter = sanitize_filter(config.base_filter_sql)
+
+        sql = self.builder.build_row_count_history(
+            schema=config.schema,
+            table=config.table,
+            date_expression=date_expr,
+            lookback_value=config.lookback_value,
+            base_filter=base_filter,
+        )
+
+        df = self.client.execute_df(
+            sql,
+            query_name="row_count_history",
+            dataset=f"{config.schema}.{config.table}",
+        )
+
+        if df.empty:
+            return pd.DataFrame(columns=["period", "row_count"])
+
+        result = pd.DataFrame()
+        result["period"] = df["processing_period"].astype(str)
+        result["row_count"] = pd.to_numeric(df["row_count"], errors="coerce").fillna(0).astype(float)
+
+        return result.sort_values("period").reset_index(drop=True)
+
     def _normalize_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """Normaliza o DataFrame: renomeia colunas e expande percentis."""
         result = pd.DataFrame()
