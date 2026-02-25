@@ -11,6 +11,7 @@ Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A1).
 """
 
 import json
+import os
 from pathlib import Path
 
 import streamlit as st
@@ -134,6 +135,135 @@ st.caption(
     "Configure a tabela alvo, eixo temporal e colunas para analise. "
     "Ao final, ative a configuracao para ir para a calibracao de regras."
 )
+
+
+# ===================================================================
+# Configuracao de ambiente (.env)
+# ===================================================================
+
+_ENV_FILE_MAP = {"local": ".env.local", "dev": ".env.dev", "prod": ".env.prod"}
+_SESSION_KEYS_TO_CLEAR = [
+    "client", "config",
+    "analysis_service", "proposal_service",
+    "dataset_service", "profiling_service",
+    "dataset_config", "column_profiles",
+    "setup_validated", "setup_schema", "setup_table",
+    "setup_columns", "setup_config", "setup_profiles", "setup_date_range",
+]
+
+
+def _load_env_values(env_name: str) -> dict[str, str]:
+    """Carrega valores do arquivo .env.{env_name}."""
+    path = Path(_ENV_FILE_MAP.get(env_name, ".env.local"))
+    values = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                values[k.strip()] = v.strip()
+    return values
+
+
+def _apply_env_and_reconnect(env_name: str, env_vars: dict[str, str]):
+    """Aplica variaveis de ambiente e reinicializa conexao."""
+    os.environ["GDQ_ENV"] = env_name
+    for k, v in env_vars.items():
+        os.environ[k] = v
+    if env_vars.get("GDQ_AWS_PROFILE"):
+        os.environ["AWS_PROFILE"] = env_vars["GDQ_AWS_PROFILE"]
+    # Limpar session_state para forcar reconexao
+    for key in _SESSION_KEYS_TO_CLEAR:
+        st.session_state.pop(key, None)
+    keys_to_remove = [k for k in st.session_state if k.startswith("proposal_")]
+    for k in keys_to_remove:
+        del st.session_state[k]
+
+
+_current_config = load_config()
+_current_env = _current_config.environment.value
+
+with st.expander("Configuracao de Ambiente", expanded=False):
+    st.caption(
+        "Defina as variaveis de ambiente para conectar ao Athena. "
+        "Ao salvar, a conexao e reestabelecida automaticamente."
+    )
+
+    _env_values = _load_env_values(_current_env)
+
+    env_col1, env_col2 = st.columns(2)
+
+    with env_col1:
+        env_env = st.selectbox(
+            "Ambiente:",
+            ["local", "dev", "prod"],
+            index=["local", "dev", "prod"].index(_current_env),
+            key="env_cfg_env",
+            format_func=lambda x: {
+                "local": "Local (DuckDB mock)",
+                "dev": "Dev (Athena + AWS CLI)",
+                "prod": "Prod (Athena + IAM role)",
+            }.get(x, x),
+            help="local = DuckDB mock, dev = Athena com AWS CLI, prod = Athena com IAM role.",
+        )
+        env_region = st.text_input(
+            "Regiao AWS:",
+            value=_env_values.get("GDQ_ATHENA_REGION", "us-east-1"),
+            key="env_cfg_region",
+            disabled=env_env == "local",
+            help="Regiao onde o Athena esta provisionado.",
+        )
+        env_workgroup = st.text_input(
+            "Workgroup Athena:",
+            value=_env_values.get("GDQ_ATHENA_WORKGROUP", "primary"),
+            key="env_cfg_workgroup",
+            disabled=env_env == "local",
+            help="Workgroup do Athena. Determina custos e permissoes.",
+        )
+
+    with env_col2:
+        env_s3 = st.text_input(
+            "S3 Output:",
+            value=_env_values.get("GDQ_ATHENA_S3_OUTPUT", ""),
+            key="env_cfg_s3",
+            disabled=env_env == "local",
+            help="Bucket S3 para resultados do Athena. Ex: s3://meu-bucket/athena-results/",
+        )
+        env_profile = st.text_input(
+            "AWS Profile:",
+            value=_env_values.get("GDQ_AWS_PROFILE", ""),
+            key="env_cfg_profile",
+            disabled=env_env == "local",
+            help="Named profile do AWS CLI (~/.aws/credentials). Deixe vazio para IAM role.",
+        )
+        env_mock_dir = st.text_input(
+            "Mock data dir:",
+            value=_env_values.get("GDQ_MOCK_DATA_DIR", "mock_data"),
+            key="env_cfg_mock",
+            disabled=env_env != "local",
+            help="Diretorio com dados sinteticos para modo local.",
+        )
+
+    if st.button("Salvar e aplicar", type="primary"):
+        _target_env = env_env
+        _target_path = Path(_ENV_FILE_MAP.get(_target_env, ".env.local"))
+        _env_vars = {
+            "GDQ_ATHENA_REGION": env_region,
+            "GDQ_ATHENA_WORKGROUP": env_workgroup,
+            "GDQ_ATHENA_S3_OUTPUT": env_s3,
+            "GDQ_AWS_PROFILE": env_profile,
+            "GDQ_MOCK_DATA_DIR": env_mock_dir,
+        }
+        # Persistir no .env
+        _lines = [f"GDQ_ENV={_target_env}"]
+        _lines.extend(f"{k}={v}" for k, v in _env_vars.items())
+        _target_path.write_text("\n".join(_lines) + "\n")
+        # Aplicar imediatamente
+        _apply_env_and_reconnect(_target_env, _env_vars)
+        st.rerun()
+
+    st.divider()
+
 
 try:
     client = get_client()

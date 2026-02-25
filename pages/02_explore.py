@@ -84,7 +84,7 @@ def _render_rule_params(rule_key: str) -> tuple:
     Returns:
         (n_periods, n_sigma, margin_pct, buffer, margin_enabled)
     """
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns([3, 2, 1, 3, 2])
     with col1:
         n_periods = st.slider(
             "N (periodos):", min_value=5, max_value=90, value=20,
@@ -102,13 +102,14 @@ def _render_rule_params(rule_key: str) -> tuple:
         )
     with col3:
         margin_enabled = st.checkbox(
-            "Margem %",
+            "Margem",
             value=True,
             key=f"margin_on_{rule_key}",
             help="Ativar banda margem (dual guard). Quando ativada, a regra "
                  "combina banda sigma OR banda margem, reduzindo falsos positivos "
                  "em dados de baixa variabilidade. Desative para usar apenas sigma.",
         )
+    with col4:
         if margin_enabled:
             margin_pct = st.slider(
                 "Margem %:", min_value=1, max_value=30, value=10,
@@ -117,7 +118,8 @@ def _render_rule_params(rule_key: str) -> tuple:
             ) / 100.0
         else:
             margin_pct = 0.10  # valor default (nao usado quando desativado)
-    with col4:
+            st.caption("Margem desativada")
+    with col5:
         buffer = st.select_slider(
             "Buffer:", options=[0.0, 0.001, 0.01, 0.1], value=0.01,
             key=f"buffer_{rule_key}",
@@ -127,7 +129,10 @@ def _render_rule_params(rule_key: str) -> tuple:
     return n_periods, n_sigma, margin_pct, buffer, margin_enabled
 
 
-def _render_rolling_chart(values, dates, n_periods, n_sigma, margin_pct, y_label):
+def _render_rolling_chart(
+    values, dates, n_periods, n_sigma, margin_pct, y_label,
+    margin_enabled=True,
+):
     """Renderiza grafico Plotly com bandas rolantes (media movel)."""
     from core.statistical_engine import compute_rolling_bands
 
@@ -156,18 +161,19 @@ def _render_rolling_chart(values, dates, n_periods, n_sigma, margin_pct, y_label
         fill="tonexty", fillcolor="rgba(173,216,230,0.3)",
     ))
 
-    fig.add_trace(go.Scatter(
-        x=dates, y=bands["margin_upper"],
-        mode="lines", name=f"{margin_pct*100:.0f}% upper",
-        line=dict(color="rgba(60,179,113,0.4)", width=1),
-        showlegend=False,
-    ))
-    fig.add_trace(go.Scatter(
-        x=dates, y=bands["margin_lower"],
-        mode="lines", name=f"{margin_pct*100:.0f}% margin",
-        line=dict(color="rgba(60,179,113,0.4)", width=1),
-        fill="tonexty", fillcolor="rgba(144,238,144,0.2)",
-    ))
+    if margin_enabled:
+        fig.add_trace(go.Scatter(
+            x=dates, y=bands["margin_upper"],
+            mode="lines", name=f"{margin_pct*100:.0f}% upper",
+            line=dict(color="rgba(60,179,113,0.4)", width=1),
+            showlegend=False,
+        ))
+        fig.add_trace(go.Scatter(
+            x=dates, y=bands["margin_lower"],
+            mode="lines", name=f"{margin_pct*100:.0f}% margin",
+            line=dict(color="rgba(60,179,113,0.4)", width=1),
+            fill="tonexty", fillcolor="rgba(144,238,144,0.2)",
+        ))
 
     fig.add_trace(go.Scatter(
         x=dates, y=bands["center"],
@@ -511,6 +517,7 @@ with tab_numericas:
                 if values and dates:
                     _render_rolling_chart(
                         values, dates, mean_n, mean_k, mean_margin, "Mean",
+                        margin_enabled=mean_margin_on,
                     )
 
                 _render_backtest_metrics(proposal)
@@ -555,6 +562,7 @@ with tab_numericas:
                 if values and dates:
                     _render_rolling_chart(
                         values, dates, std_n, std_k, std_margin, "StdDev",
+                        margin_enabled=std_margin_on,
                     )
 
                 _render_backtest_metrics(proposal)
@@ -871,6 +879,7 @@ with tab_tabela:
             if values and dates:
                 _render_rolling_chart(
                     values, dates, rc_n, rc_k, rc_margin, "Row Count",
+                    margin_enabled=rc_margin_on,
                 )
 
             _render_backtest_metrics(rc_proposal)
