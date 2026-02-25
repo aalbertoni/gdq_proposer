@@ -102,6 +102,7 @@ class GenericBandRowCountStrategy:
             baseline_method=baseline.method,
             baseline_window=baseline.n_periods,
             baseline_n_sigma=baseline.n_sigma,
+            baseline_margin_pct=baseline.margin_pct,
             history_dates=dates,
             history_values=clean,
         )
@@ -169,10 +170,13 @@ class GenericBandRowCountStrategy:
         proposal.confidence = score.confidence
         proposal.warnings = score.warnings
 
+        proposal.baseline_margin_pct = new_baseline.margin_pct
+
         # Regenerar sintaxe
         overrides = UserOverride(
             custom_n_periods=new_baseline.n_periods,
             custom_n_sigma=new_baseline.n_sigma,
+            custom_margin_pct=new_baseline.margin_pct,
         )
         proposal.gdq_syntax_preview = self.generator.generate(proposal, overrides)
 

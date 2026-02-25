@@ -87,7 +87,8 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
         st.error(f"Tabela `{schema}.{table}` nao encontrada no backend atual.")
         return False
 
-    columns = dataset_svc.get_columns(schema, table)
+    columns, partition_cols = dataset_svc.get_columns_with_partitions(schema, table)
+    st.session_state["setup_partition_cols"] = partition_cols
 
     config = DatasetConfig(
         schema=schema,
@@ -129,6 +130,10 @@ def _activate_config():
 st.set_page_config(page_title="Setup - GDQ Rule Proposer", page_icon=":gear:")
 
 st.title("Setup da Tabela")
+st.caption(
+    "Configure a tabela alvo, eixo temporal e colunas para analise. "
+    "Ao final, ative a configuracao para ir para a calibracao de regras."
+)
 
 try:
     client = get_client()
@@ -188,30 +193,48 @@ st.header("1. Tabela")
 col1, col2 = st.columns(2)
 with col1:
     if is_mock:
-        schema = st.text_input("Schema:", value="mock_db", disabled=True)
+        schema = st.text_input(
+            "Schema:",
+            value="mock_db",
+            disabled=True,
+            help="Em modo local, o schema e fixo (mock_db) e usa dados sinteticos via DuckDB.",
+        )
     else:
-        schema = st.text_input("Schema (Glue database):", value="gdq_test_db")
+        schema = st.text_input(
+            "Schema (Glue database):",
+            value="gdq_test_db",
+            help="Nome do banco no Glue Catalog. Ex: gdq_test_db, datalake_raw.",
+        )
 
 with col2:
-    table = st.text_input("Tabela:", placeholder="ex: tb_operacoes_credito")
+    table = st.text_input(
+        "Tabela:",
+        placeholder="ex: tb_operacoes_credito",
+        help="Nome da tabela a ser analisada. Deve existir no schema informado.",
+    )
 
 if st.button("Validar Tabela", disabled=not table, type="primary"):
     with st.spinner("Verificando tabela..."):
         try:
             exists = dataset_svc.validate_table(schema, table)
         except ValueError as e:
-            st.error(f"Nome invalido: {e}")
+            st.error(
+                f"Nome invalido: {e}. "
+                "Use apenas letras, numeros e underscore."
+            )
             st.stop()
 
     if exists:
-        columns = dataset_svc.get_columns(schema, table)
+        columns, partition_cols = dataset_svc.get_columns_with_partitions(schema, table)
         st.session_state["setup_validated"] = True
         st.session_state["setup_schema"] = schema
         st.session_state["setup_table"] = table
         st.session_state["setup_columns"] = columns
+        st.session_state["setup_partition_cols"] = partition_cols
         for key in ["setup_config", "setup_profiles", "setup_date_range"]:
             st.session_state.pop(key, None)
-        st.success(f"Tabela `{schema}.{table}` encontrada — {len(columns)} colunas")
+        part_info = f", particao: {', '.join(partition_cols)}" if partition_cols else ", sem particao detectada"
+        st.success(f"Tabela `{schema}.{table}` encontrada — {len(columns)} colunas{part_info}")
         st.rerun()
     else:
         st.session_state["setup_validated"] = False
@@ -238,25 +261,64 @@ with st.expander(f"Colunas de `{schema}.{table}` ({len(columns)})", expanded=Tru
 st.header("2. Eixo Temporal")
 
 col_names = [c["name"] for c in columns]
+col_type_map = {c["name"]: c["type"].strip().lower() for c in columns}
+detected_partition_cols = st.session_state.get("setup_partition_cols", [])
 
-partition_method = st.selectbox(
-    "Metodo de particao:",
-    options=[pm.value for pm in PartitionMethod],
-    format_func=lambda x: {
-        "incremental": "Incremental (cada particao = dados novos)",
-        "full_snapshot": "Full Snapshot (cada particao = foto completa)",
-        "non_partitioned": "Sem particao",
-    }.get(x, x),
-)
+# Types that can serve as temporal axis
+_TEMPORAL_BASE_TYPES = {"date", "timestamp", "timestamp with time zone", "string", "varchar"}
 
-partition_col = None
-if partition_method != PartitionMethod.NON_PARTITIONED.value:
-    partition_col = st.selectbox("Coluna de particao:", col_names)
+
+def _base_type(t: str) -> str:
+    """Strip parenthesized params: 'varchar(100)' -> 'varchar'."""
+    t = t.strip().lower()
+    paren = t.find("(")
+    return t[:paren] if paren != -1 else t
+
+
+temporal_candidates = []
+for c in columns:
+    base = _base_type(c["type"])
+    is_partition = c["name"] in detected_partition_cols
+    if base in _TEMPORAL_BASE_TYPES or is_partition:
+        temporal_candidates.append(c["name"])
+
+if not temporal_candidates:
+    st.warning(
+        "Nenhuma coluna de tipo date, timestamp ou string encontrada. "
+        "Todas as colunas serao listadas como fallback."
+    )
+    temporal_candidates = col_names
+
+# --- Partition info (auto-detected) ---
+if detected_partition_cols:
+    st.text_input(
+        "Colunas de particao (detectadas automaticamente):",
+        value=", ".join(detected_partition_cols),
+        disabled=True,
+        help="Colunas de particao detectadas no catalogo Glue. Nao editavel.",
+    )
+    partition_col = detected_partition_cols[0]  # Primary partition column
+
+    partition_method = st.selectbox(
+        "Metodo de particao:",
+        options=[PartitionMethod.INCREMENTAL.value, PartitionMethod.FULL_SNAPSHOT.value],
+        format_func=lambda x: {
+            "incremental": "Incremental (cada particao = dados novos)",
+            "full_snapshot": "Full Snapshot (cada particao = foto completa)",
+        }.get(x, x),
+        help="Incremental: cada particao contem dados novos. Full Snapshot: cada particao contem foto completa.",
+    )
+else:
+    st.info("Nenhuma coluna de particao detectada. Tabela sera tratada como nao-particionada.")
+    partition_method = PartitionMethod.NON_PARTITIONED.value
+    partition_col = None
 
 date_col = st.selectbox(
     "Coluna de data (eixo temporal):",
-    col_names,
-    index=col_names.index(partition_col) if partition_col and partition_col in col_names else 0,
+    temporal_candidates,
+    index=temporal_candidates.index(partition_col) if partition_col and partition_col in temporal_candidates else 0,
+    help="Somente colunas de tipo date, timestamp ou string sao listadas. "
+         "Colunas numericas (int, double, etc.) nao podem ser usadas como eixo temporal.",
 )
 
 col_t1, col_t2 = st.columns(2)
@@ -270,6 +332,8 @@ with col_t1:
             "timestamp": "Timestamp",
             "custom": "Custom",
         }.get(x, x),
+        help="Frequencia dos periodos de analise. "
+             "Diario = 1 periodo por dia. Mensal = 1 periodo por mes.",
     )
 
 with col_t2:
@@ -280,15 +344,115 @@ with col_t2:
             "last_n_periods": "Ultimos N periodos",
             "last_x_days": "Ultimos X dias",
         }.get(x, x),
+        help="Quantos periodos recentes considerar na analise.",
     )
 
-lookback_value = st.slider("Valor de lookback:", min_value=5, max_value=365, value=30)
-
-date_expression = st.text_input(
-    "Expressao de normalizacao (opcional):",
-    placeholder='ex: CAST("dt_ref" AS DATE) ou date_trunc(\'month\', dt_evento)',
-    help="Se a coluna de data e string ou precisa de transformacao, informe a expressao SQL.",
+lookback_value = st.slider(
+    "Valor de lookback:",
+    min_value=5,
+    max_value=365,
+    value=30,
+    help=(
+        "Quantidade de periodos recentes a considerar. "
+        "Valores entre 20 e 60 costumam funcionar bem. "
+        "Mais periodos = amostra maior, porem pode incluir dados desatualizados."
+    ),
 )
+
+# Auto-suggest date_expression if selected date col is string type
+selected_col_base_type = _base_type(col_type_map.get(date_col, ""))
+needs_date_expression = selected_col_base_type in ("string", "varchar")
+
+if needs_date_expression:
+    from infra.sql_dialect import SQLDialect
+
+    current_dialect = client.dialect
+
+    # Common string date formats with dialect-aware SQL expressions
+    # Each entry: (label, athena_expr, duckdb_expr)
+    _DATE_PATTERNS = [
+        (
+            "yyyy-MM-dd (ex: 2024-01-15)",
+            'CAST("{col}" AS DATE)',
+            'CAST("{col}" AS DATE)',
+        ),
+        (
+            "yyyyMMdd (ex: 20240115)",
+            'DATE_PARSE("{col}", \'%Y%m%d\')',
+            'STRPTIME("{col}", \'%Y%m%d\')::DATE',
+        ),
+        (
+            "yyyyMM (ex: 202401)",
+            'DATE_PARSE("{col}", \'%Y%m\')',
+            'STRPTIME("{col}", \'%Y%m\')::DATE',
+        ),
+        (
+            "dd/MM/yyyy (ex: 15/01/2024)",
+            'DATE_PARSE("{col}", \'%d/%m/%Y\')',
+            'STRPTIME("{col}", \'%d/%m/%Y\')::DATE',
+        ),
+        (
+            "yyyy-MM-dd HH:mm:ss (ex: 2024-01-15 10:30:00)",
+            'CAST("{col}" AS TIMESTAMP)',
+            'CAST("{col}" AS TIMESTAMP)',
+        ),
+        (
+            "Customizado (digitar manualmente)",
+            "",
+            "",
+        ),
+    ]
+
+    pattern_labels = [p[0] for p in _DATE_PATTERNS]
+
+    chosen_pattern = st.selectbox(
+        "Formato da coluna de data:",
+        pattern_labels,
+        index=0,
+        key="date_format_pattern",
+        help="Selecione o formato que corresponde aos valores da coluna. "
+             "A expressao SQL sera gerada automaticamente para o backend ativo.",
+    )
+
+    chosen_idx = pattern_labels.index(chosen_pattern)
+    is_custom = chosen_idx == len(_DATE_PATTERNS) - 1
+
+    if is_custom:
+        date_expression = st.text_input(
+            "Expressao SQL customizada (obrigatoria):",
+            value="",
+            placeholder=f'ex: DATE_PARSE("{date_col}", \'%Y%m%d\')',
+            help="Informe a expressao SQL que converte a coluna string para date/timestamp.",
+        )
+    else:
+        _, athena_expr, duckdb_expr = _DATE_PATTERNS[chosen_idx]
+        if current_dialect == SQLDialect.DUCKDB:
+            date_expression = duckdb_expr.format(col=date_col)
+        else:
+            date_expression = athena_expr.format(col=date_col)
+
+        st.code(date_expression, language="sql")
+        st.caption(
+            f"Expressao gerada para o backend **{current_dialect.value}**. "
+            f"Sera adaptada automaticamente ao trocar de ambiente."
+        )
+
+    if not date_expression.strip():
+        st.error(
+            f"A coluna `{date_col}` e do tipo **{col_type_map.get(date_col, '?')}** "
+            f"e precisa de uma expressao de normalizacao para ser usada como eixo temporal."
+        )
+        st.stop()
+
+else:
+    # date/timestamp columns: optional expression (e.g. date_trunc)
+    date_expression = st.text_input(
+        "Expressao de normalizacao (opcional):",
+        value="",
+        placeholder='ex: date_trunc(\'month\', "dt_evento")',
+        help="Para colunas de tipo date/timestamp, normalmente nao e necessario. "
+             "Use apenas se precisar de truncamento (ex: agrupar por mes).",
+    )
 
 
 # ===================================================================
@@ -300,7 +464,11 @@ st.header("3. Filtro Base (opcional)")
 base_filter = st.text_input(
     "Filtro WHERE aplicado em todas as queries:",
     placeholder="ex: IND_ATIVO = 1 AND COD_SEGMENTO != 'TESTE'",
-    help="Expressao SQL valida. Nao inclua WHERE.",
+    help=(
+        "Filtro WHERE aplicado em todas as queries de analise. "
+        "Util para excluir registros de teste ou segmentos irrelevantes. "
+        "Nao inclua a palavra WHERE. Ex: IND_ATIVO = 1"
+    ),
 )
 
 
@@ -405,8 +573,21 @@ st.header("6. Selecao de Colunas")
 
 st.caption(
     "Revise a classificacao inferida e selecione as colunas para analise. "
-    "Use o dropdown para alterar o tipo manualmente."
+    "Use o dropdown para alterar o tipo semantico se a inferencia estiver incorreta."
 )
+
+with st.expander("Como funciona a classificacao?", expanded=False):
+    st.markdown(
+        "O profiling analisa o tipo Athena e amostra de valores para inferir o tipo semantico:\n\n"
+        "- **Numerico:** colunas int/double/float, ou strings com >95% dos valores castaveis para numero. "
+        "Geram regras **Mean** e **StdDev**.\n"
+        "- **Categorico (low):** ate ~50 valores distintos — dominio fixo (ex: UF, tipo_operacao). "
+        "Geram regras **ColumnValues** e **CustomSql**.\n"
+        "- **Categorico (mid/high):** muitos distintos — tipicamente IDs ou texto livre.\n"
+        "- **Data/hora:** colunas date/timestamp — usadas como eixo temporal.\n\n"
+        "Desmarque colunas que nao precisam de regras (IDs, timestamps internos, etc.). "
+        "Voce pode alterar o tipo manualmente usando o dropdown."
+    )
 
 semantic_options = [s.value for s in SemanticType]
 semantic_labels = {s.value: _semantic_type_label(s) for s in SemanticType}
@@ -520,6 +701,10 @@ st.markdown(
 # ===================================================================
 
 st.header("7. Ativar Configuracao")
+st.caption(
+    "Ao ativar, a configuracao sera salva na sessao e voce podera "
+    "calibrar regras na pagina Explore."
+)
 
 dataset_config.selected_columns = selected_cols
 

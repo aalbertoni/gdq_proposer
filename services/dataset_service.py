@@ -53,6 +53,24 @@ class DatasetService:
         validate_identifier(table)
         return self.client.get_columns(schema, table)
 
+    def get_columns_with_partitions(
+        self, schema: str, table: str,
+    ) -> tuple[list[dict], list[str]]:
+        """Retorna colunas e nomes das colunas de particao.
+
+        Args:
+            schema: Nome do schema/database.
+            table: Nome da tabela.
+
+        Returns:
+            Tuple (columns, partition_columns):
+            - columns: [{"name": str, "type": str}, ...]
+            - partition_columns: ["dt_ref", ...] (vazia se nao particionada)
+        """
+        validate_identifier(schema)
+        validate_identifier(table)
+        return self.client.get_columns_with_partitions(schema, table)
+
     def get_partitions(self, schema: str, table: str) -> list[str]:
         """Retorna partições disponíveis (se particionada).
 

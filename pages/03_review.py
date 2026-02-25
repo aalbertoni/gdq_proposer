@@ -10,6 +10,7 @@ Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2).
 import streamlit as st
 
 from core.models.enums import ConfidenceLevel
+from core.rule_explainer import explain_rule, explain_rule_detail
 from services.export_service import ExportService
 
 
@@ -20,12 +21,29 @@ from services.export_service import ExportService
 st.set_page_config(page_title="Review - GDQ Rule Proposer", page_icon=":clipboard:")
 
 st.title("Review & Export")
-st.caption("Revise as regras selecionadas e exporte a sintaxe GDQ final.")
+st.caption(
+    "Revise as regras do carrinho, habilite ou desabilite individualmente, "
+    "e exporte a sintaxe GDQ final para usar no AWS Glue Data Quality."
+)
 
+# Config summary
+if "dataset_config" in st.session_state:
+    cfg = st.session_state["dataset_config"]
+    n_sel = len(cfg.selected_columns) if cfg.selected_columns else 0
+    st.caption(
+        f"Tabela: `{cfg.schema}.{cfg.table}` · "
+        f"Lookback: {cfg.lookback_value}p · "
+        f"Colunas: {n_sel}"
+    )
 
 # Guard
 if "rule_cart" not in st.session_state or not st.session_state["rule_cart"]:
-    st.info("Carrinho vazio. Adicione regras na pagina **Explore**.")
+    st.info(
+        "Carrinho vazio. Calibre e adicione regras na pagina **Explore**. "
+        "Cada regra e adicionada individualmente apos calibracao."
+    )
+    if st.button("Ir para Explore"):
+        st.switch_page("pages/02_explore.py")
     st.stop()
 
 cart = st.session_state["rule_cart"]
@@ -38,9 +56,10 @@ export_svc = ExportService()
 
 st.header(f"Carrinho ({len(cart)} regras)")
 
+remove_idx = None
 for i, selection in enumerate(cart):
     p = selection.proposal
-    col1, col2, col3 = st.columns([1, 5, 2])
+    col1, col2, col3, col4 = st.columns([0.6, 5, 1.5, 0.5])
 
     with col1:
         enabled = st.checkbox(
@@ -48,6 +67,7 @@ for i, selection in enumerate(cart):
             value=selection.enabled,
             key=f"review_enable_{i}",
             label_visibility="collapsed",
+            help="Desmarque para excluir esta regra da exportacao sem remove-la do carrinho.",
         )
         selection.enabled = enabled
 
@@ -57,8 +77,8 @@ for i, selection in enumerate(cart):
         st.markdown(f"**{label}** — `{target}`")
         if p.backtest:
             st.caption(
-                f"Cobertura: {p.backtest.coverage_pct:.1f}% | "
-                f"Estabilidade: {p.backtest.stability_score:.2f} | "
+                f"Cobertura: {p.backtest.coverage_pct:.1f}% · "
+                f"Estabilidade: {p.backtest.stability_score:.2f} · "
                 f"Drift: {'Sim' if p.backtest.has_drift else 'Nao'}"
             )
 
@@ -70,19 +90,39 @@ for i, selection in enumerate(cart):
         }
         st.markdown(badges.get(p.confidence, p.confidence.value))
 
-    with st.expander("Sintaxe GDQ", expanded=False):
+    with col4:
+        if st.button("X", key=f"remove_{i}", help="Remover esta regra"):
+            remove_idx = i
+
+    st.caption(explain_rule(p))
+
+    with st.expander("Sintaxe GDQ e detalhes", expanded=False):
         st.code(selection.final_gdq_syntax)
+        st.markdown(explain_rule_detail(p))
 
     if p.warnings:
         for w in p.warnings:
-            st.caption(f"  {w}")
+            st.caption(f"  Aviso: {w}")
+
+if remove_idx is not None:
+    st.session_state["rule_cart"].pop(remove_idx)
+    st.rerun()
 
 st.divider()
 
-# Remover regras desabilitadas do carrinho
-if st.button("Remover desabilitadas"):
-    st.session_state["rule_cart"] = [s for s in cart if s.enabled]
-    st.rerun()
+# Action buttons
+act_col1, act_col2 = st.columns(2)
+with act_col1:
+    if st.button("Adicionar mais regras"):
+        st.switch_page("pages/02_explore.py")
+with act_col2:
+    disabled_count = sum(1 for s in cart if not s.enabled)
+    if st.button(
+        f"Remover desabilitadas ({disabled_count})",
+        disabled=disabled_count == 0,
+    ):
+        st.session_state["rule_cart"] = [s for s in cart if s.enabled]
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -90,16 +130,33 @@ if st.button("Remover desabilitadas"):
 # ---------------------------------------------------------------------------
 
 st.header("Sintaxe Final")
+st.caption(
+    "Bloco com todas as regras habilitadas em sintaxe GDQ. "
+    "Cole diretamente no campo de regras do AWS Glue Data Quality."
+)
 
 result = export_svc.export(cart)
 
 if result.warnings:
+    st.caption("A validacao de sintaxe encontrou problemas. Revise antes de exportar.")
     for w in result.warnings:
         st.warning(w)
 
 if result.rules_text:
     st.code(result.rules_text, language=None)
     st.caption(f"{result.rules_count} regras habilitadas")
+
+    # Resumo em linguagem natural
+    with st.expander("O que essas regras fazem?", expanded=False):
+        enabled_sels = [s for s in cart if s.enabled and s.final_gdq_syntax.strip()]
+        for j, sel in enumerate(enabled_sels):
+            p = sel.proposal
+            target = p.target_column or "(tabela)"
+            rule_label = p.rule_type.value.replace("_", " ").title()
+            st.markdown(f"**{j + 1}. {rule_label}** — `{target}`")
+            st.markdown(explain_rule(p))
+            if j < len(enabled_sels) - 1:
+                st.markdown("---")
 else:
     st.info("Nenhuma regra habilitada.")
 
@@ -120,8 +177,14 @@ with col1:
         mime="text/plain",
         disabled=not result.rules_text,
         type="primary",
+        help="Exporta as regras habilitadas em arquivo de texto. Cada linha contem uma regra GDQ.",
     )
 
 with col2:
     if result.rules_text:
-        st.info("Use **Ctrl+A** no bloco acima para copiar manualmente.")
+        st.caption(
+            "Voce tambem pode copiar diretamente do bloco de sintaxe acima "
+            "usando o icone de copia no canto superior direito."
+        )
+    else:
+        st.caption("Habilite ao menos uma regra para exportar.")

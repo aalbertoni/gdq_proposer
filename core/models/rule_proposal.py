@@ -44,6 +44,7 @@ class RuleProposal:
     baseline_method: Optional[BaselineMethod] = None
     baseline_window: Optional[int] = None
     baseline_n_sigma: Optional[float] = None
+    baseline_margin_pct: Optional[float] = None
 
     # Avaliacao
     backtest: Optional[BacktestSummary] = None

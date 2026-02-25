@@ -132,17 +132,65 @@ class AthenaClient:
                 return False
 
     def get_columns(self, schema: str, table: str) -> list[dict]:
-        """Retorna colunas e tipos."""
+        """Retorna colunas e tipos (sem metadados de particao)."""
+        columns, _ = self.get_columns_with_partitions(schema, table)
+        return columns
+
+    def get_columns_with_partitions(
+        self, schema: str, table: str,
+    ) -> tuple[list[dict], list[str]]:
+        """Retorna colunas e nomes das colunas de particao.
+
+        Args:
+            schema: Nome do schema/database.
+            table: Nome da tabela.
+
+        Returns:
+            Tuple de (columns, partition_columns) onde:
+            - columns: [{"name": str, "type": str}, ...]
+            - partition_columns: ["dt_ref", ...] (vazia se nao particionada)
+        """
         if self.config.athena.mode == AthenaMode.MOCK:
-            return self._backend.get_columns(table)
-        else:
-            df = self.execute_df(
-                f"DESCRIBE {schema}.{table}",
-                query_name="describe_table",
-                dataset=f"{schema}.{table}",
-            )
-            return [
-                {"name": str(row["col_name"]).strip(), "type": str(row["data_type"]).strip()}
-                for _, row in df.iterrows()
-                if isinstance(row["col_name"], str)
-            ]
+            return self._backend.get_columns(table), []
+
+        df = self.execute_df(
+            f"DESCRIBE {schema}.{table}",
+            query_name="describe_table",
+            dataset=f"{schema}.{table}",
+        )
+        columns = []
+        partition_columns = []
+        in_partition_section = False
+
+        for _, row in df.iterrows():
+            col_name = row.get("col_name")
+            data_type = row.get("data_type")
+            if not isinstance(col_name, str):
+                continue
+            col_name = col_name.strip()
+
+            # Detect partition section header
+            if col_name == "# Partition Information":
+                in_partition_section = True
+                continue
+            # Skip comment rows
+            if col_name.startswith("#") or not col_name:
+                continue
+            if not isinstance(data_type, str):
+                continue
+            data_type = data_type.strip()
+            if not data_type:
+                continue
+
+            if in_partition_section:
+                partition_columns.append(col_name)
+            else:
+                columns.append({"name": col_name, "type": data_type})
+
+        # Add partition cols to column list if not already present
+        col_names = {c["name"] for c in columns}
+        for pc in partition_columns:
+            if pc not in col_names:
+                columns.append({"name": pc, "type": "string"})
+
+        return columns, partition_columns

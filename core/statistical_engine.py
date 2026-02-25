@@ -184,6 +184,55 @@ def compute_frequency_band(
     }
 
 
+def compute_rolling_bands(
+    values: list[float],
+    n_periods: int,
+    n_sigma: float = 2.0,
+    margin_pct: float = 0.10,
+    min_history: int = 7,
+) -> dict:
+    """Calcula bandas rolantes sigma e margem para cada ponto.
+
+    Para cada ponto i, usa values[max(0,i-n_periods):i] como baseline
+    (excluindo o ponto atual, igual ao backtest).
+
+    Returns:
+        {"sigma_upper": list, "sigma_lower": list,
+         "margin_upper": list, "margin_lower": list,
+         "center": list}
+        Cada lista tem mesmo tamanho que values. None onde historico insuficiente.
+    """
+    n = len(values)
+    sigma_upper: list[float | None] = [None] * n
+    sigma_lower: list[float | None] = [None] * n
+    margin_upper: list[float | None] = [None] * n
+    margin_lower: list[float | None] = [None] * n
+    center: list[float | None] = [None] * n
+
+    for i in range(n):
+        baseline = _filter_valid(values[max(0, i - n_periods):i])
+        if len(baseline) < min_history:
+            continue
+        try:
+            sb = compute_dynamic_band(baseline, n_periods, n_sigma)
+            mb = compute_margin_band(baseline, n_periods, margin_pct)
+            sigma_upper[i] = sb["upper"]
+            sigma_lower[i] = sb["lower"]
+            margin_upper[i] = mb["upper"]
+            margin_lower[i] = mb["lower"]
+            center[i] = sb["center"]
+        except ValueError:
+            continue
+
+    return {
+        "sigma_upper": sigma_upper,
+        "sigma_lower": sigma_lower,
+        "margin_upper": margin_upper,
+        "margin_lower": margin_lower,
+        "center": center,
+    }
+
+
 def detect_drift(
     values: list[float],
     window: Optional[int] = None,

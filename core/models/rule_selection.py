@@ -19,6 +19,7 @@ class UserOverride:
     custom_values: Optional[list[str]] = None
     custom_n_periods: Optional[int] = None
     custom_n_sigma: Optional[float] = None
+    custom_margin_pct: Optional[float] = None
     notes: str = ""
 
 

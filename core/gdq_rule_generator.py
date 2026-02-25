@@ -63,13 +63,15 @@ class GDQRuleGenerator:
 
         n_periods = proposal.baseline_window or 30
         n_sigma = proposal.baseline_n_sigma or 2.0
-        margin_pct = 0.10
+        margin_pct = proposal.baseline_margin_pct or 0.10
 
         if overrides:
             if overrides.custom_n_periods is not None:
                 n_periods = overrides.custom_n_periods
             if overrides.custom_n_sigma is not None:
                 n_sigma = overrides.custom_n_sigma
+            if overrides.custom_margin_pct is not None:
+                margin_pct = overrides.custom_margin_pct
 
         target = proposal.target_column or ""
 
