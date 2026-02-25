@@ -143,3 +143,67 @@ class TestRecalculateProposal:
         new_baseline = BaselineStrategy(n_periods=10)
         result = service.recalculate_proposal(proposal, new_baseline)
         assert result.backtest is None  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# propose_table_rules (RowCount)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def stable_row_count_history():
+    """DataFrame simulando saida do get_row_count_history."""
+    data = make_stable_series(n=30, seed=42)
+    return pd.DataFrame({
+        "period": data["dates"],
+        "row_count": [v * 10 for v in data["values"]],  # ~1000
+    })
+
+
+class TestProposeTableRules:
+    def test_returns_rowcount_proposal(self, service, stable_row_count_history, baseline):
+        proposals = service.propose_table_rules(
+            stable_row_count_history, "tb_test", baseline,
+        )
+        assert len(proposals) == 1
+        assert proposals[0].rule_type == RuleType.ROW_COUNT_DUAL_GUARD
+
+    def test_rowcount_target_column_is_none(self, service, stable_row_count_history, baseline):
+        proposals = service.propose_table_rules(
+            stable_row_count_history, "tb_test", baseline,
+        )
+        assert proposals[0].target_column is None
+
+    def test_rowcount_has_syntax(self, service, stable_row_count_history, baseline):
+        proposals = service.propose_table_rules(
+            stable_row_count_history, "tb_test", baseline,
+        )
+        syntax = proposals[0].gdq_syntax_preview
+        assert "RowCount" in syntax
+        assert "avg(last(" in syntax
+
+    def test_empty_history_returns_empty(self, service, baseline):
+        empty_df = pd.DataFrame(columns=["period", "row_count"])
+        proposals = service.propose_table_rules(
+            empty_df, "tb_test", baseline,
+        )
+        assert proposals == []
+
+    def test_custom_strategy(self, service, stable_row_count_history, baseline):
+        """Verifica que uma strategy customizada e chamada."""
+        class MockStrategy:
+            def propose(self, row_counts, dates, table, bl):
+                return RuleProposal(
+                    id="mock", target_column=None, target_table=table,
+                    rule_type=RuleType.ROW_COUNT_DUAL_GUARD,
+                    metric_name="row_count",
+                    gdq_syntax_preview="MOCK_SYNTAX",
+                )
+            def recalculate(self, proposal, new_baseline):
+                return proposal
+
+        proposals = service.propose_table_rules(
+            stable_row_count_history, "tb_test", baseline,
+            strategy=MockStrategy(),
+        )
+        assert len(proposals) == 1
+        assert proposals[0].gdq_syntax_preview == "MOCK_SYNTAX"

@@ -25,7 +25,7 @@ from core.statistical_engine import compute_dynamic_band, compute_margin_band
 
 
 class ProposalService:
-    """Geração e recalibração de propostas de regras numéricas."""
+    """Geração e recalibração de propostas de regras numéricas e de tabela."""
 
     def __init__(self):
         self.generator = GDQRuleGenerator()
@@ -96,6 +96,40 @@ class ProposalService:
             proposals.append(completeness_proposal)
 
         return proposals
+
+    def propose_table_rules(
+        self,
+        row_count_history: pd.DataFrame,
+        table: str,
+        baseline: BaselineStrategy,
+        strategy=None,
+    ) -> list[RuleProposal]:
+        """Gera propostas de regra de tabela (RowCount).
+
+        Args:
+            row_count_history: DataFrame de get_row_count_history [period, row_count].
+            table: Nome da tabela.
+            baseline: Estrategia de baseline.
+            strategy: Estrategia customizada (plugin). Default: GenericBandRowCountStrategy.
+
+        Returns:
+            Lista de RuleProposal (tipicamente 1 RowCount dual guard).
+        """
+        if row_count_history.empty:
+            return []
+
+        if strategy is None:
+            from strategies.row_count_strategy import GenericBandRowCountStrategy
+            strategy = GenericBandRowCountStrategy()
+
+        row_counts = row_count_history["row_count"].tolist()
+        dates = row_count_history["period"].tolist()
+
+        proposal = strategy.propose(row_counts, dates, table, baseline)
+        if proposal is None:
+            return []
+
+        return [proposal]
 
     def recalculate_proposal(
         self,
