@@ -34,6 +34,86 @@ class QueryBuilder:
             ),
         )
 
+    def build_date_range(
+        self,
+        schema: str,
+        table: str,
+        temporal_col: str,
+        date_expression: str = "",
+        base_filter: str = "",
+    ) -> str:
+        """Query para min/max da coluna temporal e contagem de períodos."""
+        template = self.env.get_template("date_range.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            temporal_col=temporal_col,
+            date_expression=date_expression,
+            base_filter=base_filter,
+        )
+
+    def build_volume_by_period(
+        self,
+        schema: str,
+        table: str,
+        temporal_col: str,
+        date_expression: str = "",
+        base_filter: str = "",
+        limit: int = 50,
+    ) -> str:
+        """Query para row count por período."""
+        template = self.env.get_template("volume_by_period.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            temporal_col=temporal_col,
+            date_expression=date_expression,
+            base_filter=base_filter,
+            limit=limit,
+        )
+
+    def build_show_partitions(
+        self,
+        schema: str,
+        table: str,
+        partition_col: str = "partition_0",
+    ) -> str:
+        """Query para listar partições via SELECT DISTINCT."""
+        template = self.env.get_template("show_partitions.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            partition_col=partition_col,
+        )
+
+    def build_column_sample(
+        self,
+        schema: str,
+        table: str,
+        col: str,
+        temporal_col: str,
+        date_expression: str = "",
+        sample_periods: int = 10,
+        base_filter: str = "",
+    ) -> str:
+        """Query para profiling de uma coluna (contagens + cast numérico)."""
+        template = self.env.get_template("column_sample.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            col=col,
+            temporal_col=temporal_col,
+            date_expression=date_expression,
+            date_lookback_expr=adapt_function(
+                "DATE_SUBTRACT_DAYS", self.dialect, n=sample_periods,
+            ),
+            base_filter=base_filter,
+        )
+
     def build_numeric_history(
         self,
         schema: str,
