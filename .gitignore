@@ -1,0 +1,38 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Ambiente
+.env
+.env.local
+.env.prod
+
+# IDE
+.vscode/
+.idea/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# AWS
+.aws/
+
+# Mock data (gerado por scripts/generate_mock_data.py)
+mock_data/*.parquet
+mock_data/*.csv
+!mock_data/.gitkeep
+
+# AWS test data (gerado por scripts/generate_aws_test_data.py)
+aws_test_data/data/
+!aws_test_data/.gitkeep
+
+# Outputs
+presets/*.json
+!presets/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Claude Code
+.claude/

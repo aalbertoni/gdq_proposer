@@ -1,0 +1,19 @@
+# Core
+streamlit>=1.30
+plotly>=5.18
+pandas>=2.1
+numpy>=1.26
+
+# Athena (real - dev/prod)
+pyathena>=3.0
+boto3>=1.34
+
+# Athena (mock local)
+duckdb>=1.0
+pyarrow>=14.0
+
+# Templates
+jinja2>=3.1
+
+# Testes
+pytest>=8.0
