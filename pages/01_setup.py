@@ -361,47 +361,79 @@ lookback_value = st.slider(
 
 # Auto-suggest date_expression if selected date col is string type
 selected_col_base_type = _base_type(col_type_map.get(date_col, ""))
-needs_date_expression = selected_col_base_type in ("string", "varchar")
+_STRING_TYPES = {"string", "varchar", "char"}
+_INTEGER_TYPES = {"bigint", "int", "integer", "smallint", "tinyint"}
+needs_date_expression = selected_col_base_type in (_STRING_TYPES | _INTEGER_TYPES)
+is_integer_temporal = selected_col_base_type in _INTEGER_TYPES
 
 if needs_date_expression:
     from infra.sql_dialect import SQLDialect
 
     current_dialect = client.dialect
 
-    # Common string date formats with dialect-aware SQL expressions
-    # Each entry: (label, athena_expr, duckdb_expr)
-    _DATE_PATTERNS = [
-        (
-            "yyyy-MM-dd (ex: 2024-01-15)",
-            'CAST("{col}" AS DATE)',
-            'CAST("{col}" AS DATE)',
-        ),
-        (
-            "yyyyMMdd (ex: 20240115)",
-            'DATE_PARSE("{col}", \'%Y%m%d\')',
-            'STRPTIME("{col}", \'%Y%m%d\')::DATE',
-        ),
-        (
-            "yyyyMM (ex: 202401)",
-            'DATE_PARSE("{col}", \'%Y%m\')',
-            'STRPTIME("{col}", \'%Y%m\')::DATE',
-        ),
-        (
-            "dd/MM/yyyy (ex: 15/01/2024)",
-            'DATE_PARSE("{col}", \'%d/%m/%Y\')',
-            'STRPTIME("{col}", \'%d/%m/%Y\')::DATE',
-        ),
-        (
-            "yyyy-MM-dd HH:mm:ss (ex: 2024-01-15 10:30:00)",
-            'CAST("{col}" AS TIMESTAMP)',
-            'CAST("{col}" AS TIMESTAMP)',
-        ),
-        (
-            "Customizado (digitar manualmente)",
-            "",
-            "",
-        ),
-    ]
+    # Dialect-aware SQL expressions: (label, athena_expr, duckdb_expr)
+    # Patterns depend on whether the column is string or integer type
+    if is_integer_temporal:
+        _DATE_PATTERNS = [
+            (
+                "Epoch segundos (ex: 1705276800)",
+                'CAST(FROM_UNIXTIME("{col}") AS DATE)',
+                'CAST(EPOCH_MS("{col}" * 1000) AS DATE)',
+            ),
+            (
+                "Epoch milissegundos (ex: 1705276800000)",
+                'CAST(FROM_UNIXTIME("{col}" / 1000) AS DATE)',
+                'CAST(EPOCH_MS("{col}") AS DATE)',
+            ),
+            (
+                "yyyyMMdd como inteiro (ex: 20240115)",
+                'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m%d\')',
+                'STRPTIME(CAST("{col}" AS VARCHAR), \'%Y%m%d\')::DATE',
+            ),
+            (
+                "yyyyMM como inteiro (ex: 202401)",
+                'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m\')',
+                'STRPTIME(CAST("{col}" AS VARCHAR), \'%Y%m\')::DATE',
+            ),
+            (
+                "Customizado (digitar manualmente)",
+                "",
+                "",
+            ),
+        ]
+    else:
+        _DATE_PATTERNS = [
+            (
+                "yyyy-MM-dd (ex: 2024-01-15)",
+                'CAST("{col}" AS DATE)',
+                'CAST("{col}" AS DATE)',
+            ),
+            (
+                "yyyyMMdd (ex: 20240115)",
+                'DATE_PARSE("{col}", \'%Y%m%d\')',
+                'STRPTIME("{col}", \'%Y%m%d\')::DATE',
+            ),
+            (
+                "yyyyMM (ex: 202401)",
+                'DATE_PARSE("{col}", \'%Y%m\')',
+                'STRPTIME("{col}", \'%Y%m\')::DATE',
+            ),
+            (
+                "dd/MM/yyyy (ex: 15/01/2024)",
+                'DATE_PARSE("{col}", \'%d/%m/%Y\')',
+                'STRPTIME("{col}", \'%d/%m/%Y\')::DATE',
+            ),
+            (
+                "yyyy-MM-dd HH:mm:ss (ex: 2024-01-15 10:30:00)",
+                'CAST("{col}" AS TIMESTAMP)',
+                'CAST("{col}" AS TIMESTAMP)',
+            ),
+            (
+                "Customizado (digitar manualmente)",
+                "",
+                "",
+            ),
+        ]
 
     pattern_labels = [p[0] for p in _DATE_PATTERNS]
 
