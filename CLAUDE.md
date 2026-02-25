@@ -232,6 +232,57 @@ Ao iniciar uma tarefa, identifique qual modo é mais adequado:
 
 ---
 
+### 🎨 ux-ui (HOOK — planejamento + avaliação)
+
+**Quando:** SEMPRE no início e final de cada sprint
+
+**Foco:**
+- Redução de fricção em cada interação do usuário
+- Visibilidade do estado do sistema (config ativa, carrinho, progresso)
+- Consistência visual e de navegação entre páginas
+- Padrões Streamlit: layout, componentes, session_state, responsividade
+- Checklist completa: navegação, informação, interação, consistência, performance
+
+**Spec completa:** `docs/agents/ux_ui_agent.md`
+
+**Output:** Avaliação com achados classificados: `[BLOQUEANTE]`, `[MELHORIA]`, `[SUGESTÃO]`
+
+---
+
+### 📓 tech-writer-user (HOOK — planejamento + avaliação)
+
+**Quando:** SEMPRE no início e final de cada sprint
+
+**Foco:**
+- Documentação contextual no app Streamlit (help texts, tooltips, captions)
+- Linguagem clara para analista/engenheiro de dados (não dev)
+- Progressive disclosure: label → help → caption → expander
+- Consistência de termos entre páginas
+- Mensagens de erro acionáveis (dizem o que fazer)
+
+**Spec completa:** `docs/agents/tech_writer_user_agent.md`
+
+**Output:** Avaliação com achados classificados: `[TEXTO_FALTANDO]`, `[TEXTO_CONFUSO]`, `[TEXTO_INCONSISTENTE]`
+
+---
+
+### 📄 tech-writer-code (HOOK — planejamento + avaliação)
+
+**Quando:** SEMPRE no início e final de cada sprint
+
+**Foco:**
+- Docstrings Google Style para funções/classes públicas
+- Docstrings de módulo (propósito, dependências, referência à spec)
+- ADRs para decisões de design não óbvias (`docs/adr/`)
+- Documentação de templates SQL (parâmetros, output, notas)
+- Sincronização docs ↔ código
+
+**Spec completa:** `docs/agents/tech_writer_code_agent.md`
+
+**Output:** Avaliação com achados classificados: `[DOCSTRING_FALTANDO]`, `[DOCSTRING_DESATUALIZADA]`, `[ADR_NECESSÁRIO]`
+
+---
+
 ## Convenções de Código
 
 ### Python
@@ -419,6 +470,80 @@ Critério de sucesso: calibra e exporta regras Mean/StdDev válidas com score.
 5. integration-qa → testa e2e
 ```
 
+### Hooks obrigatórios por sprint
+
+Os hooks abaixo DEVEM ser acionados automaticamente nos momentos indicados.
+
+#### HOOK: Início de sprint (planejamento)
+
+Ao iniciar qualquer sprint, ANTES de escrever código, rodar **6 agentes** em paralelo:
+
+**Grupo técnico:**
+```
+[architect]       → Revisar contratos/interfaces das fatias, validar dependências, identificar trade-offs
+[athena-sql]      → Revisar templates SQL necessários, planejar compatibilidade Athena↔DuckDB, estimar custo
+[stats-engine]    → Revisar abordagem estatística, identificar edge cases, planejar fixtures necessárias
+```
+
+**Grupo qualidade:**
+```
+[ux-ui]           → Revisar fatias planejadas, propor wireframes textuais, definir fluxo do usuário
+[tech-writer-user]→ Identificar novos conceitos, rascunhar textos de help/caption/info
+[tech-writer-code]→ Rascunhar docstrings para novas interfaces, verificar se ADRs são necessários
+```
+
+O output dos 6 agentes DEVE ser considerado antes de começar a implementação.
+Se qualquer agente identificar `[BLOQUEANTE]`, a implementação NÃO deve prosseguir até resolver.
+
+#### HOOK: Final de sprint (avaliação)
+
+Ao finalizar qualquer sprint, DEPOIS de código pronto e testes unitários passando, executar **3 etapas sequenciais**:
+
+**Etapa 1 — Teste com Athena real (obrigatório):**
+
+```
+[integration-qa]  → Executar fluxo completo contra Athena real (não mock)
+```
+
+- Usar tabela `gdq_test_db.tb_operacoes_incremental` (ou tabela relevante ao sprint)
+- Configurar `AWS_PROFILE=gdq-test` e `GDQ_ATHENA_MODE=real`
+- Validar: queries executam sem erro, dados retornados fazem sentido, regras GDQ geradas são válidas
+- Comparar resultados Athena vs DuckDB mock para detectar divergências de dialeto
+- Documentar: número de períodos, coverage, regras geradas, qualquer diferença vs mock
+- Se houver divergência Athena↔DuckDB: é `[BLOQUEANTE]`, deve ser corrigida antes de prosseguir
+
+**Etapa 2 — Avaliação técnica (em paralelo):**
+
+```
+[architect]       → Revisar código implementado: contratos respeitados, sem acoplamento indevido, extensibilidade
+[athena-sql]      → Validar templates SQL: compatibilidade Athena↔DuckDB, uso de partições, custo
+[stats-engine]    → Validar lógica estatística: edge cases cobertos, fixtures adequadas, robustez numérica
+```
+
+**Etapa 3 — Avaliação de qualidade (em paralelo):**
+
+```
+[ux-ui]           → Checklist UX completa, testar fluxo do usuário, listar achados
+[tech-writer-user]→ Verificar textos em todas as páginas modificadas, executar checklist
+[tech-writer-code]→ Verificar docstrings, sincronização docs↔código, executar checklist
+```
+
+#### Critérios de aprovação
+
+Cada agente DEVE:
+- Ser **crítico e específico** — apontar arquivos e linhas de código
+- Classificar achados por severidade
+- Propor solução concreta para cada achado
+- Dar status final: APROVADO / APROVADO COM RESSALVAS / REPROVADO
+
+O sprint só está completo quando:
+1. Testes unitários passam (`pytest tests/ -v`)
+2. Teste com Athena real passa sem divergências
+3. Todos os 6 agentes de avaliação aprovam (com ou sem ressalvas)
+
+Achados `[BLOQUEANTE]` devem ser resolvidos antes de fechar o sprint.
+Achados `[MELHORIA]` e `[SUGESTÃO]` podem ser diferidos para sprints futuros.
+
 ### Como pedir tarefas
 
 **Bom (fatia clara com contrato):**
@@ -545,3 +670,6 @@ pytest tests/ -v
 | Setup de Ambiente | `docs/sprint0_setup_guide.md` | Windows + Claude Code + mock Athena + multi-ambiente |
 | Setup AWS Teste | `docs/aws_test_setup.md` | IAM readonly + tabelas fake S3/Glue/Athena |
 | Playbook Claude Code | `docs/playbook_claude_code.md` | Etapas sequenciais para Claude Code executar |
+| Agente UX/UI | `docs/agents/ux_ui_agent.md` | Princípios, padrões Streamlit, checklist de avaliação |
+| Agente Tech Writer (User) | `docs/agents/tech_writer_user_agent.md` | Documentação in-app, progressive disclosure, checklist |
+| Agente Tech Writer (Code) | `docs/agents/tech_writer_code_agent.md` | Docstrings, ADRs, documentação de módulo, checklist |
