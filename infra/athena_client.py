@@ -142,6 +142,7 @@ class AthenaClient:
                 dataset=f"{schema}.{table}",
             )
             return [
-                {"name": row["col_name"], "type": row["data_type"]}
+                {"name": str(row["col_name"]).strip(), "type": str(row["data_type"]).strip()}
                 for _, row in df.iterrows()
+                if isinstance(row["col_name"], str)
             ]

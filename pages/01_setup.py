@@ -1,13 +1,11 @@
 """
-Pagina 01 — Setup Wizard.
+Pagina 01 — Setup: Configuracao da tabela alvo.
 
-Wizard com validacao progressiva para configurar a tabela alvo:
-1. Selecionar schema/tabela e validar existencia
-2. Configurar eixo temporal (coluna de data, grain, partition method)
-3. Filtro base opcional
-4. Profiling de colunas (classificacao semantica)
-5. Override manual de tipos + selecao de colunas
-6. Salvar preset
+Fluxo simplificado:
+- Carregar preset existente OU configurar nova tabela
+- Setup da tabela + eixo temporal + profiling em um fluxo continuo
+- Resultado do profiling com selecao de colunas inline
+- Salva config no session_state para uso imediato na pagina Explore
 
 Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A1).
 """
@@ -36,7 +34,6 @@ from services.profiling_service import ProfilingService
 # ---------------------------------------------------------------------------
 
 def get_client() -> AthenaClient:
-    """Get or create a cached AthenaClient in session_state."""
     if "client" not in st.session_state:
         config = load_config()
         st.session_state["config"] = config
@@ -45,7 +42,6 @@ def get_client() -> AthenaClient:
 
 
 def get_services(client: AthenaClient):
-    """Get or create cached services."""
     if "dataset_service" not in st.session_state:
         builder = QueryBuilder(dialect=client.dialect)
         st.session_state["dataset_service"] = DatasetService(client, builder)
@@ -57,7 +53,6 @@ def get_services(client: AthenaClient):
 
 
 def _semantic_type_label(st_type: SemanticType) -> str:
-    """Label legivel para tipo semantico."""
     labels = {
         SemanticType.NUMERIC: "Numerico",
         SemanticType.CATEGORICAL_LOW_CARDINALITY: "Categorico (low)",
@@ -71,6 +66,62 @@ def _semantic_type_label(st_type: SemanticType) -> str:
     return labels.get(st_type, st_type.value)
 
 
+def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
+    """Carrega preset e popula session_state. Retorna True se sucesso."""
+    try:
+        data = json.loads(path.read_text())
+    except Exception as e:
+        st.error(f"Erro ao ler preset: {e}")
+        return False
+
+    schema = data["schema"]
+    table = data["table"]
+
+    # Validar tabela
+    try:
+        exists = dataset_svc.validate_table(schema, table)
+    except ValueError:
+        exists = False
+
+    if not exists:
+        st.error(f"Tabela `{schema}.{table}` nao encontrada no backend atual.")
+        return False
+
+    columns = dataset_svc.get_columns(schema, table)
+
+    config = DatasetConfig(
+        schema=schema,
+        table=table,
+        partition_method=PartitionMethod(data.get("partition_method", "incremental")),
+        partition_column=data.get("partition_column"),
+        date_column=data.get("date_column", ""),
+        grain_type=GrainType(data.get("grain_type", "daily")),
+        lookback_mode=LookbackMode(data.get("lookback_mode", "last_n_periods")),
+        lookback_value=data.get("lookback_value", 30),
+        date_expression=data.get("date_expression"),
+        base_filter_sql=data.get("base_filter_sql"),
+        selected_columns=data.get("selected_columns", []),
+    )
+
+    st.session_state["setup_validated"] = True
+    st.session_state["setup_schema"] = schema
+    st.session_state["setup_table"] = table
+    st.session_state["setup_columns"] = columns
+    st.session_state["setup_config"] = config
+    st.session_state["setup_date_range"] = data.get("date_range", {})
+
+    return True
+
+
+def _activate_config():
+    """Salva config ativa no session_state para uso nas paginas Explore/Review."""
+    config = st.session_state.get("setup_config")
+    profiles = st.session_state.get("setup_profiles")
+    if config and profiles:
+        st.session_state["dataset_config"] = config
+        st.session_state["column_profiles"] = profiles
+
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -78,7 +129,6 @@ def _semantic_type_label(st_type: SemanticType) -> str:
 st.set_page_config(page_title="Setup - GDQ Rule Proposer", page_icon=":gear:")
 
 st.title("Setup da Tabela")
-st.caption("Configure a tabela alvo, eixo temporal e colunas para analise.")
 
 try:
     client = get_client()
@@ -92,10 +142,48 @@ dataset_svc, profiling_svc = get_services(client)
 
 
 # ===================================================================
+# Presets existentes
+# ===================================================================
+
+preset_dir = Path(app_config.preset_dir)
+preset_files = sorted(preset_dir.glob("*.json")) if preset_dir.exists() else []
+
+if preset_files:
+    st.subheader("Carregar Configuracao Existente")
+    preset_names = ["(nova configuracao)"] + [p.stem for p in preset_files]
+
+    chosen_preset = st.selectbox(
+        "Preset:",
+        preset_names,
+        key="setup_preset_choice",
+        help="Selecione um preset salvo ou crie uma nova configuracao.",
+    )
+
+    if chosen_preset != "(nova configuracao)":
+        preset_path = preset_dir / f"{chosen_preset}.json"
+        if st.button("Carregar Preset", type="primary"):
+            with st.spinner("Validando preset..."):
+                ok = _load_preset(preset_path, profiling_svc, dataset_svc)
+            if ok:
+                st.success(f"Preset **{chosen_preset}** carregado.")
+                # Precisa rodar profiling se nao tem profiles no state
+                if "setup_profiles" not in st.session_state:
+                    st.info("Execute o profiling abaixo para ativar a configuracao.")
+                st.rerun()
+
+        # Mostrar preview do preset
+        with st.expander("Preview do preset", expanded=False):
+            data = json.loads(preset_path.read_text())
+            st.json(data)
+
+    st.divider()
+
+
+# ===================================================================
 # STEP 1: Selecionar e validar tabela
 # ===================================================================
 
-st.header("1. Selecionar Tabela")
+st.header("1. Tabela")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -121,7 +209,6 @@ if st.button("Validar Tabela", disabled=not table, type="primary"):
         st.session_state["setup_schema"] = schema
         st.session_state["setup_table"] = table
         st.session_state["setup_columns"] = columns
-        # Limpar estado de etapas posteriores quando tabela muda
         for key in ["setup_config", "setup_profiles", "setup_date_range"]:
             st.session_state.pop(key, None)
         st.success(f"Tabela `{schema}.{table}` encontrada — {len(columns)} colunas")
@@ -135,18 +222,17 @@ if not st.session_state.get("setup_validated"):
     st.info("Informe schema e tabela e clique em **Validar Tabela** para continuar.")
     st.stop()
 
-# Mostrar colunas encontradas
 columns = st.session_state["setup_columns"]
 schema = st.session_state["setup_schema"]
 table = st.session_state["setup_table"]
 
-with st.expander(f"Colunas de `{schema}.{table}` ({len(columns)})", expanded=False):
+with st.expander(f"Colunas de `{schema}.{table}` ({len(columns)})", expanded=True):
     for col_info in columns:
-        st.text(f"  {col_info['name']:30s}  {col_info['type']}")
+        st.text(f"  {str(col_info['name']):30s}  {col_info['type']}")
 
 
 # ===================================================================
-# STEP 2: Configurar eixo temporal
+# STEP 2: Eixo temporal
 # ===================================================================
 
 st.header("2. Eixo Temporal")
@@ -219,7 +305,7 @@ base_filter = st.text_input(
 
 
 # ===================================================================
-# STEP 4: Montar config e validar range temporal
+# STEP 4: Validar range temporal
 # ===================================================================
 
 st.header("4. Validar Configuracao")
@@ -275,11 +361,6 @@ st.header("5. Profiling de Colunas")
 
 dataset_config = st.session_state.get("setup_config", dataset_config)
 
-st.warning(
-    f"O profiling vai executar **{len(columns)}** queries de amostragem. "
-    f"Em Athena real, isso gera custo proporcional ao volume de dados."
-)
-
 if st.button("Executar Profiling", type="primary"):
     profiles = []
     progress = st.progress(0, text="Classificando colunas...")
@@ -299,6 +380,15 @@ if st.button("Executar Profiling", type="primary"):
     progress.empty()
     st.session_state["setup_profiles"] = profiles
     st.success(f"Profiling concluido — {len(profiles)} colunas classificadas")
+
+    # Quick summary by semantic type
+    type_counts: dict[str, int] = {}
+    for p in profiles:
+        label = _semantic_type_label(p.effective_type)
+        type_counts[label] = type_counts.get(label, 0) + 1
+    summary_items = [f"**{v}** {k}" for k, v in sorted(type_counts.items(), key=lambda x: -x[1])]
+    st.info("Resumo: " + " · ".join(summary_items))
+
     st.rerun()
 
 profiles = st.session_state.get("setup_profiles")
@@ -308,24 +398,68 @@ if not profiles:
 
 
 # ===================================================================
-# STEP 6: Resultado do profiling + override manual
+# STEP 6: Classificacao + selecao de colunas
 # ===================================================================
 
-st.header("6. Classificacao de Colunas")
+st.header("6. Selecao de Colunas")
 
-st.caption("Revise a classificacao inferida. Use o dropdown para alterar manualmente.")
+st.caption(
+    "Revise a classificacao inferida e selecione as colunas para analise. "
+    "Use o dropdown para alterar o tipo manualmente."
+)
 
 semantic_options = [s.value for s in SemanticType]
 semantic_labels = {s.value: _semantic_type_label(s) for s in SemanticType}
+semantic_label_to_value = {v: k for k, v in semantic_labels.items()}
+
+# Carregar selecoes anteriores se existirem (do preset ou sessao anterior)
+prev_selected = set(dataset_config.selected_columns or [])
+
+# --- Quick select/deselect buttons ---
+qs_col1, qs_col2, qs_col3 = st.columns(3)
+with qs_col1:
+    if st.button("Selecionar todas"):
+        for p in profiles:
+            st.session_state[f"sel_{p.column_name}"] = True
+        st.rerun()
+with qs_col2:
+    if st.button("Desmarcar todas"):
+        for p in profiles:
+            st.session_state[f"sel_{p.column_name}"] = False
+        st.rerun()
+with qs_col3:
+    if st.button("Somente numericas"):
+        for p in profiles:
+            st.session_state[f"sel_{p.column_name}"] = (p.effective_type == SemanticType.NUMERIC)
+        st.rerun()
 
 overrides = {}
 selected_cols = []
 
+# Header row
+hdr1, hdr2, hdr3, hdr4, hdr5 = st.columns([0.5, 2.5, 1.5, 2.5, 1])
+hdr1.markdown("**Sel**")
+hdr2.markdown("**Coluna**")
+hdr3.markdown("**Tipo Athena**")
+hdr4.markdown("**Tipo Semantico**")
+hdr5.markdown("**Null %**")
+
 for profile in profiles:
-    col_a, col_b, col_c, col_d = st.columns([3, 2, 3, 1])
+    col_d, col_a, col_b, col_c, col_e = st.columns([0.5, 2.5, 1.5, 2.5, 1])
+
+    with col_d:
+        default_sel = profile.column_name in prev_selected if prev_selected else True
+        is_selected = st.checkbox(
+            "Sel",
+            value=default_sel,
+            key=f"sel_{profile.column_name}",
+            label_visibility="collapsed",
+        )
+        if is_selected:
+            selected_cols.append(profile.column_name)
 
     with col_a:
-        st.text(profile.column_name)
+        st.code(profile.column_name, language=None)
 
     with col_b:
         st.caption(profile.athena_type)
@@ -343,17 +477,15 @@ for profile in profiles:
         if new_type != profile.inferred_semantic_type.value:
             overrides[profile.column_name] = SemanticType(new_type)
 
-    with col_d:
-        is_selected = st.checkbox(
-            "Sel",
-            value=True,
-            key=f"sel_{profile.column_name}",
-            label_visibility="collapsed",
-        )
-        if is_selected:
-            selected_cols.append(profile.column_name)
+    with col_e:
+        null_pct = profile.null_ratio * 100
+        if null_pct > 50:
+            st.markdown(f":red[{null_pct:.0f}%]")
+        elif null_pct > 10:
+            st.markdown(f":orange[{null_pct:.0f}%]")
+        else:
+            st.caption(f"{null_pct:.0f}%")
 
-    # Mostrar warnings se houver
     if profile.warnings:
         for w in profile.warnings:
             st.caption(f"  {w}")
@@ -362,7 +494,7 @@ for profile in profiles:
 if overrides:
     profiling_svc.apply_user_overrides(profiles, overrides)
 
-# Resumo
+# Resumo por tipo
 n_numeric = sum(
     1 for p in profiles
     if p.column_name in selected_cols and p.effective_type == SemanticType.NUMERIC
@@ -384,46 +516,66 @@ st.markdown(
 
 
 # ===================================================================
-# STEP 7: Salvar preset
+# STEP 7: Ativar configuracao (e opcionalmente salvar preset)
 # ===================================================================
 
-st.header("7. Salvar Configuracao")
+st.header("7. Ativar Configuracao")
 
 dataset_config.selected_columns = selected_cols
 
-preset_name = st.text_input(
-    "Nome do preset:",
-    value=f"{schema}_{table}",
-    help="Sera salvo em presets/<nome>.json",
-)
+col_btn1, col_btn2 = st.columns(2)
 
-if st.button("Salvar Preset", type="primary", disabled=not selected_cols):
-    # Montar preset
-    preset = {
-        "schema": dataset_config.schema,
-        "table": dataset_config.table,
-        "partition_method": dataset_config.partition_method.value,
-        "partition_column": dataset_config.partition_column,
-        "date_column": dataset_config.date_column,
-        "grain_type": dataset_config.grain_type.value,
-        "lookback_mode": dataset_config.lookback_mode.value,
-        "lookback_value": dataset_config.lookback_value,
-        "date_expression": dataset_config.date_expression,
-        "base_filter_sql": dataset_config.base_filter_sql,
-        "selected_columns": dataset_config.selected_columns,
-        "overrides": {k: v.value for k, v in overrides.items()},
-        "date_range": date_range,
-    }
+with col_btn1:
+    if st.button(
+        "Ativar e ir para Explore",
+        type="primary",
+        disabled=not selected_cols,
+    ):
+        st.session_state["setup_config"] = dataset_config
+        st.session_state["dataset_config"] = dataset_config
+        st.session_state["column_profiles"] = profiles
+        st.switch_page("pages/02_explore.py")
 
-    preset_dir = Path(app_config.preset_dir)
-    preset_dir.mkdir(exist_ok=True)
-    preset_path = preset_dir / f"{preset_name}.json"
-    preset_path.write_text(json.dumps(preset, indent=2, ensure_ascii=False))
+with col_btn2:
+    save_preset = st.checkbox("Salvar como preset", value=False)
 
-    st.success(f"Preset salvo em `{preset_path}`")
+if save_preset:
+    preset_name = st.text_input(
+        "Nome do preset:",
+        value=f"{schema}_{table}",
+        help="Sera salvo em presets/<nome>.json",
+    )
 
-    # Salvar config no session_state para proximas paginas
-    st.session_state["dataset_config"] = dataset_config
-    st.session_state["column_profiles"] = profiles
+    if st.button("Salvar Preset", disabled=not selected_cols):
+        preset = {
+            "schema": dataset_config.schema,
+            "table": dataset_config.table,
+            "partition_method": dataset_config.partition_method.value,
+            "partition_column": dataset_config.partition_column,
+            "date_column": dataset_config.date_column,
+            "grain_type": dataset_config.grain_type.value,
+            "lookback_mode": dataset_config.lookback_mode.value,
+            "lookback_value": dataset_config.lookback_value,
+            "date_expression": dataset_config.date_expression,
+            "base_filter_sql": dataset_config.base_filter_sql,
+            "selected_columns": dataset_config.selected_columns,
+            "overrides": {k: v.value for k, v in overrides.items()},
+            "date_range": date_range,
+        }
 
-    st.info("Configuracao pronta! Va para a pagina **Explore** para analisar colunas.")
+        pdir = Path(app_config.preset_dir)
+        pdir.mkdir(exist_ok=True)
+        preset_path = pdir / f"{preset_name}.json"
+        preset_path.write_text(json.dumps(preset, indent=2, ensure_ascii=False))
+        st.success(f"Preset salvo em `{preset_path}`")
+
+
+# Status bar: mostrar se config esta ativa
+if "dataset_config" in st.session_state:
+    cfg = st.session_state["dataset_config"]
+    n_sel = len(cfg.selected_columns) if cfg.selected_columns else 0
+    st.sidebar.success(
+        f"Config ativa: `{cfg.schema}.{cfg.table}` ({n_sel} colunas)"
+    )
+else:
+    st.sidebar.info("Nenhuma config ativa.")
