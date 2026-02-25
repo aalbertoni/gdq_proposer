@@ -701,7 +701,7 @@ for profile in profiles:
 
     if profile.warnings:
         for w in profile.warnings:
-            st.caption(f"  {w}")
+            st.warning(w)
 
 # Aplicar overrides
 if overrides:

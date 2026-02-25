@@ -43,7 +43,8 @@ class DualGuardSpec:
     """Representacao intermediaria do padrao dual guard.
 
     A representacao e:
-      (banda_sigma) OR (banda_margem)
+      (banda_sigma) OR (banda_margem)    [quando margin_enabled=True]
+      (banda_sigma)                       [quando margin_enabled=False]
 
     Onde:
       banda_sigma: metric >= avg(last(N)) - K*std(last(N)) [-buffer]
@@ -58,6 +59,7 @@ class DualGuardSpec:
     n_sigma: float = 2  # int para Mean/StdDev, float para RowCount
     margin_pct: float = 0.10
     buffer: float = 0.01  # 0 para RowCount
+    margin_enabled: bool = True  # Se False, gera apenas banda sigma (sem OR margem)
     profile: FormattingProfile = None  # type: ignore[assignment]
     # Se None, inferido automaticamente do metric type
     custom_sql_expression: str = ""  # Apenas para MetricRef.CUSTOM_SQL

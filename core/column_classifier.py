@@ -21,6 +21,11 @@ LOW_CARDINALITY_MAX_RATIO = 0.005
 MID_CARDINALITY_MAX_DISTINCT = 500
 MID_CARDINALITY_MAX_RATIO = 0.05
 
+# Guardrails para reclassificação de numéricas nativas
+NUMERIC_LOW_CARD_MAX_DISTINCT = 20  # <= 20 distintos → sugerir categórica
+NUMERIC_HIGH_CARD_MIN_DISTINCT = 10000  # >= 10k distintos → sugerir identificador
+NUMERIC_HIGH_CARD_MIN_RATIO = 0.50  # e ratio >= 50% → confirma identificador
+
 # ---------------------------------------------------------------------------
 # Tipos Athena nativos
 # ---------------------------------------------------------------------------
@@ -95,6 +100,61 @@ def classify_column(
         return SemanticType.CATEGORICAL_MID_CARDINALITY
 
     return SemanticType.CATEGORICAL_HIGH_CARDINALITY
+
+
+def suggest_reclassification(
+    athena_type: str,
+    distinct_count: int,
+    total_count: int,
+    non_null_count: int,
+) -> tuple[SemanticType | None, str]:
+    """Avalia se coluna numérica nativa deveria ser reclassificada.
+
+    Executa guardrails de cardinalidade em colunas cujo tipo físico é
+    numérico (int, bigint, double, etc.), sugerindo reclassificação
+    quando a cardinalidade é incompatível com análise estatística.
+
+    Args:
+        athena_type: Tipo físico Athena.
+        distinct_count: Valores distintos não-nulos.
+        total_count: Total de linhas na amostra.
+        non_null_count: Total de linhas não-nulas.
+
+    Returns:
+        (suggested_type, warning_message).
+        Se suggested_type é None, nenhuma reclassificação sugerida.
+    """
+    base_type = _normalize_athena_type(athena_type)
+
+    if base_type not in ATHENA_NUMERIC_TYPES:
+        return None, ""
+
+    if non_null_count == 0 or distinct_count == 0:
+        return None, ""
+
+    distinct_ratio = distinct_count / non_null_count
+
+    # Guardrail 1: cardinalidade muito baixa → sugerir categórica
+    if distinct_count <= NUMERIC_LOW_CARD_MAX_DISTINCT:
+        return (
+            SemanticType.CATEGORICAL_LOW_CARDINALITY,
+            f"Coluna numerica com apenas {distinct_count} valores distintos. "
+            f"Considere tratar como categorica (ex: codigo, flag, status).",
+        )
+
+    # Guardrail 2: cardinalidade muito alta → sugerir identificador
+    if (
+        distinct_count >= NUMERIC_HIGH_CARD_MIN_DISTINCT
+        and distinct_ratio >= NUMERIC_HIGH_CARD_MIN_RATIO
+    ):
+        return (
+            SemanticType.IDENTIFIER,
+            f"Coluna numerica com {distinct_count} valores distintos "
+            f"({distinct_ratio:.0%} de unicidade). "
+            f"Considere tratar como identificador (ex: ID, CPF, CNPJ).",
+        )
+
+    return None, ""
 
 
 def _normalize_athena_type(athena_type: str) -> str:

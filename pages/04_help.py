@@ -180,7 +180,8 @@ with st.expander("Parametros de calibracao (N, K, Margem%, Buffer)"):
         "K=3 cobre ~99.7%. Valor menor = regra mais rigorosa.\n\n"
         "- **Margem % (margin):** largura da banda alternativa, em porcentagem da media. "
         "Margem=10% significa que a banda vai de (media * 0.9) ate (media * 1.1). "
-        "Funciona como rede de seguranca quando a banda sigma e muito estreita.\n\n"
+        "Funciona como rede de seguranca quando a banda sigma e muito estreita. "
+        "Pode ser desativada via checkbox se voce preferir usar apenas a banda sigma.\n\n"
         "- **Buffer:** valor minimo adicionado aos limites para proteger contra "
         "falsos positivos por arredondamento. Tipicamente 0.01. "
         "Em regras de RowCount, o buffer e 0 (desabilitado)."
@@ -199,8 +200,11 @@ with st.expander("Backtest"):
         "**Metricas do backtest:**\n"
         "- **Cobertura:** porcentagem de periodos que passariam na regra. "
         "Ideal: acima de 90%\n"
-        "- **Falsos positivos:** periodos normais que seriam reprovados. "
-        "Ideal: 0 ou proximo de 0\n"
+        "- **Falsos positivos (~N):** estimativa de periodos normais que "
+        "seriam reprovados indevidamente. Usa heuristica de 4 sigma global "
+        "para distinguir valores normais de outliers reais. "
+        "Ideal: 0 ou proximo de 0. Veja mais em \"O que significam os "
+        "falsos positivos?\"\n"
         "- **Estabilidade:** quao pouco a banda muda ao variar os parametros. "
         "1.0 = muito estavel. Abaixo de 0.5 pode indicar instabilidade\n"
         "- **Outliers:** periodos com valores atipicos detectados no historico"
@@ -591,12 +595,26 @@ with st.expander("A cobertura esta abaixo de 90%. O que fazer?"):
 
 with st.expander("O que significam os falsos positivos?"):
     st.markdown(
-        "Falsos positivos sao periodos normais que a regra reprovaria "
-        "indevidamente. No backtest, a ferramenta identifica periodos que "
-        "estao fora das bandas mas nao sao outliers reais.\n\n"
-        "**Ideal:** 0 falsos positivos. Se houver 1-2, avalie se a regra "
-        "ainda e util. Se houver muitos, a regra e muito rigorosa "
-        "e vai gerar alertas desnecessarios em producao."
+        "O numero de falsos positivos mostrado no backtest e uma **estimativa** "
+        "(por isso aparece com `~` na frente). O criterio usado e:\n\n"
+        "> Um periodo e contado como falso positivo quando **viola a regra** "
+        "mas esta **dentro de 4 desvios padrao** da media global do historico.\n\n"
+        "A logica: se o valor esta a menos de 4 sigma da media global, "
+        "provavelmente e um valor normal que a regra esta reprovando "
+        "indevidamente (regra muito rigorosa). Se esta alem de 4 sigma, "
+        "provavelmente e um outlier genuino.\n\n"
+        "**Limitacoes:**\n"
+        "- E uma heuristica, nao uma classificacao definitiva\n"
+        "- Usa a media e desvio padrao **globais** (todo o historico), "
+        "que podem ser influenciados por outliers\n"
+        "- Nao considera sazonalidade ou tendencia\n\n"
+        "**Como interpretar:**\n"
+        "- **0 FPs:** a regra parece calibrada corretamente\n"
+        "- **1-2 FPs:** aceitavel na maioria dos casos\n"
+        "- **3+ FPs:** a regra pode estar rigorosa demais — "
+        "aumente K (sigma) ou a margem %\n"
+        "- Muitos FPs com cobertura alta: a banda pode estar desalinhada "
+        "por causa de drift"
     )
 
 with st.expander("Drift detectado — devo ignorar a regra?"):
@@ -715,7 +733,7 @@ glossary = [
     ("Dual guard", "Mecanismo que combina banda sigma OR banda margem. A regra passa se o valor estiver dentro de qualquer uma das duas."),
     ("DuckDB", "Banco de dados local usado em modo mock para simular o Athena durante desenvolvimento."),
     ("Estabilidade", "Metrica de 0 a 1 que indica quao pouco a banda muda ao variar parametros. 1.0 = muito estavel."),
-    ("Falso positivo", "Periodo normal que seria reprovado indevidamente pela regra. Ideal: 0."),
+    ("Falso positivo", "Estimativa (~) de periodos normais que seriam reprovados pela regra. Criterio: viola a regra mas esta dentro de 4 sigma da media global. Ideal: 0."),
     ("GDQ", "AWS Glue Data Quality. Servico da AWS para definir e executar regras de qualidade de dados."),
     ("Granularidade", "Frequencia dos periodos de analise: diario (1 periodo por dia), mensal (1 periodo por mes)."),
     ("K (sigma)", "Multiplicador do desvio padrao para a banda sigma. K=2 cobre ~95% dos dados normais. K=3 cobre ~99.7%."),

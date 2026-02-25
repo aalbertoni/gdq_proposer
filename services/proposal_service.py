@@ -324,14 +324,19 @@ class ProposalService:
         if not values:
             return proposal
 
+        margin_enabled = new_baseline.margin_enabled
+
         # Recalcular banda
         try:
             sigma_band = compute_dynamic_band(
                 values, new_baseline.n_periods, new_baseline.n_sigma,
             )
-            margin_band = compute_margin_band(
-                values, new_baseline.n_periods, new_baseline.margin_pct,
-            )
+            if margin_enabled:
+                margin_band = compute_margin_band(
+                    values, new_baseline.n_periods, new_baseline.margin_pct,
+                )
+            else:
+                margin_band = sigma_band
         except ValueError:
             return proposal
 
@@ -340,6 +345,7 @@ class ProposalService:
         proposal.baseline_window = new_baseline.n_periods
         proposal.baseline_n_sigma = new_baseline.n_sigma
         proposal.baseline_method = new_baseline.method
+        proposal.margin_enabled = margin_enabled
 
         # Recalcular backtest
         proposal.backtest = backtest_band(
@@ -349,6 +355,7 @@ class ProposalService:
             n_sigma=new_baseline.n_sigma,
             margin_pct=new_baseline.margin_pct,
             min_history=new_baseline.min_history_points,
+            margin_enabled=margin_enabled,
         )
 
         # Recalcular score
@@ -363,6 +370,7 @@ class ProposalService:
             custom_n_periods=new_baseline.n_periods,
             custom_n_sigma=new_baseline.n_sigma,
             custom_margin_pct=new_baseline.margin_pct,
+            margin_enabled=margin_enabled,
         )
         proposal.gdq_syntax_preview = self.generator.generate(proposal, overrides)
 
@@ -389,13 +397,18 @@ class ProposalService:
             else:
                 clean.append(float("nan"))
 
+        margin_enabled = baseline.margin_enabled
+
         try:
             sigma_band = compute_dynamic_band(
                 clean, baseline.n_periods, baseline.n_sigma,
             )
-            margin_band = compute_margin_band(
-                clean, baseline.n_periods, baseline.margin_pct,
-            )
+            if margin_enabled:
+                margin_band = compute_margin_band(
+                    clean, baseline.n_periods, baseline.margin_pct,
+                )
+            else:
+                margin_band = sigma_band  # fallback: same as sigma
         except ValueError:
             return None
 
@@ -411,6 +424,7 @@ class ProposalService:
             baseline_window=baseline.n_periods,
             baseline_n_sigma=baseline.n_sigma,
             baseline_margin_pct=baseline.margin_pct,
+            margin_enabled=margin_enabled,
             history_dates=dates,
             history_values=clean,
         )
@@ -423,6 +437,7 @@ class ProposalService:
             n_sigma=baseline.n_sigma,
             margin_pct=baseline.margin_pct,
             min_history=baseline.min_history_points,
+            margin_enabled=margin_enabled,
         )
 
         # Score

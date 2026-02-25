@@ -42,6 +42,10 @@ class DualGuardRenderer:
         )
         sigma_guard = f"({sigma_lower} AND {sigma_upper})"
 
+        # Sigma-only mode: sem banda margem
+        if not spec.margin_enabled:
+            return sigma_guard
+
         # --- Margin guard ---
         margin_lower = self._build_margin_lower(
             metric, target, n, margin, buffer, profile,

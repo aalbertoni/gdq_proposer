@@ -27,6 +27,7 @@ class BaselineStrategy:
     n_periods: int = 20
     n_sigma: float = 2.0
     margin_pct: float = 0.10
+    margin_enabled: bool = True  # Se False, regra usa apenas banda sigma
     percentile_lower: float = 0.05
     percentile_upper: float = 0.95
     min_history_points: int = 7

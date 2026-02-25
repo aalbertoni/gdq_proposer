@@ -88,12 +88,13 @@ class ProfilingService:
             ATHENA_DATE_TYPES,
             ATHENA_NUMERIC_TYPES,
             _normalize_athena_type,
+            suggest_reclassification,
         )
 
         normalized = _normalize_athena_type(athena_type)
 
-        # Camada 1: tipo nativo não precisa de query
-        if normalized in ATHENA_NUMERIC_TYPES or normalized in ATHENA_DATE_TYPES:
+        # Camada 1a: date/timestamp → DATETIME direto, sem query
+        if normalized in ATHENA_DATE_TYPES:
             semantic_type = classify_column(
                 athena_type=athena_type,
                 distinct_count=0,
@@ -104,6 +105,61 @@ class ProfilingService:
                 column_name=col_name,
                 athena_type=athena_type,
                 inferred_semantic_type=semantic_type,
+            )
+
+        # Camada 1b: numérico nativo → classificar como NUMERIC,
+        # mas executar query leve de cardinalidade para guardrails
+        if normalized in ATHENA_NUMERIC_TYPES:
+            semantic_type = SemanticType.NUMERIC
+            warnings = []
+            total_count = 0
+            non_null_count = 0
+            distinct_count = 0
+
+            try:
+                card_df = self._query_cardinality(
+                    config=config,
+                    col_name=col_name,
+                    temporal_col=temporal_col,
+                    base_filter=base_filter,
+                    sample_periods=sample_periods,
+                )
+                if not card_df.empty:
+                    row = card_df.iloc[0]
+                    total_count = int(row["total_count"] or 0)
+                    non_null_count = int(row["non_null_count"] or 0)
+                    distinct_count = int(row["distinct_count"] or 0)
+
+                    suggested, warning_msg = suggest_reclassification(
+                        athena_type=athena_type,
+                        distinct_count=distinct_count,
+                        total_count=total_count,
+                        non_null_count=non_null_count,
+                    )
+                    if suggested is not None:
+                        warnings.append(warning_msg)
+            except Exception:
+                pass  # fallback: classificar como NUMERIC sem guardrail
+
+            null_ratio = (
+                (total_count - non_null_count) / total_count
+                if total_count > 0 else 0.0
+            )
+            distinct_ratio = (
+                distinct_count / non_null_count
+                if non_null_count > 0 else 0.0
+            )
+
+            return ColumnProfile(
+                column_name=col_name,
+                athena_type=athena_type,
+                inferred_semantic_type=semantic_type,
+                total_count=total_count,
+                non_null_count=non_null_count,
+                distinct_count=distinct_count,
+                null_ratio=null_ratio,
+                distinct_ratio=distinct_ratio,
+                warnings=warnings,
             )
 
         # Camada 2+3: strings precisam de query para métricas
@@ -201,6 +257,36 @@ class ProfilingService:
             distinct_ratio=distinct_ratio,
             numeric_cast_ratio=numeric_cast_ratio,
             warnings=warnings,
+        )
+
+    def _query_cardinality(
+        self,
+        config: DatasetConfig,
+        col_name: str,
+        temporal_col: str,
+        base_filter: str,
+        sample_periods: int,
+    ):
+        """Query leve de cardinalidade para colunas numéricas nativas.
+
+        Usa column_sample.sql (COUNT, COUNT DISTINCT) sem TRY_CAST
+        para medir apenas contagens — não tenta cast numérico.
+        """
+        validate_identifier(col_name)
+        sql = self.builder.build_column_sample(
+            schema=config.schema,
+            table=config.table,
+            col=col_name,
+            temporal_col=temporal_col,
+            date_expression=config.date_expression or "",
+            sample_periods=sample_periods,
+            base_filter=base_filter,
+        )
+        return self.client.execute_df(
+            sql,
+            query_name="column_cardinality",
+            dataset=f"{config.schema}.{config.table}",
+            column=col_name,
         )
 
     def apply_user_overrides(

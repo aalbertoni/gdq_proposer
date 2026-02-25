@@ -82,7 +82,7 @@ def _render_rule_params(rule_key: str) -> tuple:
     """Renderiza controles de parametros inline.
 
     Returns:
-        (n_periods, n_sigma, margin_pct, buffer)
+        (n_periods, n_sigma, margin_pct, buffer, margin_enabled)
     """
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -101,13 +101,22 @@ def _render_rule_params(rule_key: str) -> tuple:
                  "Valor menor = regra mais rigorosa.",
         )
     with col3:
-        margin_pct = st.slider(
-            "Margem %:", min_value=5, max_value=30, value=10,
-            key=f"margin_{rule_key}",
-            help="Banda alternativa: porcentagem fixa da media. "
-                 "Usada pelo dual guard quando a banda sigma e muito estreita "
-                 "(ex: dados com variabilidade muito baixa).",
-        ) / 100.0
+        margin_enabled = st.checkbox(
+            "Margem %",
+            value=True,
+            key=f"margin_on_{rule_key}",
+            help="Ativar banda margem (dual guard). Quando ativada, a regra "
+                 "combina banda sigma OR banda margem, reduzindo falsos positivos "
+                 "em dados de baixa variabilidade. Desative para usar apenas sigma.",
+        )
+        if margin_enabled:
+            margin_pct = st.slider(
+                "Margem %:", min_value=1, max_value=30, value=10,
+                key=f"margin_{rule_key}",
+                help="Porcentagem fixa da media para a banda alternativa.",
+            ) / 100.0
+        else:
+            margin_pct = 0.10  # valor default (nao usado quando desativado)
     with col4:
         buffer = st.select_slider(
             "Buffer:", options=[0.0, 0.001, 0.01, 0.1], value=0.01,
@@ -115,7 +124,7 @@ def _render_rule_params(rule_key: str) -> tuple:
             help="Valor minimo adicionado aos limites para evitar falsos positivos "
                  "por arredondamento. 0.01 e adequado para a maioria dos casos.",
         )
-    return n_periods, n_sigma, margin_pct, buffer
+    return n_periods, n_sigma, margin_pct, buffer, margin_enabled
 
 
 def _render_rolling_chart(values, dates, n_periods, n_sigma, margin_pct, y_label):
@@ -190,7 +199,11 @@ def _render_backtest_metrics(proposal):
         with col2:
             st.metric(
                 "Falsos Positivos", f"~{bt.false_positive_proxy}",
-                help="Periodos historicos normais que seriam reprovados pela regra. Ideal: 0 ou proximo.",
+                help="Estimativa de periodos normais reprovados indevidamente. "
+                     "Calculado como: periodos que violam a regra MAS estao dentro de "
+                     "4 desvios padrao da media global (provavelmente normais). "
+                     "E uma aproximacao — nao ha como saber com certeza se um valor "
+                     "e realmente anomalo. Ideal: 0.",
             )
         with col3:
             st.metric(
@@ -467,7 +480,7 @@ with tab_numericas:
                     "Ajuste os parametros abaixo e observe como as bandas mudam."
                 )
 
-            mean_n, mean_k, mean_margin, mean_buffer = _render_rule_params(
+            mean_n, mean_k, mean_margin, mean_buffer, mean_margin_on = _render_rule_params(
                 f"mean_{selected_col}",
             )
 
@@ -476,9 +489,10 @@ with tab_numericas:
                 n_periods=mean_n,
                 n_sigma=mean_k,
                 margin_pct=mean_margin,
+                margin_enabled=mean_margin_on,
             )
 
-            mean_cache_key = f"proposal_mean_{selected_col}_{mean_n}_{mean_k}_{mean_margin}"
+            mean_cache_key = f"proposal_mean_{selected_col}_{mean_n}_{mean_k}_{mean_margin}_{mean_margin_on}"
             mean_proposals = _get_cached_proposals(
                 mean_cache_key,
                 lambda: [
@@ -510,7 +524,7 @@ with tab_numericas:
             # ---- StdDev ----
             st.subheader(f"StdDev -- {selected_col}")
 
-            std_n, std_k, std_margin, std_buffer = _render_rule_params(
+            std_n, std_k, std_margin, std_buffer, std_margin_on = _render_rule_params(
                 f"stddev_{selected_col}",
             )
 
@@ -519,9 +533,10 @@ with tab_numericas:
                 n_periods=std_n,
                 n_sigma=std_k,
                 margin_pct=std_margin,
+                margin_enabled=std_margin_on,
             )
 
-            std_cache_key = f"proposal_stddev_{selected_col}_{std_n}_{std_k}_{std_margin}"
+            std_cache_key = f"proposal_stddev_{selected_col}_{std_n}_{std_k}_{std_margin}_{std_margin_on}"
             std_proposals = _get_cached_proposals(
                 std_cache_key,
                 lambda: [
@@ -820,7 +835,7 @@ with tab_tabela:
         "esta dentro do esperado com base no historico."
     )
 
-    rc_n, rc_k, rc_margin, rc_buffer = _render_rule_params("rowcount")
+    rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params("rowcount")
 
     try:
         rc_history_df = fetch_row_count_history(config_dict)
@@ -836,9 +851,10 @@ with tab_tabela:
             n_periods=rc_n,
             n_sigma=rc_k,
             margin_pct=rc_margin,
+            margin_enabled=rc_margin_on,
         )
 
-        rc_cache_key = f"proposal_rc_{rc_n}_{rc_k}_{rc_margin}"
+        rc_cache_key = f"proposal_rc_{rc_n}_{rc_k}_{rc_margin}_{rc_margin_on}"
         rc_proposals = _get_cached_proposals(
             rc_cache_key,
             lambda: proposal_svc.propose_table_rules(

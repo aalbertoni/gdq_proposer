@@ -102,13 +102,24 @@ class TestNativeNumericProfiling:
         p = profiles[0]
         assert p.column_name == "VLR_SALDO"
         assert p.inferred_semantic_type == SemanticType.NUMERIC
-        # Tipo nativo não executa query, métricas ficam zeradas
-        assert p.total_count == 0
+        # Agora executa query de cardinalidade para guardrails
+        assert p.total_count > 0
+        assert p.distinct_count > 0
 
     def test_integer_column(self, service, base_config):
         cols = [{"name": "QTD_PARCELAS", "type": "INTEGER"}]
         profiles = service.profile_columns(base_config, cols)
         assert profiles[0].inferred_semantic_type == SemanticType.NUMERIC
+
+    def test_low_card_numeric_warns(self, service, base_config):
+        """Numérico nativo com cardinalidade muito baixa gera warning."""
+        cols = [{"name": "QTD_PARCELAS", "type": "INTEGER"}]
+        profiles = service.profile_columns(base_config, cols, sample_periods=60)
+        p = profiles[0]
+        assert p.inferred_semantic_type == SemanticType.NUMERIC
+        # QTD_PARCELAS has few distinct values in mock data → should warn
+        if p.distinct_count <= 20:
+            assert any("categorica" in w.lower() for w in p.warnings)
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ class UserOverride:
     custom_n_periods: Optional[int] = None
     custom_n_sigma: Optional[float] = None
     custom_margin_pct: Optional[float] = None
+    margin_enabled: Optional[bool] = None
     notes: str = ""
 
 

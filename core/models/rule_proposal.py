@@ -46,6 +46,7 @@ class RuleProposal:
     baseline_window: Optional[int] = None
     baseline_n_sigma: Optional[float] = None
     baseline_margin_pct: Optional[float] = None
+    margin_enabled: bool = True  # Se False, regra usa apenas banda sigma
 
     # Avaliacao
     backtest: Optional[BacktestSummary] = None

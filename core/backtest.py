@@ -26,11 +26,13 @@ def backtest_band(
     n_sigma: float = 2.0,
     margin_pct: float = 0.10,
     min_history: int = 7,
+    margin_enabled: bool = True,
 ) -> BacktestSummary:
     """Executa backtest da regra dual guard no histórico.
 
     Para cada ponto i, usa os valores anteriores [i-n_periods:i] como baseline.
-    O ponto "passa" se estiver dentro da banda sigma OU da banda de margem.
+    O ponto "passa" se estiver dentro da banda sigma OU da banda de margem
+    (quando margin_enabled=True). Se margin_enabled=False, avalia apenas sigma.
 
     Args:
         values: Série de valores agregados (pode conter NaN).
@@ -39,6 +41,7 @@ def backtest_band(
         n_sigma: Multiplicador de desvio padrão.
         margin_pct: Margem percentual alternativa.
         min_history: Mínimo de pontos no baseline para avaliar.
+        margin_enabled: Se False, avalia apenas banda sigma (sem OR margem).
 
     Returns:
         BacktestSummary com métricas de cobertura e estabilidade.
@@ -89,15 +92,21 @@ def backtest_band(
 
         try:
             sigma_band = compute_dynamic_band(baseline, n_periods, n_sigma)
-            margin_band = compute_margin_band(baseline, n_periods, margin_pct)
+            if margin_enabled:
+                margin_band = compute_margin_band(baseline, n_periods, margin_pct)
         except ValueError:
             continue
 
         last_sigma_band = sigma_band
-        last_margin_band = margin_band
+        if margin_enabled:
+            last_margin_band = margin_band
 
         in_sigma = sigma_band["lower"] <= current <= sigma_band["upper"]
-        in_margin = margin_band["lower"] <= current <= margin_band["upper"]
+        in_margin = (
+            margin_band["lower"] <= current <= margin_band["upper"]
+            if margin_enabled
+            else False
+        )
 
         if in_sigma or in_margin:
             periods_pass += 1
