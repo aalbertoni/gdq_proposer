@@ -60,6 +60,8 @@ class GDQRuleGenerator:
             return self._generate_category_frequency_hybrid(proposal, overrides)
         elif proposal.rule_type == RuleType.DISTINCT_COUNT_RANGE:
             return self._generate_distinct_count_range(proposal, overrides)
+        elif proposal.rule_type == RuleType.NUMERIC_PERCENTILE_BAND:
+            return self._generate_percentile_custom_sql(proposal, overrides)
         else:
             raise ValueError(f"Tipo de regra não suportado: {proposal.rule_type}")
 
@@ -256,3 +258,40 @@ class GDQRuleGenerator:
             f"(DistinctValuesCount {col} >= {lower}) AND "
             f"(DistinctValuesCount {col} <= {upper})"
         )
+
+    def _generate_percentile_custom_sql(
+        self,
+        proposal: RuleProposal,
+        overrides: UserOverride | None,
+    ) -> str:
+        """CustomSql dynamic percentile com dual guard."""
+        col = proposal.target_column
+        pct_value = proposal.suggested_values[0] if proposal.suggested_values else "0.50"
+        n_periods = proposal.baseline_window or 30
+        n_sigma = proposal.baseline_n_sigma or 2.0
+        margin_pct = proposal.baseline_margin_pct or 0.10
+        margin_enabled = proposal.margin_enabled
+
+        if overrides:
+            if overrides.custom_n_periods is not None:
+                n_periods = overrides.custom_n_periods
+            if overrides.custom_n_sigma is not None:
+                n_sigma = overrides.custom_n_sigma
+            if overrides.custom_margin_pct is not None:
+                margin_pct = overrides.custom_margin_pct
+            if overrides.margin_enabled is not None:
+                margin_enabled = overrides.margin_enabled
+
+        sql_expr = (
+            f"select approx_percentile(cast({col} as double), {pct_value}) from primary"
+        )
+
+        spec = DualGuardSpec(
+            metric=MetricRef.CUSTOM_SQL,
+            custom_sql_expression=sql_expr,
+            n_periods=n_periods,
+            n_sigma=n_sigma,
+            margin_pct=margin_pct,
+            margin_enabled=margin_enabled,
+        )
+        return self.renderer.render(spec)

@@ -104,6 +104,25 @@ class QueryBuilder:
             return f'TRY_CAST("{temporal_col}" AS DATE)'
         return f'"{temporal_col}"'
 
+    def resolve_partition_filter(
+        self,
+        partition_column: str | None,
+        date_expression: str | None,
+        lookback_value: int,
+    ) -> str:
+        """Gera filtro de partição adaptado ao dialeto para partition pruning.
+
+        Returns:
+            String SQL para WHERE ou string vazia se não aplicável.
+        """
+        if not partition_column:
+            return ""
+        date_expr = date_expression or f'"{partition_column}"'
+        lookback = adapt_function(
+            "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
+        )
+        return f"{date_expr} >= {lookback}"
+
     def build_column_sample(
         self,
         schema: str,
@@ -113,6 +132,7 @@ class QueryBuilder:
         date_expression: str = "",
         sample_periods: int = 10,
         base_filter: str = "",
+        partition_filter: str = "",
     ) -> str:
         """Query para profiling de uma coluna (contagens + cast numérico)."""
         template = self.env.get_template("column_sample.sql")
@@ -126,6 +146,61 @@ class QueryBuilder:
             date_lookback_expr=adapt_function(
                 "DATE_SUBTRACT_DAYS", self.dialect, n=sample_periods,
             ),
+            approx_distinct_expr=adapt_function(
+                "APPROX_DISTINCT", self.dialect, col=f'"{col}"',
+            ),
+            partition_filter=partition_filter,
+            base_filter=base_filter,
+        )
+
+    def build_batch_column_sample(
+        self,
+        schema: str,
+        table: str,
+        string_cols: list[str],
+        numeric_cols: list[str],
+        temporal_col: str,
+        date_expression: str = "",
+        sample_periods: int = 10,
+        base_filter: str = "",
+        partition_filter: str = "",
+    ) -> str:
+        """Batch profiling de múltiplas colunas em uma única query.
+
+        Reduz N scans para 1, usando APPROX_DISTINCT para cardinalidade.
+        """
+        template = self.env.get_template("batch_column_sample.sql")
+
+        str_col_data = [
+            {
+                "name": col,
+                "approx_distinct_expr": adapt_function(
+                    "APPROX_DISTINCT", self.dialect, col=f'"{col}"',
+                ),
+            }
+            for col in string_cols
+        ]
+        num_col_data = [
+            {
+                "name": col,
+                "approx_distinct_expr": adapt_function(
+                    "APPROX_DISTINCT", self.dialect, col=f'"{col}"',
+                ),
+            }
+            for col in numeric_cols
+        ]
+
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            string_cols=str_col_data,
+            numeric_cols=num_col_data,
+            date_expression=self.resolve_date_expression(temporal_col, date_expression),
+            date_lookback_expr=adapt_function(
+                "DATE_SUBTRACT_DAYS", self.dialect, n=sample_periods,
+            ),
+            partition_filter=partition_filter,
             base_filter=base_filter,
         )
 
@@ -210,7 +285,7 @@ class QueryBuilder:
         """Query para análise histórica de coluna numérica."""
         template = self.env.get_template("numeric_history.sql")
 
-        quantiles = "0.01, 0.05, 0.25, 0.5, 0.75, 0.95, 0.99"
+        quantiles = "0.01, 0.05, 0.10, 0.25, 0.5, 0.75, 0.90, 0.95, 0.99"
         approx_expr = adapt_function(
             "APPROX_PERCENTILE",
             self.dialect,

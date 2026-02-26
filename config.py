@@ -38,6 +38,7 @@ class AthenaConfig:
     cache_ttl_metadata: int = 3600     # 1h
     cache_ttl_history: int = 900       # 15min
     cache_ttl_profiling: int = 1800    # 30min
+    cost_warning_threshold_usd: float = 0.50  # warn if estimated session cost exceeds this
 
 
 @dataclass

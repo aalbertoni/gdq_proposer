@@ -111,6 +111,6 @@ class TestStaticRuleGeneration:
         assert result == "IsPrimaryKey COL1 COL2 COL3"
 
     def test_unsupported_type_raises(self, generator):
-        proposal = _make_proposal(RuleType.NUMERIC_PERCENTILE_BAND)
+        proposal = _make_proposal(RuleType.CUSTOM_SQL)
         with pytest.raises(ValueError, match="não suportado"):
             generator.generate(proposal)

@@ -61,6 +61,8 @@ class AthenaClient:
             "work_group": self.config.athena.workgroup,
             "s3_staging_dir": self.config.athena.s3_output,
             "cursor_class": PandasCursor,
+            "kill_on_interrupt": True,
+            "result_reuse_enable": True,
         }
 
         if self.config.athena.aws_profile:
@@ -83,6 +85,8 @@ class AthenaClient:
         rows = 0
         exception_type = None
 
+        bytes_scanned = None
+
         try:
             if self.config.athena.mode == AthenaMode.MOCK:
                 df = self._backend.execute_df(sql)
@@ -90,6 +94,7 @@ class AthenaClient:
                 cursor = self._conn.cursor()
                 cursor.execute(sql)
                 df = cursor.as_pandas()
+                bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
 
             rows = len(df)
             return df
@@ -107,6 +112,7 @@ class AthenaClient:
                 elapsed_ms=elapsed,
                 cache_hit=False,
                 rows_returned=rows,
+                bytes_scanned=bytes_scanned,
                 exception_type=exception_type,
             ))
 

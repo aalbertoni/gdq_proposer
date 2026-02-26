@@ -84,3 +84,7 @@ class DualGuardSpec:
                 self.n_sigma = float(self.n_sigma)
             elif self.metric == MetricRef.CUSTOM_SQL:
                 self.profile = CUSTOM_SQL_PROFILE
+        if self.floor_pct > self.ceiling_pct:
+            raise ValueError(
+                f"floor_pct ({self.floor_pct}) must be <= ceiling_pct ({self.ceiling_pct})"
+            )

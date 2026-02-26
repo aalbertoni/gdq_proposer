@@ -316,7 +316,11 @@ class TestCategoricalQueries:
 
     @staticmethod
     def _find_categorical_column(client, config):
-        """Find a string column suitable for categorical analysis."""
+        """Find a low-cardinality string column suitable for categorical analysis.
+
+        Picks the string column with lowest distinct count (between 2 and 50)
+        to ensure enough periods per value for frequency proposals.
+        """
         columns = client.get_columns(config.schema, config.table)
         string_types = {"string", "varchar", "char"}
         candidates = [
@@ -324,7 +328,26 @@ class TestCategoricalQueries:
             if c["type"].lower().split("(")[0] in string_types
             and c["name"] != DATE_COL
         ]
-        return candidates[0] if candidates else None
+        if not candidates:
+            return None
+
+        # Pick column with lowest cardinality (2-50 distinct values)
+        best_col = None
+        best_count = float("inf")
+        table_ref = f'"{config.schema}"."{config.table}"' if config.schema else f'"{config.table}"'
+        for col in candidates:
+            try:
+                df = client.execute_df(
+                    f'SELECT COUNT(DISTINCT "{col}") AS cnt FROM {table_ref}'
+                )
+                cnt = int(df.iloc[0, 0])
+                if 2 <= cnt <= 50 and cnt < best_count:
+                    best_count = cnt
+                    best_col = col
+            except Exception:
+                continue
+
+        return best_col or candidates[0]
 
 
 # ---------------------------------------------------------------------------

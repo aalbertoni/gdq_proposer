@@ -211,6 +211,8 @@ if result.rules_text:
         file_name="gdq_analytical_report.md",
         mime="text/markdown",
         disabled=not result.rules_text,
+        help="Relatorio markdown com evidencia estatistica, racional de cada regra, "
+             "sintaxe GDQ gerada, alertas e recomendacoes.",
     )
 else:
     st.info("Habilite ao menos uma regra para gerar o relatorio.")

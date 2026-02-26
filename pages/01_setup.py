@@ -53,6 +53,63 @@ def get_services(client: AthenaClient):
     )
 
 
+# ---------------------------------------------------------------------------
+# Cached metadata fetchers
+# TTL matches config defaults: metadata=3600s, profiling=1800s
+# Cache is cleared on environment switch via _apply_env_and_reconnect()
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_validate_table(_client_id, schema, table):
+    """Cached table validation. _client_id forces cache bust on reconnect."""
+    svc = st.session_state["dataset_service"]
+    return svc.validate_table(schema, table)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_get_columns_with_partitions(_client_id, schema, table):
+    """Cached column discovery. _client_id forces cache bust on reconnect."""
+    svc = st.session_state["dataset_service"]
+    return svc.get_columns_with_partitions(schema, table)
+
+
+@st.cache_data(ttl=3600, show_spinner="Consultando range temporal...")
+def _cached_get_date_range(_client_id, config_dict):
+    """Cached date range query. _client_id forces cache bust on reconnect."""
+    svc = st.session_state["dataset_service"]
+    config = _build_config_from_dict(config_dict)
+    return svc.get_date_range(config)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_profile_column(_client_id, config_dict, col_name, col_type, sample_periods):
+    """Cached single-column profiling. _client_id forces cache bust on reconnect."""
+    svc = st.session_state["profiling_service"]
+    config = _build_config_from_dict(config_dict)
+    col_info = {"name": col_name, "type": col_type}
+    return svc.profile_columns(config, [col_info], sample_periods=sample_periods)
+
+
+def _build_config_from_dict(config_dict):
+    return DatasetConfig(
+        schema=config_dict["schema"],
+        table=config_dict["table"],
+        partition_method=PartitionMethod(config_dict["partition_method"]),
+        partition_column=config_dict.get("partition_column"),
+        date_column=config_dict["date_column"],
+        date_expression=config_dict.get("date_expression"),
+        lookback_value=config_dict["lookback_value"],
+        grain_type=GrainType(config_dict.get("grain_type", "daily")),
+        lookback_mode=LookbackMode(config_dict.get("lookback_mode", "last_n_periods")),
+        base_filter_sql=config_dict.get("base_filter_sql"),
+    )
+
+
+def _get_client_id() -> str:
+    """Unique ID for the current client connection. Used to bust cache on reconnect."""
+    return id(st.session_state.get("client", None))
+
+
 def _semantic_type_label(st_type: SemanticType) -> str:
     labels = {
         SemanticType.NUMERIC: "Numerico",
@@ -78,9 +135,10 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
     schema = data["schema"]
     table = data["table"]
 
-    # Validar tabela
+    # Validar tabela (cached)
+    client_id = _get_client_id()
     try:
-        exists = dataset_svc.validate_table(schema, table)
+        exists = _cached_validate_table(client_id, schema, table)
     except ValueError:
         exists = False
 
@@ -88,7 +146,7 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
         st.error(f"Tabela `{schema}.{table}` nao encontrada no backend atual.")
         return False
 
-    columns, partition_cols = dataset_svc.get_columns_with_partitions(schema, table)
+    columns, partition_cols = _cached_get_columns_with_partitions(client_id, schema, table)
     st.session_state["setup_partition_cols"] = partition_cols
 
     config = DatasetConfig(
@@ -178,6 +236,11 @@ def _apply_env_and_reconnect(env_name: str, env_vars: dict[str, str]):
     keys_to_remove = [k for k in st.session_state if k.startswith("proposal_")]
     for k in keys_to_remove:
         del st.session_state[k]
+    # Limpar caches de dados para forcar re-query no novo ambiente
+    _cached_validate_table.clear()
+    _cached_get_columns_with_partitions.clear()
+    _cached_get_date_range.clear()
+    _cached_profile_column.clear()
 
 
 _current_config = load_config()
@@ -295,21 +358,56 @@ if preset_files:
     )
 
     if chosen_preset != "(nova configuracao)":
-        preset_path = preset_dir / f"{chosen_preset}.json"
-        if st.button("Carregar Preset", type="primary"):
-            with st.spinner("Validando preset..."):
-                ok = _load_preset(preset_path, profiling_svc, dataset_svc)
-            if ok:
-                st.success(f"Preset **{chosen_preset}** carregado.")
-                # Precisa rodar profiling se nao tem profiles no state
-                if "setup_profiles" not in st.session_state:
-                    st.info("Execute o profiling abaixo para ativar a configuracao.")
-                st.rerun()
+        from services.preset_manager import PresetManager
 
-        # Mostrar preview do preset
+        preset_path = preset_dir / f"{chosen_preset}.json"
+        _preset_col1, _preset_col2 = st.columns(2)
+
+        with _preset_col1:
+            if st.button("Carregar Preset", type="primary"):
+                mgr = PresetManager(app_config.preset_dir)
+                mgr.mark_used(chosen_preset)
+                with st.spinner("Validando preset..."):
+                    ok = _load_preset(preset_path, profiling_svc, dataset_svc)
+                if ok:
+                    st.success(f"Preset **{chosen_preset}** carregado.")
+                    if "setup_profiles" not in st.session_state:
+                        st.info("Execute o profiling abaixo para ativar a configuracao.")
+                    st.rerun()
+
+        with _preset_col2:
+            if len(preset_names) > 2:
+                if st.button("Comparar presets"):
+                    st.session_state["show_compare_ui"] = True
+
+        # Mostrar preview com metadados
         with st.expander("Preview do preset", expanded=False):
             data = json.loads(preset_path.read_text())
+            meta = data.get("metadata", {})
+            if meta.get("notes"):
+                st.caption(f"Notas: {meta['notes']}")
+            if meta.get("last_used_at"):
+                st.caption(f"Ultimo uso: {meta['last_used_at'][:10]}")
             st.json(data)
+
+        # Comparar presets UI
+        if st.session_state.get("show_compare_ui") and len(preset_names) > 2:
+            real_presets = [n for n in preset_names if n != "(nova configuracao)"]
+            cmp_col1, cmp_col2 = st.columns(2)
+            with cmp_col1:
+                cmp_a = st.selectbox("Preset A:", real_presets, key="cmp_a")
+            with cmp_col2:
+                others = [n for n in real_presets if n != cmp_a]
+                cmp_b = st.selectbox("Preset B:", others, key="cmp_b") if others else None
+
+            if cmp_b:
+                mgr = PresetManager(app_config.preset_dir)
+                diffs = mgr.compare(cmp_a, cmp_b)
+                if diffs:
+                    for d in diffs:
+                        st.text(f"  {d['field']:25s}  {str(d['value_a']):30s}  {str(d['value_b'])}")
+                else:
+                    st.caption("Presets identicos (mesma configuracao).")
 
     st.divider()
 
@@ -344,9 +442,10 @@ with col2:
     )
 
 if st.button("Validar Tabela", disabled=not table, type="primary"):
+    client_id = _get_client_id()
     with st.spinner("Verificando tabela..."):
         try:
-            exists = dataset_svc.validate_table(schema, table)
+            exists = _cached_validate_table(client_id, schema, table)
         except ValueError as e:
             st.error(
                 f"Nome invalido: {e}. "
@@ -355,7 +454,7 @@ if st.button("Validar Tabela", disabled=not table, type="primary"):
             st.stop()
 
     if exists:
-        columns, partition_cols = dataset_svc.get_columns_with_partitions(schema, table)
+        columns, partition_cols = _cached_get_columns_with_partitions(client_id, schema, table)
         st.session_state["setup_validated"] = True
         st.session_state["setup_schema"] = schema
         st.session_state["setup_table"] = table
@@ -654,14 +753,26 @@ dataset_config = DatasetConfig(
 )
 
 if st.button("Validar Eixo Temporal", type="primary"):
-    with st.spinner("Consultando range temporal..."):
-        try:
-            date_range = dataset_svc.get_date_range(dataset_config)
-            st.session_state["setup_date_range"] = date_range
-            st.session_state["setup_config"] = dataset_config
-        except Exception as e:
-            st.error(f"Erro ao consultar range temporal: {e}")
-            st.stop()
+    client_id = _get_client_id()
+    config_dict = {
+        "schema": dataset_config.schema,
+        "table": dataset_config.table,
+        "partition_method": dataset_config.partition_method.value,
+        "partition_column": dataset_config.partition_column,
+        "date_column": dataset_config.date_column,
+        "date_expression": dataset_config.date_expression,
+        "lookback_value": dataset_config.lookback_value,
+        "grain_type": dataset_config.grain_type.value,
+        "lookback_mode": dataset_config.lookback_mode.value,
+        "base_filter_sql": dataset_config.base_filter_sql,
+    }
+    try:
+        date_range = _cached_get_date_range(client_id, config_dict)
+        st.session_state["setup_date_range"] = date_range
+        st.session_state["setup_config"] = dataset_config
+    except Exception as e:
+        st.error(f"Erro ao consultar range temporal: {e}")
+        st.stop()
 
     if date_range["n_periods"] == 0:
         st.warning("Nenhum periodo encontrado. Verifique a coluna temporal e o filtro base.")
@@ -691,7 +802,28 @@ st.header("5. Profiling de Colunas")
 
 dataset_config = st.session_state.get("setup_config", dataset_config)
 
+# Cost guardrail: warn for large profiling jobs on Athena
+if not is_mock and len(columns) > 20:
+    st.info(
+        f"O profiling executara **{len(columns)} queries** (uma por coluna) "
+        f"contra o Athena. Considere selecionar menos colunas se o custo for uma preocupacao.",
+        icon="💰",
+    )
+
 if st.button("Executar Profiling", type="primary"):
+    client_id = _get_client_id()
+    config_dict = {
+        "schema": dataset_config.schema,
+        "table": dataset_config.table,
+        "partition_method": dataset_config.partition_method.value,
+        "partition_column": dataset_config.partition_column,
+        "date_column": dataset_config.date_column,
+        "date_expression": dataset_config.date_expression,
+        "lookback_value": dataset_config.lookback_value,
+        "grain_type": dataset_config.grain_type.value,
+        "lookback_mode": dataset_config.lookback_mode.value,
+        "base_filter_sql": dataset_config.base_filter_sql,
+    }
     profiles = []
     progress = st.progress(0, text="Classificando colunas...")
 
@@ -700,10 +832,12 @@ if st.button("Executar Profiling", type="primary"):
             (i + 1) / len(columns),
             text=f"Classificando {col_info['name']}...",
         )
-        profile_list = profiling_svc.profile_columns(
-            dataset_config,
-            [col_info],
-            sample_periods=lookback_value,
+        profile_list = _cached_profile_column(
+            client_id,
+            config_dict,
+            col_info["name"],
+            col_info["type"],
+            lookback_value,
         )
         profiles.extend(profile_list)
 
@@ -887,34 +1021,58 @@ with col_btn2:
     save_preset = st.checkbox("Salvar como preset", value=False)
 
 if save_preset:
+    from services.preset_manager import PresetManager, Preset, PresetMetadata
+
     preset_name = st.text_input(
         "Nome do preset:",
         value=f"{schema}_{table}",
         help="Sera salvo em presets/<nome>.json",
     )
+    preset_notes = st.text_input(
+        "Notas (opcional):",
+        placeholder="Ex: config para validacao mensal",
+        help="Anotacoes livres sobre este preset.",
+    )
 
-    if st.button("Salvar Preset", disabled=not selected_cols):
-        preset = {
-            "schema": dataset_config.schema,
-            "table": dataset_config.table,
-            "partition_method": dataset_config.partition_method.value,
-            "partition_column": dataset_config.partition_column,
-            "date_column": dataset_config.date_column,
-            "grain_type": dataset_config.grain_type.value,
-            "lookback_mode": dataset_config.lookback_mode.value,
-            "lookback_value": dataset_config.lookback_value,
-            "date_expression": dataset_config.date_expression,
-            "base_filter_sql": dataset_config.base_filter_sql,
-            "selected_columns": dataset_config.selected_columns,
-            "overrides": {k: v.value for k, v in overrides.items()},
-            "date_range": date_range,
-        }
+    _save_col1, _save_col2 = st.columns(2)
 
-        pdir = Path(app_config.preset_dir)
-        pdir.mkdir(exist_ok=True)
-        preset_path = pdir / f"{preset_name}.json"
-        preset_path.write_text(json.dumps(preset, indent=2, ensure_ascii=False))
-        st.success(f"Preset salvo em `{preset_path}`")
+    with _save_col1:
+        if st.button("Salvar Preset", disabled=not selected_cols):
+            mgr = PresetManager(app_config.preset_dir)
+            preset_obj = Preset(
+                name=preset_name,
+                schema=dataset_config.schema,
+                table=dataset_config.table,
+                partition_method=dataset_config.partition_method.value,
+                partition_column=dataset_config.partition_column,
+                date_column=dataset_config.date_column,
+                grain_type=dataset_config.grain_type.value,
+                lookback_mode=dataset_config.lookback_mode.value,
+                lookback_value=dataset_config.lookback_value,
+                date_expression=dataset_config.date_expression,
+                base_filter_sql=dataset_config.base_filter_sql,
+                selected_columns=dataset_config.selected_columns,
+                overrides={k: v.value for k, v in overrides.items()},
+                date_range=date_range,
+                metadata=PresetMetadata(notes=preset_notes),
+            )
+            preset_path = mgr.save(preset_obj)
+            st.success(f"Preset salvo em `{preset_path}`")
+
+    with _save_col2:
+        if preset_files and st.button("Clonar de existente", disabled=not selected_cols):
+            st.session_state["show_clone_ui"] = True
+
+    if st.session_state.get("show_clone_ui") and preset_files:
+        clone_source = st.selectbox(
+            "Clonar de:", [p.stem for p in preset_files], key="clone_source"
+        )
+        if st.button("Clonar", key="clone_confirm"):
+            mgr = PresetManager(app_config.preset_dir)
+            mgr.clone(clone_source, preset_name, notes=preset_notes)
+            st.success(f"Preset **{preset_name}** clonado de **{clone_source}**")
+            st.session_state.pop("show_clone_ui", None)
+            st.rerun()
 
 
 # Status bar: mostrar se config esta ativa

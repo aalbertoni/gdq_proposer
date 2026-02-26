@@ -20,6 +20,10 @@ DIALECT_FUNCTIONS: dict[str, dict[SQLDialect, str]] = {
         SQLDialect.ATHENA: "APPROX_PERCENTILE({col}, ARRAY[{quantiles}])",
         SQLDialect.DUCKDB: "QUANTILE_CONT({col}, [{quantiles}])",
     },
+    "APPROX_DISTINCT": {
+        SQLDialect.ATHENA: "APPROX_DISTINCT({col})",
+        SQLDialect.DUCKDB: "APPROX_COUNT_DISTINCT({col})",
+    },
     "STDDEV": {
         SQLDialect.ATHENA: "STDDEV({expr})",
         SQLDialect.DUCKDB: "STDDEV_SAMP({expr})",

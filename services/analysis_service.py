@@ -72,7 +72,7 @@ class AnalysisService:
         if df.empty:
             return pd.DataFrame(columns=[
                 "period", "mean", "stddev", "min", "max",
-                "p01", "p05", "p25", "p50", "p75", "p95", "p99",
+                "p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99",
                 "non_null_count", "null_count", "total_count",
             ])
 
@@ -248,8 +248,8 @@ class AnalysisService:
         result["null_count"] = pd.to_numeric(df["null_count"], errors="coerce").fillna(0).astype(int)
         result["total_count"] = pd.to_numeric(df["total_count"], errors="coerce").fillna(0).astype(int)
 
-        # Expandir percentis do array
-        percentile_cols = ["p01", "p05", "p25", "p50", "p75", "p95", "p99"]
+        # Expandir percentis do array (9 elementos: p01..p99)
+        percentile_cols = ["p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99"]
         percentile_data = df["col_percentiles"].apply(self._parse_percentile_array)
         for i, col_name in enumerate(percentile_cols):
             result[col_name] = percentile_data.apply(

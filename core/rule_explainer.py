@@ -42,6 +42,8 @@ def explain_rule(proposal: RuleProposal) -> str:
         RuleType.CATEGORY_FREQUENCY_HYBRID,
     ):
         return _explain_category_frequency(proposal)
+    elif rt == RuleType.NUMERIC_PERCENTILE_BAND:
+        return _explain_percentile(proposal)
     else:
         return f"Regra customizada para `{proposal.target_column or proposal.target_table}`."
 
@@ -178,6 +180,22 @@ def _explain_distinct_count_range(p: RuleProposal) -> str:
     )
 
 
+def _explain_percentile(p: RuleProposal) -> str:
+    col = p.target_column
+    pct_label = p.metric_name.upper() if p.metric_name else "P50"
+    n = p.baseline_window or 30
+    k = p.baseline_n_sigma or 2.0
+    margin = (p.baseline_margin_pct or 0.10) * 100
+
+    return (
+        f"Verifica se o **{pct_label}** da coluna `{col}` esta dentro do esperado. "
+        f"A regra calcula o percentil historico dos ultimos **{n} periodos** e aceita se estiver "
+        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica, "
+        f"**ou** dentro de **{margin:.0f}%** da media historica. "
+        f"Detecta mudancas na distribuicao dos dados (caudas)."
+    )
+
+
 def _explain_category_frequency(p: RuleProposal) -> str:
     col = p.target_column
     value = p.category_value
@@ -207,6 +225,7 @@ def _explain_params(p: RuleProposal) -> str:
         RuleType.MEAN_DUAL_GUARD,
         RuleType.STDDEV_DUAL_GUARD,
         RuleType.ROW_COUNT_DUAL_GUARD,
+        RuleType.NUMERIC_PERCENTILE_BAND,
     ):
         n = p.baseline_window or 30
         k = p.baseline_n_sigma or 2.0

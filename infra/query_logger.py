@@ -5,8 +5,9 @@ Cada query executada gera uma entrada com métricas.
 Útil para debug, otimização de custo e identificação de queries lentas.
 """
 
+import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -55,7 +56,7 @@ class QueryLogger:
         )
 
     def get_session_summary(self) -> dict:
-        """Resumo da sessão: total queries, tempo total, cache hits."""
+        """Resumo da sessão: total queries, tempo total, cache hits, custo estimado."""
         total = len(self.entries)
         if total == 0:
             return {
@@ -65,12 +66,17 @@ class QueryLogger:
                 "cache_hit_rate": 0.0,
                 "total_rows": 0,
                 "errors": 0,
+                "total_bytes_scanned": 0,
+                "estimated_cost_usd": 0.0,
             }
 
         total_ms = sum(e.elapsed_ms for e in self.entries)
         cache_hits = sum(1 for e in self.entries if e.cache_hit)
         total_rows = sum(e.rows_returned for e in self.entries)
         errors = sum(1 for e in self.entries if e.exception_type)
+        total_bytes = sum(e.bytes_scanned or 0 for e in self.entries)
+        # Athena pricing: $5.00 per TB scanned (minimum 10MB per query)
+        estimated_cost = (total_bytes / (1024 ** 4)) * 5.0
 
         return {
             "total_queries": total,
@@ -79,4 +85,17 @@ class QueryLogger:
             "cache_hit_rate": round(cache_hits / total, 2),
             "total_rows": total_rows,
             "errors": errors,
+            "total_bytes_scanned": total_bytes,
+            "estimated_cost_usd": round(estimated_cost, 4),
         }
+
+    def export_json(self) -> str:
+        """Exporta log da sessao como JSON (summary + entries)."""
+        return json.dumps(
+            {
+                "summary": self.get_session_summary(),
+                "entries": [asdict(e) for e in self.entries],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )

@@ -7,9 +7,14 @@ para gerar propostas completas com evidência.
 Definido conforme docs/technical_spec_v1.md seção 4.4.
 """
 
+from __future__ import annotations
+
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from strategies.row_count_strategy import RowCountStrategy
 
 import pandas as pd
 
@@ -29,6 +34,7 @@ from core.statistical_engine import (
     compute_dynamic_band,
     compute_frequency_band,
     compute_margin_band,
+    detect_drift,
 )
 
 
@@ -110,19 +116,9 @@ class ProposalService:
         row_count_history: pd.DataFrame,
         table: str,
         baseline: BaselineStrategy,
-        strategy=None,
+        strategy: Optional["RowCountStrategy"] = None,
     ) -> list[RuleProposal]:
-        """Gera propostas de regra de tabela (RowCount).
-
-        Args:
-            row_count_history: DataFrame de get_row_count_history [period, row_count].
-            table: Nome da tabela.
-            baseline: Estrategia de baseline.
-            strategy: Estrategia customizada (plugin). Default: GenericBandRowCountStrategy.
-
-        Returns:
-            Lista de RuleProposal (tipicamente 1 RowCount dual guard).
-        """
+        """Gera propostas de regra de tabela (RowCount)."""
         if row_count_history.empty:
             return []
 
@@ -148,8 +144,10 @@ class ProposalService:
         profile: ColumnProfile,
         baseline: BaselineStrategy,
         freq_mode: str = "static",
+        freq_mode_overrides: dict[str, str] | None = None,
         floor_pct: float | None = None,
         ceiling_pct: float | None = None,
+        max_frequency_rules: int = 5,
     ) -> list[RuleProposal]:
         """Gera propostas de regra para coluna categorica.
 
@@ -160,12 +158,11 @@ class ProposalService:
             table: Nome da tabela.
             profile: ColumnProfile com effective_type.
             baseline: Estrategia de baseline.
-            freq_mode: "static", "dynamic" ou "hybrid".
+            freq_mode: "static", "dynamic" ou "hybrid" (default global).
+            freq_mode_overrides: Mapa {valor: modo} para overrides individuais.
             floor_pct: Limite inferior absoluto (modo hibrido, 0-100).
             ceiling_pct: Limite superior absoluto (modo hibrido, 0-100).
-
-        Returns:
-            Lista de RuleProposal.
+            max_frequency_rules: Máximo de regras de frequência por coluna (default 5).
         """
         proposals = []
         if domain.empty:
@@ -219,16 +216,22 @@ class ProposalService:
             proposals.append(dc_proposal)
 
         # --- Category Frequency (static / dynamic / hybrid) ---
+        # Guardrail: limita ao max_frequency_rules, priorizando por frequência
         if (is_low or is_mid) and not distribution.empty:
-            values_to_monitor = domain_values if is_low else domain_values[:20]
+            values_to_monitor = domain_values[:max_frequency_rules]
             for cat_value in values_to_monitor:
+                # Per-value mode override
+                effective_mode = freq_mode
+                if freq_mode_overrides and cat_value in freq_mode_overrides:
+                    effective_mode = freq_mode_overrides[cat_value]
+
                 freq_proposal = self._build_frequency_proposal(
                     distribution=distribution,
                     column=column,
                     table=table,
                     cat_value=cat_value,
                     baseline=baseline,
-                    freq_mode=freq_mode,
+                    freq_mode=effective_mode,
                     floor_pct=floor_pct,
                     ceiling_pct=ceiling_pct,
                 )
@@ -251,6 +254,139 @@ class ProposalService:
             proposals.append(comp_proposal)
 
         return proposals
+
+    def propose_percentile_rules(
+        self,
+        history: pd.DataFrame,
+        column: str,
+        table: str,
+        baseline: BaselineStrategy,
+        percentile_levels: list[str] | None = None,
+    ) -> list[RuleProposal]:
+        """Gera propostas de regra de percentil via CustomSql dual guard.
+
+        Args:
+            history: DataFrame do get_numeric_history (com colunas p01..p99).
+            column: Nome da coluna.
+            table: Nome da tabela.
+            baseline: Estratégia de baseline.
+            percentile_levels: Lista de colunas de percentil (ex: ["p10", "p90"]).
+
+        Returns:
+            Lista de RuleProposal com tipo NUMERIC_PERCENTILE_BAND.
+        """
+        if percentile_levels is None:
+            percentile_levels = ["p10", "p90"]
+
+        proposals = []
+        if history.empty:
+            return proposals
+
+        pct_map = {
+            "p01": 0.01, "p05": 0.05, "p10": 0.10, "p25": 0.25,
+            "p50": 0.50, "p75": 0.75, "p90": 0.90, "p95": 0.95, "p99": 0.99,
+        }
+
+        for pct_col in percentile_levels:
+            if pct_col not in history.columns:
+                continue
+            pct_value = pct_map.get(pct_col)
+            if pct_value is None:
+                continue
+
+            pct_series = history[pct_col].tolist()
+            dates = history["period"].tolist()
+
+            proposal = self._build_percentile_proposal(
+                series=pct_series,
+                dates=dates,
+                column=column,
+                table=table,
+                pct_col=pct_col,
+                pct_value=pct_value,
+                baseline=baseline,
+            )
+            if proposal:
+                proposals.append(proposal)
+
+        return proposals
+
+    def _build_percentile_proposal(
+        self,
+        series: list,
+        dates: list[str],
+        column: str,
+        table: str,
+        pct_col: str,
+        pct_value: float,
+        baseline: BaselineStrategy,
+    ) -> RuleProposal | None:
+        """Constrói proposta de percentil via CustomSql dual guard."""
+        # Filtrar NaN
+        clean = []
+        for v in series:
+            if v is None:
+                clean.append(float("nan"))
+            elif isinstance(v, (int, float)):
+                clean.append(float(v))
+            else:
+                clean.append(float("nan"))
+
+        margin_enabled = baseline.margin_enabled
+
+        try:
+            sigma_band = compute_dynamic_band(
+                clean, baseline.n_periods, baseline.n_sigma,
+            )
+            if margin_enabled:
+                margin_band = compute_margin_band(
+                    clean, baseline.n_periods, baseline.margin_pct,
+                )
+            else:
+                margin_band = sigma_band
+        except ValueError:
+            return None
+
+        pct_label = pct_col.upper()  # "p10" -> "P10"
+
+        proposal = RuleProposal(
+            id=str(uuid.uuid4()),
+            target_column=column,
+            target_table=table,
+            rule_type=RuleType.NUMERIC_PERCENTILE_BAND,
+            metric_name=pct_col,
+            suggested_lower=min(sigma_band["lower"], margin_band["lower"]),
+            suggested_upper=max(sigma_band["upper"], margin_band["upper"]),
+            suggested_values=[str(pct_value)],  # percentile fraction for inner SQL
+            baseline_method=baseline.method,
+            baseline_window=baseline.n_periods,
+            baseline_n_sigma=baseline.n_sigma,
+            baseline_margin_pct=baseline.margin_pct,
+            margin_enabled=margin_enabled,
+            history_dates=dates,
+            history_values=clean,
+        )
+
+        # Backtest
+        proposal.backtest = backtest_band(
+            values=clean,
+            dates=dates,
+            n_periods=baseline.n_periods,
+            n_sigma=baseline.n_sigma,
+            margin_pct=baseline.margin_pct,
+            min_history=baseline.min_history_points,
+            margin_enabled=margin_enabled,
+        )
+
+        # Score
+        score = score_proposal(proposal, clean)
+        proposal.confidence = score.confidence
+        proposal.warnings = score.warnings
+
+        # Sintaxe GDQ
+        proposal.gdq_syntax_preview = self.generator.generate(proposal)
+
+        return proposal
 
     def _build_frequency_proposal(
         self,
@@ -355,10 +491,7 @@ class ProposalService:
         proposal: RuleProposal,
         new_baseline: BaselineStrategy,
     ) -> RuleProposal:
-        """Recalcula uma proposta com novos parâmetros de baseline.
-
-        Usado quando o usuário ajusta sliders na UI.
-        """
+        """Recalcula uma proposta com novos parâmetros de baseline."""
         values = proposal.history_values
         dates = proposal.history_dates
 
@@ -503,34 +636,18 @@ class ProposalService:
     ) -> dict:
         """Busca a melhor combinacao de N/sigma/margem via grid search.
 
-        Testa todas as combinacoes e retorna a que maximiza um score composto
-        de coverage e minimiza falsos positivos.
-
-        Args:
-            values: Serie historica (mean, stddev, pct, row_count).
-            dates: Datas correspondentes.
-            metric_kind: "numeric" (backtest_band) ou "frequency" (backtest_frequency_dual_guard).
-            n_range: Lista de N a testar. Default: [10, 15, 20, 30, 45].
-            sigma_range: Lista de sigma a testar. Default: [1.5, 2.0, 2.5, 3.0].
-            margin_range: Lista de margem (fracao) a testar. Default: [0.05, 0.10, 0.15, 0.20].
-            min_coverage: Cobertura minima aceitavel (%).
-
-        Returns:
-            Dict com chaves:
-            - "n_periods", "n_sigma", "margin_pct", "margin_enabled": melhores params
-            - "coverage_pct": cobertura do melhor
-            - "false_positives": FP do melhor
-            - "score_total": score composto do melhor
-            - "confidence": ConfidenceLevel
-            - "viable": bool — se a melhor combinacao atinge min_coverage
-            - "recommendation": str com texto de recomendacao
+        Scoring melhorado: penaliza bandas largas, bonus sem drift, penaliza N baixo.
         """
         if n_range is None:
             n_range = [10, 15, 20, 30, 45]
         if sigma_range is None:
-            sigma_range = [1.5, 2.0, 2.5, 3.0]
+            sigma_range = [1.0, 1.5, 2.0, 2.5, 3.0]
         if margin_range is None:
             margin_range = [0.05, 0.10, 0.15, 0.20]
+
+        # Detectar drift uma vez (não depende de N/sigma/margin)
+        drift_result = detect_drift(values)
+        drift_bonus = 0.05 if not drift_result["has_drift"] else -0.05
 
         best = None
         best_score = -1.0
@@ -560,11 +677,21 @@ class ProposalService:
                         if bt.total_periods == 0:
                             continue
 
-                        # Score composto: prioriza coverage alta com poucos FP
+                        # Score composto melhorado
                         coverage_norm = bt.coverage_pct / 100.0
-                        fp_penalty = bt.false_positive_proxy * 0.05  # cada FP reduz 5%
+                        fp_penalty = bt.false_positive_proxy * 0.05
                         stability_bonus = bt.stability_score * 0.10
-                        combo_score = coverage_norm - fp_penalty + stability_bonus
+                        width_penalty = max(0, (bt.band_width_ratio - 0.3)) * 0.15
+                        n_penalty = 0.05 if n < 15 else 0.0
+
+                        combo_score = (
+                            coverage_norm
+                            - fp_penalty
+                            + stability_bonus
+                            - width_penalty
+                            + drift_bonus
+                            - n_penalty
+                        )
 
                         if combo_score > best_score:
                             best_score = combo_score

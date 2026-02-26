@@ -35,6 +35,9 @@ class ProfilingService:
         Camada 2: heurística de conteúdo (amostra limitada para strings)
         Camada 3: cardinalidade para subclassificar categóricas
 
+        Usa batch profiling (1 query para todas as colunas) quando possível,
+        com APPROX_DISTINCT e partition pruning para performance.
+
         Args:
             config: Configuração da tabela alvo.
             columns: Lista de {"name": str, "type": str} do get_columns().
@@ -53,6 +56,26 @@ class ProfilingService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        partition_filter = self.builder.resolve_partition_filter(
+            partition_column=config.partition_column,
+            date_expression=config.date_expression,
+            lookback_value=config.lookback_value,
+        )
+
+        # Tentativa batch: 1 query para todas as colunas
+        try:
+            return self._batch_profile_columns(
+                config=config,
+                columns=columns,
+                temporal_col=temporal_col,
+                base_filter=base_filter,
+                partition_filter=partition_filter,
+                sample_periods=sample_periods,
+            )
+        except Exception:
+            pass  # fallback para profiling individual
+
+        # Fallback: 1 query por coluna
         profiles = []
         for col_info in columns:
             col_name = col_info["name"]
@@ -64,11 +87,167 @@ class ProfilingService:
                 athena_type=athena_type,
                 temporal_col=temporal_col,
                 base_filter=base_filter,
+                partition_filter=partition_filter,
                 sample_periods=sample_periods,
             )
             profiles.append(profile)
 
         return profiles
+
+    def _batch_profile_columns(
+        self,
+        config: DatasetConfig,
+        columns: list[dict],
+        temporal_col: str,
+        base_filter: str,
+        partition_filter: str,
+        sample_periods: int,
+    ) -> list[ColumnProfile]:
+        """Batch profiling: 1 query para todas as colunas."""
+        from core.column_classifier import (
+            ATHENA_DATE_TYPES,
+            ATHENA_NUMERIC_TYPES,
+            _normalize_athena_type,
+            suggest_reclassification,
+        )
+
+        # Separar por tipo: date (sem query), numeric (só counts), string (full)
+        date_cols = []
+        numeric_cols = []
+        string_cols = []
+
+        for col_info in columns:
+            col_name = col_info["name"]
+            athena_type = col_info["type"]
+            normalized = _normalize_athena_type(athena_type)
+
+            validate_identifier(col_name)
+
+            if normalized in ATHENA_DATE_TYPES:
+                date_cols.append(col_info)
+            elif normalized in ATHENA_NUMERIC_TYPES:
+                numeric_cols.append(col_info)
+            else:
+                string_cols.append(col_info)
+
+        # Profiles de date: sem query
+        profiles_map = {}
+        for col_info in date_cols:
+            semantic_type = classify_column(
+                athena_type=col_info["type"],
+                distinct_count=0, total_count=0, non_null_count=0,
+            )
+            profiles_map[col_info["name"]] = ColumnProfile(
+                column_name=col_info["name"],
+                athena_type=col_info["type"],
+                inferred_semantic_type=semantic_type,
+            )
+
+        # Batch query para numeric + string juntos
+        str_names = [c["name"] for c in string_cols]
+        num_names = [c["name"] for c in numeric_cols]
+
+        if str_names or num_names:
+            sql = self.builder.build_batch_column_sample(
+                schema=config.schema,
+                table=config.table,
+                string_cols=str_names,
+                numeric_cols=num_names,
+                temporal_col=temporal_col,
+                date_expression=config.date_expression or "",
+                sample_periods=sample_periods,
+                base_filter=base_filter,
+                partition_filter=partition_filter,
+            )
+
+            df = self.client.execute_df(
+                sql,
+                query_name="batch_column_sample",
+                dataset=f"{config.schema}.{config.table}",
+            )
+
+            if df.empty:
+                raise ValueError("Batch profiling returned empty result")
+
+            row = df.iloc[0]
+            total_count = int(row["total_count"] or 0)
+
+            # Parse string columns
+            for col_info in string_cols:
+                col_name = col_info["name"]
+                athena_type = col_info["type"]
+                non_null = int(row.get(f"{col_name}__non_null", 0) or 0)
+                distinct = int(row.get(f"{col_name}__distinct", 0) or 0)
+                raw_cast = row.get(f"{col_name}__castable", 0)
+                castable = 0 if (raw_cast is None or raw_cast != raw_cast) else int(raw_cast)
+
+                semantic_type = classify_column(
+                    athena_type=athena_type,
+                    distinct_count=distinct,
+                    total_count=total_count,
+                    non_null_count=non_null,
+                    numeric_cast_count=castable,
+                )
+
+                null_ratio = (total_count - non_null) / total_count if total_count > 0 else 0.0
+                distinct_ratio = distinct / non_null if non_null > 0 else 0.0
+                numeric_cast_ratio = castable / non_null if non_null > 0 else 0.0
+
+                warnings = []
+                if null_ratio > 0.5:
+                    warnings.append(f"Alta taxa de nulls: {null_ratio:.1%}")
+                if total_count < 100:
+                    warnings.append(f"Amostra pequena: {total_count} linhas")
+
+                profiles_map[col_name] = ColumnProfile(
+                    column_name=col_name,
+                    athena_type=athena_type,
+                    inferred_semantic_type=semantic_type,
+                    total_count=total_count,
+                    non_null_count=non_null,
+                    distinct_count=distinct,
+                    null_ratio=null_ratio,
+                    distinct_ratio=distinct_ratio,
+                    numeric_cast_ratio=numeric_cast_ratio,
+                    warnings=warnings,
+                )
+
+            # Parse numeric columns
+            for col_info in numeric_cols:
+                col_name = col_info["name"]
+                athena_type = col_info["type"]
+                non_null = int(row.get(f"{col_name}__non_null", 0) or 0)
+                distinct = int(row.get(f"{col_name}__distinct", 0) or 0)
+
+                semantic_type = SemanticType.NUMERIC
+                warnings = []
+
+                suggested, warning_msg = suggest_reclassification(
+                    athena_type=athena_type,
+                    distinct_count=distinct,
+                    total_count=total_count,
+                    non_null_count=non_null,
+                )
+                if suggested is not None:
+                    warnings.append(warning_msg)
+
+                null_ratio = (total_count - non_null) / total_count if total_count > 0 else 0.0
+                distinct_ratio = distinct / non_null if non_null > 0 else 0.0
+
+                profiles_map[col_name] = ColumnProfile(
+                    column_name=col_name,
+                    athena_type=athena_type,
+                    inferred_semantic_type=semantic_type,
+                    total_count=total_count,
+                    non_null_count=non_null,
+                    distinct_count=distinct,
+                    null_ratio=null_ratio,
+                    distinct_ratio=distinct_ratio,
+                    warnings=warnings,
+                )
+
+        # Retornar na ordem original
+        return [profiles_map[c["name"]] for c in columns]
 
     def _profile_single_column(
         self,
@@ -77,13 +256,10 @@ class ProfilingService:
         athena_type: str,
         temporal_col: str,
         base_filter: str,
-        sample_periods: int,
+        partition_filter: str = "",
+        sample_periods: int = 10,
     ) -> ColumnProfile:
-        """Faz profiling de uma coluna individual.
-
-        Para tipos nativos numéricos/data, classifica direto sem query.
-        Para strings, executa query de amostragem para obter métricas.
-        """
+        """Faz profiling de uma coluna individual (fallback)."""
         from core.column_classifier import (
             ATHENA_DATE_TYPES,
             ATHENA_NUMERIC_TYPES,
@@ -122,6 +298,7 @@ class ProfilingService:
                     col_name=col_name,
                     temporal_col=temporal_col,
                     base_filter=base_filter,
+                    partition_filter=partition_filter,
                     sample_periods=sample_periods,
                 )
                 if not card_df.empty:
@@ -169,6 +346,7 @@ class ProfilingService:
             athena_type=athena_type,
             temporal_col=temporal_col,
             base_filter=base_filter,
+            partition_filter=partition_filter,
             sample_periods=sample_periods,
         )
 
@@ -179,7 +357,8 @@ class ProfilingService:
         athena_type: str,
         temporal_col: str,
         base_filter: str,
-        sample_periods: int,
+        partition_filter: str = "",
+        sample_periods: int = 10,
     ) -> ColumnProfile:
         """Executa query de profiling para coluna string."""
         validate_identifier(col_name)
@@ -192,6 +371,7 @@ class ProfilingService:
             date_expression=config.date_expression or "",
             sample_periods=sample_periods,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
 
         df = self.client.execute_df(
@@ -265,13 +445,10 @@ class ProfilingService:
         col_name: str,
         temporal_col: str,
         base_filter: str,
-        sample_periods: int,
+        partition_filter: str = "",
+        sample_periods: int = 10,
     ):
-        """Query leve de cardinalidade para colunas numéricas nativas.
-
-        Usa column_sample.sql (COUNT, COUNT DISTINCT) sem TRY_CAST
-        para medir apenas contagens — não tenta cast numérico.
-        """
+        """Query leve de cardinalidade para colunas numéricas nativas."""
         validate_identifier(col_name)
         sql = self.builder.build_column_sample(
             schema=config.schema,
@@ -281,6 +458,7 @@ class ProfilingService:
             date_expression=config.date_expression or "",
             sample_periods=sample_periods,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
         return self.client.execute_df(
             sql,
@@ -294,15 +472,7 @@ class ProfilingService:
         profiles: list[ColumnProfile],
         overrides: dict[str, SemanticType],
     ) -> list[ColumnProfile]:
-        """Aplica overrides manuais do usuário.
-
-        Args:
-            profiles: Lista de ColumnProfile existentes.
-            overrides: Dict de {column_name: SemanticType} com overrides.
-
-        Returns:
-            Lista de ColumnProfile com overrides aplicados.
-        """
+        """Aplica overrides manuais do usuário."""
         for profile in profiles:
             if profile.column_name in overrides:
                 profile.user_override_type = overrides[profile.column_name]

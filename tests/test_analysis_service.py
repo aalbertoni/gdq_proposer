@@ -83,7 +83,7 @@ class TestGetNumericHistory:
         df = service.get_numeric_history(base_config, "VLR_SALDO")
         expected_cols = {
             "period", "mean", "stddev", "min", "max",
-            "p01", "p05", "p25", "p50", "p75", "p95", "p99",
+            "p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99",
             "non_null_count", "null_count", "total_count",
         }
         assert set(df.columns) == expected_cols

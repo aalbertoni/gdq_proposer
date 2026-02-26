@@ -2,15 +2,12 @@
 Pagina 02 — Explore: Calibracao de regras numericas, categoricas e de tabela.
 
 Tabs:
-- Numericas: para cada coluna numerica, grafico + bandas + backtest + carrinho
-- Categoricas: AllowedValues, DistinctValuesCount, CategoryFrequency, Completeness
+- Numericas: Mean, StdDev, Percentil, Completeness por coluna
+- Categoricas: AllowedValues, DistinctValuesCount, Frequency (individual), Completeness
 - Tabela: RowCount com mesmos controles de calibracao
 - Resumo: lista das regras adicionadas ao carrinho
 
-Cada regra tem controles de parametros independentes (inline).
-Graficos mostram bandas rolantes (media movel) em vez de bandas fixas.
-
-Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2 + B1 + B2).
+Definido conforme docs/technical_spec_v1.md secao 12.
 """
 
 import streamlit as st
@@ -117,7 +114,7 @@ def _render_rule_params(rule_key: str) -> tuple:
                 help="Porcentagem fixa da media para a banda alternativa.",
             ) / 100.0
         else:
-            margin_pct = 0.10  # valor default (nao usado quando desativado)
+            margin_pct = st.session_state.get(f"margin_{rule_key}", 10) / 100.0
             st.caption("Margem desativada")
     with col5:
         buffer = st.select_slider(
@@ -269,7 +266,7 @@ def _get_cached_proposals(cache_key, generate_fn):
 
 
 def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeric"):
-    """Renderiza botao de auto-tuning e exibe resultado."""
+    """Renderiza botao de auto-tuning, exibe resultado e aplica parametros."""
     cache_key = f"autotune_{rule_key}"
 
     if st.button(
@@ -303,10 +300,29 @@ def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeri
             f"sigma={result['n_sigma']}, "
             f"margem={result['margin_pct']*100:.0f}%"
             f"{' (ativada)' if result['margin_enabled'] else ' (desativada)'} "
-            f"— cobertura {result['coverage_pct']:.1f}%, "
+            f"-- cobertura {result['coverage_pct']:.1f}%, "
             f"FP: {result['false_positives']}, "
             f"estabilidade: {result['stability']:.2f}"
         )
+
+        # Botao para aplicar parametros sugeridos nos sliders
+        if result["viable"] and st.button(
+            "Aplicar parametros sugeridos",
+            key=f"apply_autotune_{rule_key}",
+            help="Atualiza os sliders com os parametros recomendados.",
+        ):
+            st.session_state[f"n_{rule_key}"] = result["n_periods"]
+            st.session_state[f"k_{rule_key}"] = result["n_sigma"]
+            st.session_state[f"margin_{rule_key}"] = int(result["margin_pct"] * 100)
+            st.session_state[f"margin_on_{rule_key}"] = result["margin_enabled"]
+            # Limpar cache de proposals que dependem destes params
+            keys_to_clear = [
+                k for k in list(st.session_state.keys())
+                if k.startswith("proposal_") and rule_key in k
+            ]
+            for k in keys_to_clear:
+                del st.session_state[k]
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +362,7 @@ cat_profiles = [
 
 # --- Config summary ---
 with st.expander(
-    f"Configuracao: `{dataset_config.schema}.{dataset_config.table}` — "
+    f"Configuracao: `{dataset_config.schema}.{dataset_config.table}` -- "
     f"{len(selected_set)} colunas ({len(numeric_profiles)} num, {len(cat_profiles)} cat)",
     expanded=False,
 ):
@@ -415,6 +431,53 @@ with st.sidebar:
             st.switch_page("pages/03_review.py")
     else:
         st.caption("Carrinho vazio.")
+
+    st.divider()
+
+    # Query cost summary
+    _summary = client.logger.get_session_summary()
+    if _summary["total_queries"] > 0:
+        st.subheader("Queries")
+        _cols = st.columns(2)
+        _cols[0].metric("Executadas", _summary["total_queries"])
+        _cols[1].metric("Tempo total", f"{_summary['total_elapsed_ms'] / 1000:.1f}s")
+
+        if _summary["total_bytes_scanned"] > 0:
+            _bytes = _summary["total_bytes_scanned"]
+            if _bytes >= 1024 ** 3:
+                _bytes_label = f"{_bytes / (1024 ** 3):.2f} GB"
+            elif _bytes >= 1024 ** 2:
+                _bytes_label = f"{_bytes / (1024 ** 2):.1f} MB"
+            else:
+                _bytes_label = f"{_bytes / 1024:.0f} KB"
+            st.caption(f"Dados escaneados: {_bytes_label}")
+            st.caption(f"Custo estimado: ${_summary['estimated_cost_usd']:.4f}")
+        elif client.dialect.value == "duckdb":
+            st.caption("Modo local (DuckDB) -- sem custo Athena")
+
+        if _summary["errors"] > 0:
+            st.caption(f":red[Erros: {_summary['errors']}]")
+
+        # Cost guardrail warning
+        _app_cfg = st.session_state.get("config")
+        _threshold = _app_cfg.athena.cost_warning_threshold_usd if _app_cfg else 0.50
+        if _summary["estimated_cost_usd"] > _threshold:
+            st.warning(
+                f"Custo da sessao (${_summary['estimated_cost_usd']:.4f}) "
+                f"excedeu o limite de ${_threshold:.2f}. "
+                f"Considere reduzir o lookback ou o numero de colunas.",
+                icon="💰",
+            )
+
+        with st.expander("Log de queries"):
+            st.download_button(
+                label="Exportar log",
+                data=client.logger.export_json(),
+                file_name="gdq_query_log.json",
+                mime="application/json",
+                key="sidebar_export_log",
+                help="JSON com resumo da sessao e detalhes de cada query executada.",
+            )
 
     st.divider()
     if st.button("Voltar ao Setup", key="sidebar_back_setup"):
@@ -498,8 +561,8 @@ with tab_numericas:
             "Coluna numerica:",
             col_names,
             key="explore_selected_col",
-            help="Selecione a coluna para calibrar. Cada coluna gera regras Mean (media) "
-                 "e StdDev (desvio padrao) independentes.",
+            help="Selecione a coluna para calibrar. Cada coluna gera regras Mean (media), "
+                 "StdDev (desvio padrao) e Percentil independentes.",
         )
 
         st.divider()
@@ -622,6 +685,77 @@ with tab_numericas:
 
             st.divider()
 
+            # ---- Percentil (D.1b) ----
+            st.subheader(f"Percentil -- {selected_col}")
+            st.caption(
+                "Regras de percentil monitoram a forma da distribuicao, nao apenas a media. "
+                "P10 detecta mudancas nos valores baixos; P90 detecta mudancas nos valores altos. "
+                "Implementada via CustomSql com dual guard dinamico."
+            )
+
+            pct_options = {
+                "P1": "p01", "P5": "p05", "P10": "p10",
+                "P90": "p90", "P95": "p95", "P99": "p99",
+            }
+            selected_pcts = st.multiselect(
+                "Percentis a monitorar:",
+                options=list(pct_options.keys()),
+                default=["P10", "P90"],
+                key=f"pct_select_{selected_col}",
+                help="Selecione quais percentis gerar regras. P10/P90 sao os mais comuns.",
+            )
+
+            if selected_pcts:
+                pct_n, pct_k, pct_margin, pct_buffer, pct_margin_on = _render_rule_params(
+                    f"pct_{selected_col}",
+                )
+
+                pct_baseline = BaselineStrategy(
+                    method=BaselineMethod.LAST_N_PERIODS,
+                    n_periods=pct_n,
+                    n_sigma=pct_k,
+                    margin_pct=pct_margin,
+                    margin_enabled=pct_margin_on,
+                )
+
+                pct_levels = [pct_options[p] for p in selected_pcts]
+                pct_cache_key = (
+                    f"proposal_pct_{selected_col}_{pct_n}_{pct_k}_{pct_margin}"
+                    f"_{pct_margin_on}_{'_'.join(pct_levels)}"
+                )
+                pct_proposals = _get_cached_proposals(
+                    pct_cache_key,
+                    lambda: proposal_svc.propose_percentile_rules(
+                        history_df, selected_col, dataset_config.table,
+                        pct_baseline, percentile_levels=pct_levels,
+                    ),
+                )
+
+                for pct_prop in pct_proposals:
+                    pct_label = pct_prop.metric_name.upper()
+                    with st.expander(f"{pct_label} -- {selected_col}", expanded=len(pct_proposals) <= 2):
+                        pct_vals = pct_prop.history_values
+                        pct_dates = pct_prop.history_dates
+
+                        if pct_vals and pct_dates:
+                            _render_rolling_chart(
+                                pct_vals, pct_dates, pct_n, pct_k, pct_margin,
+                                pct_label, margin_enabled=pct_margin_on,
+                            )
+                            _render_auto_tune(
+                                proposal_svc, pct_vals, pct_dates,
+                                f"pct_{selected_col}_{pct_prop.metric_name}",
+                                metric_kind="numeric",
+                            )
+
+                        _render_backtest_metrics(pct_prop)
+                        _render_add_to_cart(
+                            pct_prop, f"Percentil {pct_label}",
+                            f"pct_{selected_col}_{pct_prop.metric_name}",
+                        )
+
+            st.divider()
+
             # ---- Completeness ----
             comp_cache_key = f"proposal_comp_{selected_col}"
             comp_proposals = _get_cached_proposals(
@@ -679,7 +813,7 @@ with tab_categoricas:
             ),
             SemanticType.CATEGORICAL_MID_CARDINALITY: (
                 ":orange[Mid cardinality]",
-                "Muitos valores distintos. Monitoramento limitado aos top-K mais frequentes.",
+                "Muitos valores distintos. Monitoramento limitado aos mais frequentes.",
             ),
             SemanticType.CATEGORICAL_HIGH_CARDINALITY: (
                 ":red[High cardinality]",
@@ -719,10 +853,34 @@ with tab_categoricas:
             is_mid = effective == SemanticType.CATEGORICAL_MID_CARDINALITY
             is_high = effective == SemanticType.CATEGORICAL_HIGH_CARDINALITY
 
-            # --- Frequency mode selector ---
+            # ---- Distribution chart (panoramic) ----
+            if (is_low or is_mid) and not cat_dist_df.empty:
+                domain_values = cat_domain_df["category_value"].tolist()
+
+                fig = go.Figure()
+                for val in domain_values[:20]:
+                    mask = cat_dist_df["category_value"] == val
+                    val_df = cat_dist_df[mask].sort_values("period")
+                    fig.add_trace(go.Bar(
+                        x=val_df["period"].tolist(),
+                        y=val_df["value_pct"].tolist(),
+                        name=str(val),
+                    ))
+
+                fig.update_layout(
+                    barmode="stack",
+                    height=350,
+                    margin=dict(l=50, r=20, t=30, b=30),
+                    xaxis_title="Periodo",
+                    yaxis_title="Frequencia (%)",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            # --- Default frequency mode selector (column-level) ---
             if is_low or is_mid:
                 cat_freq_mode = st.radio(
-                    "Modo das regras de frequencia:",
+                    "Modo padrao das regras de frequencia:",
                     options=["static", "dynamic", "hybrid"],
                     format_func=lambda m: {
                         "static": "Estatico (valores fixos)",
@@ -732,12 +890,10 @@ with tab_categoricas:
                     key=f"cat_freq_mode_{selected_cat_col}",
                     horizontal=True,
                     help=(
-                        "**Estatico:** limites fixos calculados do historico. "
-                        "Precisa recalibrar manualmente se a distribuicao mudar.\n\n"
-                        "**Dinamico:** usa avg(last(N))/std(last(N)) para auto-ajustar "
-                        "os limites a cada execucao. Acompanha drift natural.\n\n"
-                        "**Hibrido:** auto-ajuste dinamico com floor/ceiling absolutos. "
-                        "Protege contra drift excessivo."
+                        "Modo padrao para todos os valores. Pode ser sobrescrito individualmente.\n\n"
+                        "**Estatico:** limites fixos calculados do historico.\n\n"
+                        "**Dinamico:** usa avg(last(N))/std(last(N)) para auto-ajustar.\n\n"
+                        "**Hibrido:** auto-ajuste dinamico com floor/ceiling absolutos."
                     ),
                 )
             else:
@@ -787,14 +943,36 @@ with tab_categoricas:
                     cat_floor_pct = st.number_input(
                         "Floor (%):", min_value=0.0, max_value=100.0, value=0.0, step=0.5,
                         key=f"cat_floor_{selected_cat_col}",
-                        help="Limite inferior absoluto. A frequencia nunca pode ficar abaixo deste valor.",
+                        help="Limite inferior absoluto.",
                     )
                 with cat_h_c2:
                     cat_ceiling_pct = st.number_input(
                         "Ceiling (%):", min_value=0.0, max_value=100.0, value=100.0, step=0.5,
                         key=f"cat_ceiling_{selected_cat_col}",
-                        help="Limite superior absoluto. A frequencia nunca pode ultrapassar este valor.",
+                        help="Limite superior absoluto.",
                     )
+
+            # Validar floor < ceiling no modo hibrido
+            if cat_freq_mode == "hybrid" and cat_floor_pct is not None and cat_ceiling_pct is not None:
+                if cat_floor_pct >= cat_ceiling_pct:
+                    st.error(
+                        f"Floor ({cat_floor_pct}%) deve ser menor que Ceiling ({cat_ceiling_pct}%). "
+                        "Ajuste os valores para que o intervalo faca sentido."
+                    )
+                    st.stop()
+
+            # --- Frequency guardrail (D.1c) ---
+            if is_low or is_mid:
+                max_freq_rules = st.slider(
+                    "Max regras de frequencia:",
+                    min_value=1, max_value=10, value=5,
+                    key=f"max_freq_{selected_cat_col}",
+                    help="Limita o numero de regras CustomSql de frequencia. "
+                         "Os valores mais frequentes tem prioridade. "
+                         "Reduz sobrecarga de queries no GDQ em producao.",
+                )
+            else:
+                max_freq_rules = 5
 
             cat_baseline = BaselineStrategy(
                 method=BaselineMethod.LAST_N_PERIODS,
@@ -807,7 +985,7 @@ with tab_categoricas:
             cat_cache_key = (
                 f"cat_proposals_{selected_cat_col}_{cat_margin_pct}"
                 f"_{cat_freq_mode}_{cat_n_periods}_{cat_n_sigma}"
-                f"_{cat_floor_pct}_{cat_ceiling_pct}"
+                f"_{cat_floor_pct}_{cat_ceiling_pct}_{max_freq_rules}"
             )
             cat_proposals = _get_cached_proposals(
                 cat_cache_key,
@@ -817,6 +995,7 @@ with tab_categoricas:
                     freq_mode=cat_freq_mode,
                     floor_pct=cat_floor_pct,
                     ceiling_pct=cat_ceiling_pct,
+                    max_frequency_rules=max_freq_rules,
                 ),
             )
 
@@ -825,31 +1004,6 @@ with tab_categoricas:
                     "Coluna com alta cardinalidade. "
                     "Regras de valores permitidos e frequencia nao sao recomendadas."
                 )
-
-            # ---- Distribution chart (CAT_LOW / CAT_MID) ----
-            if (is_low or is_mid) and not cat_dist_df.empty:
-                domain_values = cat_domain_df["category_value"].tolist()
-                periods = sorted(cat_dist_df["period"].unique())
-
-                fig = go.Figure()
-                for val in domain_values[:20]:
-                    mask = cat_dist_df["category_value"] == val
-                    val_df = cat_dist_df[mask].sort_values("period")
-                    fig.add_trace(go.Bar(
-                        x=val_df["period"].tolist(),
-                        y=val_df["value_pct"].tolist(),
-                        name=str(val),
-                    ))
-
-                fig.update_layout(
-                    barmode="stack",
-                    height=350,
-                    margin=dict(l=50, r=20, t=30, b=30),
-                    xaxis_title="Periodo",
-                    yaxis_title="Frequencia (%)",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                )
-                st.plotly_chart(fig, use_container_width=True)
 
             # ---- AllowedValues (CAT_LOW) ----
             av_proposals = [p for p in cat_proposals if p.rule_type == RuleType.ALLOWED_VALUES]
@@ -889,7 +1043,7 @@ with tab_categoricas:
                 )
                 st.divider()
 
-            # ---- Category Frequency ----
+            # ---- Category Frequency (individual per value with charts) ----
             freq_types = {
                 RuleType.CATEGORY_FREQUENCY_STATIC,
                 RuleType.CATEGORY_FREQUENCY_DYNAMIC,
@@ -906,53 +1060,38 @@ with tab_categoricas:
                     "hybrid": "Hibrido",
                 }
                 mode_label = mode_labels.get(cat_freq_mode, cat_freq_mode)
-                st.subheader(f"Frequencia por Valor — {mode_label} (CustomSql)")
+                st.subheader(f"Frequencia por Valor ({mode_label})")
 
-                if cat_freq_mode == "static":
-                    st.caption(
-                        "Para cada valor, verifica que sua proporcao (%) esta dentro da faixa esperada. "
-                        "Os limites sao fixos e precisam ser recalibrados manualmente se a distribuicao mudar."
-                    )
-                elif cat_freq_mode == "dynamic":
-                    st.caption(
-                        "Regras dinamicas: os limites se auto-ajustam a cada execucao usando "
-                        "avg(last(N)) e std(last(N)). Acompanham variacao natural da distribuicao."
-                    )
-                else:
-                    st.caption(
-                        "Regras hibridas: auto-ajuste dinamico com protecao de floor/ceiling absolutos. "
-                        "Impede que drift excessivo ultrapasse limites de negocio."
-                    )
-
-                with st.expander("Como funciona a frequencia de categorias?", expanded=False):
-                    st.markdown(
-                        "Para cada valor da coluna, a ferramenta calcula a **frequencia relativa** "
-                        "(porcentagem de linhas com aquele valor) em cada periodo.\n\n"
-                        "**Estatico:** limites fixos calculados do historico. Simples, mas precisa "
-                        "recalibrar manualmente se a distribuicao mudar.\n\n"
-                        "**Dinamico:** usa `avg(last(N))` e `std(last(N))` no GDQ para auto-ajustar "
-                        "a cada execucao. Dual guard: passa se estiver na banda sigma **OU** na banda margem.\n\n"
-                        "**Hibrido:** dinamico + limites absolutos (floor/ceiling). Impede que a regra "
-                        "aceite valores fora dos limites de negocio, mesmo que o historico tenha derivado."
-                    )
-
-                # Auto-tune for first category (representative)
-                first_fp = freq_proposals[0]
-                if first_fp.history_values and first_fp.history_dates:
-                    _render_auto_tune(
-                        proposal_svc, first_fp.history_values, first_fp.history_dates,
-                        f"catfreq_{selected_cat_col}", metric_kind="frequency",
-                    )
+                st.caption(
+                    f"Top {len(freq_proposals)} valores por frequencia. "
+                    f"Cada valor tem grafico individual e pode ter modo diferente."
+                )
 
                 for fp in freq_proposals:
                     cat_val = fp.category_value
-                    st.markdown(f"**Valor: `{cat_val}`** — faixa: {fp.suggested_lower:.1f}% a {fp.suggested_upper:.1f}%")
+                    cov_str = f"{fp.backtest.coverage_pct:.0f}%" if fp.backtest else "N/A"
+                    conf_str = _confidence_badge(fp.confidence)
 
-                    _render_backtest_metrics(fp)
-                    _render_add_to_cart(
-                        fp, f"Freq({cat_val})",
-                        f"freq_{selected_cat_col}_{cat_val}",
-                    )
+                    with st.expander(
+                        f"**{cat_val}** -- faixa: {fp.suggested_lower:.1f}% a {fp.suggested_upper:.1f}% "
+                        f"| Cobertura: {cov_str} | {conf_str}",
+                        expanded=False,
+                    ):
+                        # Individual rolling chart
+                        if fp.history_values and fp.history_dates:
+                            margin_pct_chart = cat_margin_pct / 100.0
+                            _render_rolling_chart(
+                                fp.history_values, fp.history_dates,
+                                cat_n_periods, cat_n_sigma, margin_pct_chart,
+                                f"Freq % ({cat_val})",
+                                margin_enabled=cat_freq_mode != "static",
+                            )
+
+                        _render_backtest_metrics(fp)
+                        _render_add_to_cart(
+                            fp, f"Freq({cat_val})",
+                            f"freq_{selected_cat_col}_{cat_val}",
+                        )
 
                 if len(freq_proposals) > 1:
                     # Bulk add button
@@ -1082,7 +1221,7 @@ with tab_resumo:
             coverage_str = f"{p.backtest.coverage_pct:.1f}%" if p.backtest else "N/A"
 
             res_c1, res_c2, res_c3 = st.columns([4, 1.5, 1.5])
-            res_c1.markdown(f"**{label}** — `{target}`")
+            res_c1.markdown(f"**{label}** -- `{target}`")
             res_c2.markdown(badge)
             res_c3.caption(f"Cobertura: {coverage_str}")
 
