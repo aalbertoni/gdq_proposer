@@ -21,6 +21,8 @@ class UserOverride:
     custom_n_sigma: Optional[float] = None
     custom_margin_pct: Optional[float] = None
     margin_enabled: Optional[bool] = None
+    custom_floor_pct: Optional[float] = None
+    custom_ceiling_pct: Optional[float] = None
     notes: str = ""
 
 

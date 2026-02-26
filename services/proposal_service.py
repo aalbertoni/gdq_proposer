@@ -8,10 +8,12 @@ Definido conforme docs/technical_spec_v1.md seção 4.4.
 """
 
 import uuid
+from dataclasses import dataclass, field
+from typing import Optional
 
 import pandas as pd
 
-from core.backtest import backtest_band, backtest_frequency_band
+from core.backtest import backtest_band, backtest_frequency_band, backtest_frequency_dual_guard
 from core.gdq_rule_generator import GDQRuleGenerator
 from core.models.baseline import BaselineStrategy
 from core.models.enums import (
@@ -145,6 +147,9 @@ class ProposalService:
         table: str,
         profile: ColumnProfile,
         baseline: BaselineStrategy,
+        freq_mode: str = "static",
+        floor_pct: float | None = None,
+        ceiling_pct: float | None = None,
     ) -> list[RuleProposal]:
         """Gera propostas de regra para coluna categorica.
 
@@ -155,6 +160,9 @@ class ProposalService:
             table: Nome da tabela.
             profile: ColumnProfile com effective_type.
             baseline: Estrategia de baseline.
+            freq_mode: "static", "dynamic" ou "hybrid".
+            floor_pct: Limite inferior absoluto (modo hibrido, 0-100).
+            ceiling_pct: Limite superior absoluto (modo hibrido, 0-100).
 
         Returns:
             Lista de RuleProposal.
@@ -210,7 +218,7 @@ class ProposalService:
             dc_proposal.gdq_syntax_preview = self.generator.generate(dc_proposal)
             proposals.append(dc_proposal)
 
-        # --- Category Frequency Static (CAT_LOW: all, CAT_MID: top-K) ---
+        # --- Category Frequency (static / dynamic / hybrid) ---
         if (is_low or is_mid) and not distribution.empty:
             values_to_monitor = domain_values if is_low else domain_values[:20]
             for cat_value in values_to_monitor:
@@ -220,6 +228,9 @@ class ProposalService:
                     table=table,
                     cat_value=cat_value,
                     baseline=baseline,
+                    freq_mode=freq_mode,
+                    floor_pct=floor_pct,
+                    ceiling_pct=ceiling_pct,
                 )
                 if freq_proposal:
                     proposals.append(freq_proposal)
@@ -248,6 +259,9 @@ class ProposalService:
         table: str,
         cat_value: str,
         baseline: BaselineStrategy,
+        freq_mode: str = "static",
+        floor_pct: float | None = None,
+        ceiling_pct: float | None = None,
     ) -> RuleProposal | None:
         """Constroi proposta de frequencia para um valor categorico."""
         mask = distribution["category_value"] == cat_value
@@ -272,11 +286,19 @@ class ProposalService:
         except ValueError:
             return None
 
+        # Determine rule type based on mode
+        if freq_mode == "dynamic":
+            rule_type = RuleType.CATEGORY_FREQUENCY_DYNAMIC
+        elif freq_mode == "hybrid":
+            rule_type = RuleType.CATEGORY_FREQUENCY_HYBRID
+        else:
+            rule_type = RuleType.CATEGORY_FREQUENCY_STATIC
+
         proposal = RuleProposal(
             id=str(uuid.uuid4()),
             target_column=column,
             target_table=table,
-            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            rule_type=rule_type,
             metric_name=f"cat_freq_{cat_value}",
             category_value=cat_value,
             suggested_lower=round(band["lower"], 2),
@@ -285,19 +307,38 @@ class ProposalService:
             baseline_window=baseline.n_periods,
             baseline_n_sigma=baseline.n_sigma,
             baseline_margin_pct=baseline.margin_pct,
+            margin_enabled=baseline.margin_enabled,
             history_dates=dates,
             history_values=pct_series,
         )
 
+        if rule_type == RuleType.CATEGORY_FREQUENCY_HYBRID:
+            proposal.floor_pct = floor_pct if floor_pct is not None else 0.0
+            proposal.ceiling_pct = ceiling_pct if ceiling_pct is not None else 100.0
+
         # Backtest
-        proposal.backtest = backtest_frequency_band(
-            pct_series=pct_series,
-            dates=dates,
-            n_periods=baseline.n_periods,
-            margin_pct=baseline.margin_pct * 100,
-            n_sigma=baseline.n_sigma,
-            min_history=baseline.min_history_points,
-        )
+        if freq_mode == "static":
+            proposal.backtest = backtest_frequency_band(
+                pct_series=pct_series,
+                dates=dates,
+                n_periods=baseline.n_periods,
+                margin_pct=baseline.margin_pct * 100,
+                n_sigma=baseline.n_sigma,
+                min_history=baseline.min_history_points,
+            )
+        else:
+            proposal.backtest = backtest_frequency_dual_guard(
+                pct_series=pct_series,
+                dates=dates,
+                n_periods=baseline.n_periods,
+                n_sigma=baseline.n_sigma,
+                margin_pct=baseline.margin_pct,
+                buffer=0.01,
+                min_history=baseline.min_history_points,
+                margin_enabled=baseline.margin_enabled,
+                floor_pct=floor_pct if freq_mode == "hybrid" else None,
+                ceiling_pct=ceiling_pct if freq_mode == "hybrid" else None,
+            )
 
         # Score
         score = score_proposal(proposal, pct_series)
@@ -449,6 +490,141 @@ class ProposalService:
         proposal.gdq_syntax_preview = self.generator.generate(proposal)
 
         return proposal
+
+    def find_best_params(
+        self,
+        values: list[float],
+        dates: list[str],
+        metric_kind: str = "numeric",
+        n_range: list[int] | None = None,
+        sigma_range: list[float] | None = None,
+        margin_range: list[float] | None = None,
+        min_coverage: float = 70.0,
+    ) -> dict:
+        """Busca a melhor combinacao de N/sigma/margem via grid search.
+
+        Testa todas as combinacoes e retorna a que maximiza um score composto
+        de coverage e minimiza falsos positivos.
+
+        Args:
+            values: Serie historica (mean, stddev, pct, row_count).
+            dates: Datas correspondentes.
+            metric_kind: "numeric" (backtest_band) ou "frequency" (backtest_frequency_dual_guard).
+            n_range: Lista de N a testar. Default: [10, 15, 20, 30, 45].
+            sigma_range: Lista de sigma a testar. Default: [1.5, 2.0, 2.5, 3.0].
+            margin_range: Lista de margem (fracao) a testar. Default: [0.05, 0.10, 0.15, 0.20].
+            min_coverage: Cobertura minima aceitavel (%).
+
+        Returns:
+            Dict com chaves:
+            - "n_periods", "n_sigma", "margin_pct", "margin_enabled": melhores params
+            - "coverage_pct": cobertura do melhor
+            - "false_positives": FP do melhor
+            - "score_total": score composto do melhor
+            - "confidence": ConfidenceLevel
+            - "viable": bool — se a melhor combinacao atinge min_coverage
+            - "recommendation": str com texto de recomendacao
+        """
+        if n_range is None:
+            n_range = [10, 15, 20, 30, 45]
+        if sigma_range is None:
+            sigma_range = [1.5, 2.0, 2.5, 3.0]
+        if margin_range is None:
+            margin_range = [0.05, 0.10, 0.15, 0.20]
+
+        best = None
+        best_score = -1.0
+
+        for n in n_range:
+            for sigma in sigma_range:
+                for margin in margin_range:
+                    for margin_on in [True, False]:
+                        try:
+                            if metric_kind == "frequency":
+                                bt = backtest_frequency_dual_guard(
+                                    pct_series=values, dates=dates,
+                                    n_periods=n, n_sigma=sigma,
+                                    margin_pct=margin, buffer=0.01,
+                                    margin_enabled=margin_on,
+                                )
+                            else:
+                                bt = backtest_band(
+                                    values=values, dates=dates,
+                                    n_periods=n, n_sigma=sigma,
+                                    margin_pct=margin,
+                                    margin_enabled=margin_on,
+                                )
+                        except Exception:
+                            continue
+
+                        if bt.total_periods == 0:
+                            continue
+
+                        # Score composto: prioriza coverage alta com poucos FP
+                        coverage_norm = bt.coverage_pct / 100.0
+                        fp_penalty = bt.false_positive_proxy * 0.05  # cada FP reduz 5%
+                        stability_bonus = bt.stability_score * 0.10
+                        combo_score = coverage_norm - fp_penalty + stability_bonus
+
+                        if combo_score > best_score:
+                            best_score = combo_score
+                            best = {
+                                "n_periods": n,
+                                "n_sigma": sigma,
+                                "margin_pct": margin,
+                                "margin_enabled": margin_on,
+                                "coverage_pct": bt.coverage_pct,
+                                "false_positives": bt.false_positive_proxy,
+                                "stability": bt.stability_score,
+                                "score_total": round(combo_score, 4),
+                            }
+
+        if best is None:
+            from core.models.enums import ConfidenceLevel
+            return {
+                "n_periods": 20, "n_sigma": 2.0, "margin_pct": 0.10,
+                "margin_enabled": True,
+                "coverage_pct": 0.0, "false_positives": 0,
+                "stability": 0.0, "score_total": 0.0,
+                "confidence": ConfidenceLevel.LOW,
+                "viable": False,
+                "recommendation": "Dados insuficientes para avaliar — nao recomendado.",
+            }
+
+        from core.models.enums import ConfidenceLevel
+
+        coverage = best["coverage_pct"]
+        fp = best["false_positives"]
+
+        if coverage >= 90.0 and fp == 0:
+            confidence = ConfidenceLevel.HIGH
+            recommendation = (
+                f"Recomendado: N={best['n_periods']}, sigma={best['n_sigma']}, "
+                f"margem={best['margin_pct']*100:.0f}%"
+                f"{'' if best['margin_enabled'] else ' (sem margem)'}. "
+                f"Cobertura {coverage:.1f}%, 0 falsos positivos."
+            )
+        elif coverage >= min_coverage:
+            confidence = ConfidenceLevel.MEDIUM
+            fp_text = f", {fp} possivel(is) falso(s) positivo(s)" if fp > 0 else ""
+            recommendation = (
+                f"Aceitavel: N={best['n_periods']}, sigma={best['n_sigma']}, "
+                f"margem={best['margin_pct']*100:.0f}%"
+                f"{'' if best['margin_enabled'] else ' (sem margem)'}. "
+                f"Cobertura {coverage:.1f}%{fp_text}. Revise os parametros."
+            )
+        else:
+            confidence = ConfidenceLevel.LOW
+            recommendation = (
+                f"Nao recomendado: a melhor combinacao atinge apenas {coverage:.1f}% de cobertura"
+                f" com {fp} falso(s) positivo(s). "
+                f"Esta metrica pode ser instavel demais para uma regra automatica."
+            )
+
+        best["confidence"] = confidence
+        best["viable"] = coverage >= min_coverage
+        best["recommendation"] = recommendation
+        return best
 
     def _build_completeness_proposal(
         self,

@@ -109,6 +109,7 @@ st.markdown(
 )
 st.markdown(
     "- Ajustar os 4 parametros (N, K, Margem, Buffer) usando sliders\n"
+    "- Usar o botao **Sugerir melhor combinacao** para auto-tuning\n"
     "- Visualizar o grafico interativo com as bandas de aceitacao\n"
     "- Ver as metricas do backtest (cobertura, falsos positivos, estabilidade)\n"
     "- Ler a explicacao em linguagem natural de cada regra\n"
@@ -116,7 +117,7 @@ st.markdown(
 )
 st.markdown(
     "A pagina tem 4 abas: **Numericas** (Mean, StdDev, Completeness por coluna), "
-    "**Categoricas** (AllowedValues, DistinctValuesCount, Frequencia por coluna), "
+    "**Categoricas** (AllowedValues, DistinctValuesCount, Frequencia em 3 modos por coluna), "
     "**Tabela** (RowCount) e **Resumo** (regras no carrinho)."
 )
 
@@ -311,22 +312,30 @@ with st.expander("Cardinalidade de colunas categoricas"):
         "Gera apenas: completude. Regras de dominio nao sao recomendadas."
     )
 
-with st.expander("Regras estaticas vs. dinamicas"):
+with st.expander("Regras estaticas vs. dinamicas vs. hibridas"):
     st.markdown(
-        "As regras da ferramenta se dividem em dois tipos:\n\n"
-        "**Regras dinamicas** (numericas e volume):\n"
-        "- Mean, StdDev, RowCount\n"
+        "As regras da ferramenta se dividem em tres modos:\n\n"
+        "**Regras dinamicas** (numericas, volume e categoricas):\n"
+        "- Mean, StdDev, RowCount e Frequencia Dinamica\n"
         "- Usam funcoes `avg(last(N))` e `std(last(N))` na sintaxe GDQ\n"
         "- O GDQ **recalcula automaticamente** os limites a cada execucao\n"
         "- Nao precisam de manutencao manual\n\n"
         "**Regras estaticas** (categoricas):\n"
-        "- AllowedValues, DistinctValuesCount, CategoryFrequency, IsPrimaryKey\n"
+        "- AllowedValues, DistinctValuesCount, Frequencia Estatica, IsPrimaryKey\n"
         "- Os valores/limites sao **fixos** na sintaxe GDQ\n"
         "- Calculados pela ferramenta com base no historico, mas uma vez "
         "exportados, nao mudam sozinhos\n"
         "- Podem precisar de atualizacao se o dominio mudar\n\n"
-        "**Dica:** para categoricas, revise as regras periodicamente ou use "
-        "a ferramenta novamente quando houver mudancas no dominio."
+        "**Regras hibridas** (categoricas):\n"
+        "- Frequencia Hibrida (dinamica + floor/ceiling absolutos)\n"
+        "- Combinam auto-ajuste dinamico com limites absolutos de negocio\n"
+        "- O dual guard (sigma OR margem) se auto-ajusta, mas o resultado "
+        "e validado AND com floor/ceiling fixos\n"
+        "- Ideal quando a distribuicao muda naturalmente mas ha limites "
+        "que nunca devem ser ultrapassados\n\n"
+        "**Dica:** para categoricas com dominio estavel, use estatico. "
+        "Para categoricas com variacao natural, use dinamico. "
+        "Para categoricas criticas com limites de negocio, use hibrido."
     )
 
 
@@ -468,6 +477,49 @@ with st.expander("Aba Numericas — Mean e StdDev"):
         "houver drift."
     )
 
+with st.expander("Aba Categoricas — Modo Dinamico e Hibrido"):
+    st.markdown(
+        "Alem do modo estatico (limites fixos), a aba Categoricas oferece "
+        "dois modos adicionais para regras de frequencia:\n\n"
+        "**Dinamico:**\n"
+        "- Usa `avg(last(N))` e `std(last(N))` na regra CustomSql\n"
+        "- O GDQ recalcula os limites a cada execucao, assim como faz com Mean e StdDev\n"
+        "- Aplica dual guard: passa se a frequencia estiver na banda sigma **OU** na margem\n"
+        "- Ideal para categorias cuja proporcao varia naturalmente ao longo do tempo\n\n"
+        "**Hibrido:**\n"
+        "- Igual ao dinamico, mas com floor e ceiling absolutos\n"
+        "- O dual guard se auto-ajusta, mas o resultado final e AND com floor/ceiling\n"
+        "- Exemplo: frequencia de UF='SP' pode variar entre avg +/- sigma, "
+        "mas NUNCA pode ficar abaixo de 20% ou acima de 80%\n"
+        "- Configure os valores de floor e ceiling nos campos numericos "
+        "que aparecem ao selecionar o modo hibrido\n\n"
+        "**Como escolher:**\n"
+        "- Dominio fixo e estavel (ex: status com 3 valores) → estatico\n"
+        "- Distribuicao que muda gradualmente (ex: UF por regiao) → dinamico\n"
+        "- Limites criticos de negocio (ex: tipo de produto nunca < 5%) → hibrido"
+    )
+
+with st.expander("Sugestao automatica de parametros (auto-tuning)"):
+    st.markdown(
+        "O botao **\"Sugerir melhor combinacao\"** testa diversas combinacoes "
+        "de N, sigma e margem para encontrar a que melhor equilibra cobertura "
+        "e falsos positivos.\n\n"
+        "**Como funciona:**\n"
+        "- Testa combinacoes de N (10, 15, 20, 30, 45), sigma (1.5, 2.0, 2.5, 3.0) "
+        "e margem (5%, 10%, 15%, 20%), com e sem margem ativada\n"
+        "- Para cada combinacao, executa backtest completo no historico\n"
+        "- Calcula score composto: maximiza cobertura, penaliza falsos positivos, "
+        "bonifica estabilidade\n"
+        "- Retorna a melhor combinacao com recomendacao de confianca\n\n"
+        "**Resultado:**\n"
+        "- **HIGH (verde):** combinacao recomendada — cobertura >= 90%, 0 FPs\n"
+        "- **MEDIUM (laranja):** aceitavel — cobertura >= 70%, revisar parametros\n"
+        "- **LOW (vermelho):** nao recomendado — cobertura abaixo de 70% ou "
+        "muitos falsos positivos. Considere nao usar essa regra\n\n"
+        "**Dica:** use o auto-tuning como ponto de partida e ajuste "
+        "manualmente com os sliders se necessario."
+    )
+
 with st.expander("Aba Tabela — RowCount"):
     st.markdown(
         "A regra **RowCount** verifica o volume de linhas por periodo. "
@@ -525,7 +577,7 @@ st.header("6. Review e Exportacao")
 with st.expander("Gerenciando o carrinho"):
     st.markdown(
         "O carrinho acumula todas as regras que voce adicionou nas abas "
-        "Numericas e Tabela. Para cada regra, voce pode:\n\n"
+        "Numericas, Categoricas e Tabela. Para cada regra, voce pode:\n\n"
         "- **Habilitar/desabilitar** usando o checkbox a esquerda. "
         "Regras desabilitadas nao sao incluidas na exportacao, "
         "mas permanecem no carrinho para referencia\n"
@@ -699,6 +751,40 @@ with st.expander("A sessao expirou e perdi minhas regras. Como evitar?"):
         "- Nao feche a aba do navegador durante a calibracao"
     )
 
+with st.expander("Quando usar modo estatico, dinamico ou hibrido para categoricas?"):
+    st.markdown(
+        "A escolha depende do comportamento da coluna:\n\n"
+        "- **Estatico:** a distribuicao e estavel e previsivel. Exemplos: "
+        "colunas de status com 3 valores fixos, UF com proporcoes constantes. "
+        "Vantagem: simples e interpretavel.\n\n"
+        "- **Dinamico:** a distribuicao muda gradualmente ao longo do tempo. "
+        "Exemplo: proporcao de clientes por canal que varia com sazonalidade. "
+        "Vantagem: acompanha drift natural sem precisar recalibrar.\n\n"
+        "- **Hibrido:** ha limites de negocio que nunca devem ser ultrapassados, "
+        "mas a distribuicao varia dentro desses limites. "
+        "Exemplo: a frequencia de um tipo de operacao pode variar, mas nunca "
+        "deve cair abaixo de 5% (floor) ou subir acima de 50% (ceiling). "
+        "Vantagem: auto-ajuste com protecao contra desvios excessivos.\n\n"
+        "**Na duvida:** comece com estatico. Se a cobertura for baixa ou houver "
+        "drift, tente dinamico. Se precisar de limites absolutos, use hibrido."
+    )
+
+with st.expander("O auto-tuning sugeriu LOW. Devo ignorar essa regra?"):
+    st.markdown(
+        "Quando o auto-tuning retorna **LOW**, significa que nenhuma combinacao "
+        "de parametros conseguiu atingir 70% de cobertura. Isso pode significar:\n\n"
+        "- Os dados sao **muito volateis** para essa metrica — a variacao natural "
+        "e maior que qualquer banda razoavel\n"
+        "- Ha **drift significativo** no historico — os dados mudaram de patamar\n"
+        "- Ha **poucos pontos** no historico para uma avaliacao confiavel\n\n"
+        "**Opcoes:**\n"
+        "- **Nao usar essa regra:** regras com baixa cobertura geram muitos "
+        "alertas falsos e perdem credibilidade\n"
+        "- **Usar uma regra mais simples:** ex: Completeness em vez de Mean\n"
+        "- **Investigar os dados:** o problema pode estar no historico, nao na regra\n"
+        "- **Aumentar o lookback:** mais dados podem estabilizar a banda"
+    )
+
 with st.expander("O que acontece se eu mudar os parametros depois de adicionar ao carrinho?"):
     st.markdown(
         "As regras no carrinho nao sao afetadas por mudancas nos sliders. "
@@ -721,11 +807,13 @@ st.caption(
 
 glossary = [
     ("Athena", "Servico da AWS para consultar dados no data lake via SQL. A ferramenta usa Athena para analisar historico de tabelas."),
+    ("Auto-tuning", "Busca automatica da melhor combinacao de N/sigma/margem via grid search. Testa multiplas combinacoes e retorna a que maximiza cobertura com menos falsos positivos."),
     ("Backtest", "Simulacao da regra no historico passado para medir cobertura, falsos positivos e estabilidade."),
     ("Banda margem", "Faixa de aceitacao calculada como porcentagem fixa da media (ex: media +/- 10%). Parte do dual guard."),
     ("Banda sigma", "Faixa de aceitacao calculada como media +/- K desvios padrao. Parte do dual guard."),
     ("Buffer", "Valor minimo (ex: 0.01) adicionado aos limites das bandas para evitar falsos positivos por arredondamento."),
     ("Carrinho", "Lista de regras selecionadas para exportacao. Funciona como um carrinho de compras."),
+    ("Ceiling", "Limite superior absoluto (%) usado no modo hibrido. A frequencia nunca pode ultrapassar este valor, independente do dual guard."),
     ("Cobertura", "Porcentagem de periodos historicos que passariam na regra. Quanto maior, melhor."),
     ("Completeness", "Regra que verifica se uma coluna tem uma porcentagem minima de valores preenchidos (nao-nulos)."),
     ("Confianca", "Avaliacao geral da qualidade da regra: HIGH (recomendada), MEDIUM (revisar), LOW (nao recomendada)."),
@@ -734,6 +822,9 @@ glossary = [
     ("DuckDB", "Banco de dados local usado em modo mock para simular o Athena durante desenvolvimento."),
     ("Estabilidade", "Metrica de 0 a 1 que indica quao pouco a banda muda ao variar parametros. 1.0 = muito estavel."),
     ("Falso positivo", "Estimativa (~) de periodos normais que seriam reprovados pela regra. Criterio: viola a regra mas esta dentro de 4 sigma da media global. Ideal: 0."),
+    ("Floor", "Limite inferior absoluto (%) usado no modo hibrido. A frequencia nunca pode ficar abaixo deste valor, independente do dual guard."),
+    ("Frequencia dinamica", "Regra CustomSql de frequencia que usa avg(last(N)) e std(last(N)) para auto-ajustar os limites a cada execucao do GDQ."),
+    ("Frequencia hibrida", "Regra dinamica com floor/ceiling absolutos. Combina auto-ajuste com limites de negocio fixos."),
     ("GDQ", "AWS Glue Data Quality. Servico da AWS para definir e executar regras de qualidade de dados."),
     ("Granularidade", "Frequencia dos periodos de analise: diario (1 periodo por dia), mensal (1 periodo por mes)."),
     ("K (sigma)", "Multiplicador do desvio padrao para a banda sigma. K=2 cobre ~95% dos dados normais. K=3 cobre ~99.7%."),

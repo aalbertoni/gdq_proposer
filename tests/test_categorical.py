@@ -224,15 +224,24 @@ class TestGDQGeneratorCategorical:
         assert "(DistinctValuesCount TIPO <= 15)" in syntax
         assert "AND" in syntax
 
-    def test_category_frequency_dynamic_still_raises(self):
-        """DYNAMIC is Sprint C2 — should still raise."""
+    def test_category_frequency_dynamic_generates_syntax(self):
+        """DYNAMIC generates CustomSql with avg(last(N))."""
         p = RuleProposal(
-            id="3", target_column="X", target_table="t",
+            id="3", target_column="STATUS", target_table="t",
             rule_type=RuleType.CATEGORY_FREQUENCY_DYNAMIC,
             metric_name="cat_freq",
+            category_value="A",
+            baseline_window=30,
+            baseline_n_sigma=2.0,
+            baseline_margin_pct=0.10,
         )
-        with pytest.raises(ValueError):
-            self.gen.generate(p)
+        syntax = self.gen.generate(p)
+        assert 'CustomSql' in syntax
+        assert "STATUS = 'A'" in syntax
+        assert 'avg(last(30))' in syntax
+        assert 'std(last(30))' in syntax
+        assert 'from primary' in syntax
+        assert 'OR' in syntax
 
     def test_allowed_values_still_works(self):
         p = RuleProposal(

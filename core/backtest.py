@@ -313,6 +313,154 @@ def backtest_frequency_band(
     )
 
 
+def backtest_frequency_dual_guard(
+    pct_series: list[float],
+    dates: list[str],
+    n_periods: int,
+    n_sigma: float = 2.0,
+    margin_pct: float = 0.10,
+    buffer: float = 0.01,
+    min_history: int = 7,
+    margin_enabled: bool = True,
+    floor_pct: float | None = None,
+    ceiling_pct: float | None = None,
+) -> BacktestSummary:
+    """Executa backtest de frequencia dinamica com dual guard (sigma OR margem).
+
+    Para cada ponto i, calcula sigma band e margin band separadamente
+    e avalia com logica OR (como a regra GDQ faz em runtime).
+
+    Para modo hibrido: o resultado do dual guard e AND com floor/ceiling.
+
+    Args:
+        pct_series: Serie de porcentagens (0-100) da categoria.
+        dates: Datas correspondentes.
+        n_periods: Janela de lookback.
+        n_sigma: Multiplicador sigma.
+        margin_pct: Margem como fracao (0.10 = 10%).
+        buffer: Buffer absoluto em pontos percentuais.
+        min_history: Minimo de pontos para avaliar.
+        margin_enabled: Se False, avalia apenas sigma.
+        floor_pct: Limite inferior absoluto (modo hibrido).
+        ceiling_pct: Limite superior absoluto (modo hibrido).
+
+    Returns:
+        BacktestSummary.
+    """
+    n = len(pct_series)
+    if n == 0:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    valid_values = _filter_valid(pct_series)
+    if len(valid_values) < min_history:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    periods_pass = 0
+    periods_fail = 0
+    outlier_periods = []
+    false_positive_proxy = 0
+    last_sigma_band = None
+
+    global_mean = sum(valid_values) / len(valid_values)
+    global_std = math.sqrt(
+        sum((v - global_mean) ** 2 for v in valid_values) / max(len(valid_values) - 1, 1)
+    )
+
+    is_hybrid = floor_pct is not None or ceiling_pct is not None
+    effective_floor = floor_pct if floor_pct is not None else 0.0
+    effective_ceiling = ceiling_pct if ceiling_pct is not None else 100.0
+
+    for i in range(n):
+        current = pct_series[i]
+        if current is None or (isinstance(current, float) and math.isnan(current)):
+            continue
+
+        baseline = _filter_valid(pct_series[max(0, i - n_periods):i])
+        if len(baseline) < min_history:
+            continue
+
+        if len(baseline) < 3:
+            continue
+
+        bl_mean = sum(baseline) / len(baseline)
+        bl_std = math.sqrt(
+            sum((v - bl_mean) ** 2 for v in baseline) / max(len(baseline) - 1, 1)
+        )
+
+        # Sigma band
+        sigma_lower = bl_mean - n_sigma * bl_std - buffer
+        sigma_upper = bl_mean + n_sigma * bl_std + buffer
+        in_sigma = sigma_lower <= current <= sigma_upper
+
+        last_sigma_band = {"lower": sigma_lower, "upper": sigma_upper, "center": bl_mean}
+
+        # Margin band
+        in_margin = False
+        if margin_enabled:
+            lo_factor = 1 - margin_pct
+            hi_factor = 1 + margin_pct
+            margin_lower = bl_mean * lo_factor - buffer
+            margin_upper = bl_mean * hi_factor + buffer
+            in_margin = margin_lower <= current <= margin_upper
+
+        passes_dual_guard = in_sigma or in_margin
+
+        # Hybrid: AND with floor/ceiling
+        if is_hybrid:
+            in_absolute = effective_floor <= current <= effective_ceiling
+            passes = passes_dual_guard and in_absolute
+        else:
+            passes = passes_dual_guard
+
+        if passes:
+            periods_pass += 1
+        else:
+            periods_fail += 1
+            if i < len(dates):
+                outlier_periods.append(dates[i])
+            if global_std > 0 and abs(current - global_mean) < 4 * global_std:
+                false_positive_proxy += 1
+
+    total_periods = periods_pass + periods_fail
+    coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+
+    band_width_ratio = 0.0
+    if last_sigma_band:
+        width = last_sigma_band["upper"] - last_sigma_band["lower"]
+        if last_sigma_band["center"] > 1.0:
+            band_width_ratio = width / last_sigma_band["center"]
+        else:
+            band_width_ratio = width / 100.0
+
+    stability_score = _compute_frequency_stability(
+        pct_series, n_periods, margin_pct * 100, n_sigma, min_history,
+    )
+
+    drift_result = detect_drift(pct_series)
+
+    return BacktestSummary(
+        total_periods=total_periods,
+        periods_pass=periods_pass,
+        periods_fail=periods_fail,
+        coverage_pct=coverage_pct,
+        false_positive_proxy=false_positive_proxy,
+        band_width_ratio=band_width_ratio,
+        stability_score=stability_score,
+        has_drift=drift_result["has_drift"],
+        outlier_periods=outlier_periods,
+    )
+
+
 def _compute_frequency_stability(
     pct_series: list[float],
     n_periods: int,

@@ -10,6 +10,7 @@ Definido conforme docs/technical_spec_v1.md seção 8.
 from core.gdq_renderer import DualGuardRenderer
 from core.models.dual_guard import DualGuardSpec
 from core.models.enums import MetricRef, RuleType
+from typing import Optional
 from core.models.rule_proposal import RuleProposal
 from core.models.rule_selection import UserOverride
 
@@ -53,6 +54,10 @@ class GDQRuleGenerator:
             return self._generate_primary_key(proposal)
         elif proposal.rule_type == RuleType.CATEGORY_FREQUENCY_STATIC:
             return self._generate_category_frequency_static(proposal, overrides)
+        elif proposal.rule_type == RuleType.CATEGORY_FREQUENCY_DYNAMIC:
+            return self._generate_category_frequency_dynamic(proposal, overrides)
+        elif proposal.rule_type == RuleType.CATEGORY_FREQUENCY_HYBRID:
+            return self._generate_category_frequency_hybrid(proposal, overrides)
         elif proposal.rule_type == RuleType.DISTINCT_COUNT_RANGE:
             return self._generate_distinct_count_range(proposal, overrides)
         else:
@@ -147,6 +152,91 @@ class GDQRuleGenerator:
             f"then 1 else 0 end) as double) * 100.0 / count(*) from primary"
         )
         return f'CustomSql "{sql_inner}" between {lower:.2f} and {upper:.2f}'
+
+    def _build_custom_sql_expression(self, col: str, value: str) -> str:
+        """Constrói a expressão SQL interna do CustomSql frequency."""
+        return (
+            f"select cast(sum(case when {col} = '{value}' "
+            f"then 1 else 0 end) as double) * 100.0 / count(*) from primary"
+        )
+
+    def _generate_category_frequency_dynamic(
+        self,
+        proposal: RuleProposal,
+        overrides: UserOverride | None,
+    ) -> str:
+        """CustomSql dynamic frequency com dual guard."""
+        col = proposal.target_column
+        value = proposal.category_value or ""
+        n_periods = proposal.baseline_window or 30
+        n_sigma = proposal.baseline_n_sigma or 2.0
+        margin_pct = proposal.baseline_margin_pct or 0.10
+        margin_enabled = proposal.margin_enabled
+
+        if overrides:
+            if overrides.custom_n_periods is not None:
+                n_periods = overrides.custom_n_periods
+            if overrides.custom_n_sigma is not None:
+                n_sigma = overrides.custom_n_sigma
+            if overrides.custom_margin_pct is not None:
+                margin_pct = overrides.custom_margin_pct
+            if overrides.margin_enabled is not None:
+                margin_enabled = overrides.margin_enabled
+
+        sql_expr = self._build_custom_sql_expression(col, value)
+
+        spec = DualGuardSpec(
+            metric=MetricRef.CUSTOM_SQL,
+            custom_sql_expression=sql_expr,
+            n_periods=n_periods,
+            n_sigma=n_sigma,
+            margin_pct=margin_pct,
+            margin_enabled=margin_enabled,
+        )
+        return self.renderer.render(spec)
+
+    def _generate_category_frequency_hybrid(
+        self,
+        proposal: RuleProposal,
+        overrides: UserOverride | None,
+    ) -> str:
+        """CustomSql hybrid frequency: dynamic dual guard + absolute floor/ceiling."""
+        col = proposal.target_column
+        value = proposal.category_value or ""
+        n_periods = proposal.baseline_window or 30
+        n_sigma = proposal.baseline_n_sigma or 2.0
+        margin_pct = proposal.baseline_margin_pct or 0.10
+        margin_enabled = proposal.margin_enabled
+        floor_pct = proposal.floor_pct if proposal.floor_pct is not None else 0.0
+        ceiling_pct = proposal.ceiling_pct if proposal.ceiling_pct is not None else 100.0
+
+        if overrides:
+            if overrides.custom_n_periods is not None:
+                n_periods = overrides.custom_n_periods
+            if overrides.custom_n_sigma is not None:
+                n_sigma = overrides.custom_n_sigma
+            if overrides.custom_margin_pct is not None:
+                margin_pct = overrides.custom_margin_pct
+            if overrides.margin_enabled is not None:
+                margin_enabled = overrides.margin_enabled
+            if overrides.custom_floor_pct is not None:
+                floor_pct = overrides.custom_floor_pct
+            if overrides.custom_ceiling_pct is not None:
+                ceiling_pct = overrides.custom_ceiling_pct
+
+        sql_expr = self._build_custom_sql_expression(col, value)
+
+        spec = DualGuardSpec(
+            metric=MetricRef.CUSTOM_SQL,
+            custom_sql_expression=sql_expr,
+            n_periods=n_periods,
+            n_sigma=n_sigma,
+            margin_pct=margin_pct,
+            margin_enabled=margin_enabled,
+            floor_pct=floor_pct,
+            ceiling_pct=ceiling_pct,
+        )
+        return self.renderer.render(spec)
 
     def _generate_distinct_count_range(
         self,

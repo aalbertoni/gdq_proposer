@@ -47,6 +47,8 @@ class RuleProposal:
     baseline_n_sigma: Optional[float] = None
     baseline_margin_pct: Optional[float] = None
     margin_enabled: bool = True  # Se False, regra usa apenas banda sigma
+    floor_pct: Optional[float] = None  # Modo hibrido: limite inferior absoluto (0-100)
+    ceiling_pct: Optional[float] = None  # Modo hibrido: limite superior absoluto (0-100)
 
     # Avaliacao
     backtest: Optional[BacktestSummary] = None

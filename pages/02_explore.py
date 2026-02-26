@@ -268,6 +268,47 @@ def _get_cached_proposals(cache_key, generate_fn):
     return st.session_state[cache_key]
 
 
+def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeric"):
+    """Renderiza botao de auto-tuning e exibe resultado."""
+    cache_key = f"autotune_{rule_key}"
+
+    if st.button(
+        "Sugerir melhor combinacao",
+        key=f"btn_autotune_{rule_key}",
+        help="Testa diversas combinacoes de N, sigma e margem para encontrar "
+             "a que maximiza cobertura com menos falsos positivos.",
+    ):
+        with st.spinner("Avaliando combinacoes..."):
+            result = proposal_svc.find_best_params(
+                values=values, dates=dates, metric_kind=metric_kind,
+            )
+            st.session_state[cache_key] = result
+
+    if cache_key in st.session_state:
+        result = st.session_state[cache_key]
+        confidence = result["confidence"]
+        badge = _confidence_badge(confidence)
+
+        if result["viable"]:
+            st.success(
+                f"{badge} {result['recommendation']}"
+            )
+        else:
+            st.error(
+                f"{badge} {result['recommendation']}"
+            )
+
+        st.caption(
+            f"Melhor: N={result['n_periods']}, "
+            f"sigma={result['n_sigma']}, "
+            f"margem={result['margin_pct']*100:.0f}%"
+            f"{' (ativada)' if result['margin_enabled'] else ' (desativada)'} "
+            f"— cobertura {result['coverage_pct']:.1f}%, "
+            f"FP: {result['false_positives']}, "
+            f"estabilidade: {result['stability']:.2f}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -519,6 +560,10 @@ with tab_numericas:
                         values, dates, mean_n, mean_k, mean_margin, "Mean",
                         margin_enabled=mean_margin_on,
                     )
+                    _render_auto_tune(
+                        proposal_svc, values, dates,
+                        f"mean_{selected_col}", metric_kind="numeric",
+                    )
 
                 _render_backtest_metrics(proposal)
                 _render_add_to_cart(
@@ -563,6 +608,10 @@ with tab_numericas:
                     _render_rolling_chart(
                         values, dates, std_n, std_k, std_margin, "StdDev",
                         margin_enabled=std_margin_on,
+                    )
+                    _render_auto_tune(
+                        proposal_svc, values, dates,
+                        f"stddev_{selected_col}", metric_kind="numeric",
                     )
 
                 _render_backtest_metrics(proposal)
@@ -670,28 +719,104 @@ with tab_categoricas:
             is_mid = effective == SemanticType.CATEGORICAL_MID_CARDINALITY
             is_high = effective == SemanticType.CATEGORICAL_HIGH_CARDINALITY
 
-            cat_margin_pct = st.slider(
-                "Margem (pp):", min_value=1, max_value=30, value=10,
-                key=f"cat_margin_{selected_cat_col}",
-                help="Margem em pontos percentuais sobre a frequencia media para "
-                     "definir a faixa aceitavel. Mais alto = regra mais tolerante.",
-            ) if (is_low or is_mid) else 10
+            # --- Frequency mode selector ---
+            if is_low or is_mid:
+                cat_freq_mode = st.radio(
+                    "Modo das regras de frequencia:",
+                    options=["static", "dynamic", "hybrid"],
+                    format_func=lambda m: {
+                        "static": "Estatico (valores fixos)",
+                        "dynamic": "Dinamico (auto-ajuste)",
+                        "hybrid": "Hibrido (dinamico + limites absolutos)",
+                    }[m],
+                    key=f"cat_freq_mode_{selected_cat_col}",
+                    horizontal=True,
+                    help=(
+                        "**Estatico:** limites fixos calculados do historico. "
+                        "Precisa recalibrar manualmente se a distribuicao mudar.\n\n"
+                        "**Dinamico:** usa avg(last(N))/std(last(N)) para auto-ajustar "
+                        "os limites a cada execucao. Acompanha drift natural.\n\n"
+                        "**Hibrido:** auto-ajuste dinamico com floor/ceiling absolutos. "
+                        "Protege contra drift excessivo."
+                    ),
+                )
+            else:
+                cat_freq_mode = "static"
+
+            # --- Frequency params (dynamic/hybrid) ---
+            if cat_freq_mode in ("dynamic", "hybrid") and (is_low or is_mid):
+                cat_p_c1, cat_p_c2, cat_p_c3 = st.columns([3, 3, 3])
+                with cat_p_c1:
+                    cat_n_periods = st.slider(
+                        "N periodos:", min_value=5, max_value=90, value=30,
+                        key=f"cat_n_{selected_cat_col}",
+                        help="Janela de lookback para calcular media e desvio.",
+                    )
+                with cat_p_c2:
+                    cat_n_sigma = st.slider(
+                        "Sigma:", min_value=1.0, max_value=4.0, value=2.0, step=0.5,
+                        key=f"cat_sigma_{selected_cat_col}",
+                        help="Multiplicador de desvio padrao (mais alto = mais tolerante).",
+                    )
+                with cat_p_c3:
+                    cat_margin_pct = st.slider(
+                        "Margem (%):", min_value=1, max_value=30, value=10,
+                        key=f"cat_margin_{selected_cat_col}",
+                        help="Margem percentual alternativa (dual guard OR).",
+                    )
+            elif is_low or is_mid:
+                cat_n_periods = 20
+                cat_n_sigma = 2.0
+                cat_margin_pct = st.slider(
+                    "Margem (pp):", min_value=1, max_value=30, value=10,
+                    key=f"cat_margin_{selected_cat_col}",
+                    help="Margem em pontos percentuais sobre a frequencia media para "
+                         "definir a faixa aceitavel. Mais alto = regra mais tolerante.",
+                )
+            else:
+                cat_n_periods = 20
+                cat_n_sigma = 2.0
+                cat_margin_pct = 10
+
+            # --- Hybrid floor/ceiling ---
+            cat_floor_pct = None
+            cat_ceiling_pct = None
+            if cat_freq_mode == "hybrid" and (is_low or is_mid):
+                cat_h_c1, cat_h_c2 = st.columns(2)
+                with cat_h_c1:
+                    cat_floor_pct = st.number_input(
+                        "Floor (%):", min_value=0.0, max_value=100.0, value=0.0, step=0.5,
+                        key=f"cat_floor_{selected_cat_col}",
+                        help="Limite inferior absoluto. A frequencia nunca pode ficar abaixo deste valor.",
+                    )
+                with cat_h_c2:
+                    cat_ceiling_pct = st.number_input(
+                        "Ceiling (%):", min_value=0.0, max_value=100.0, value=100.0, step=0.5,
+                        key=f"cat_ceiling_{selected_cat_col}",
+                        help="Limite superior absoluto. A frequencia nunca pode ultrapassar este valor.",
+                    )
 
             cat_baseline = BaselineStrategy(
                 method=BaselineMethod.LAST_N_PERIODS,
-                n_periods=20,
-                n_sigma=2.0,
+                n_periods=cat_n_periods,
+                n_sigma=cat_n_sigma,
                 margin_pct=cat_margin_pct / 100.0,
+                margin_enabled=cat_freq_mode != "static",
             )
 
             cat_cache_key = (
                 f"cat_proposals_{selected_cat_col}_{cat_margin_pct}"
+                f"_{cat_freq_mode}_{cat_n_periods}_{cat_n_sigma}"
+                f"_{cat_floor_pct}_{cat_ceiling_pct}"
             )
             cat_proposals = _get_cached_proposals(
                 cat_cache_key,
                 lambda: proposal_svc.propose_categorical_rules(
                     cat_dist_df, cat_domain_df, selected_cat_col,
                     dataset_config.table, cat_profile, cat_baseline,
+                    freq_mode=cat_freq_mode,
+                    floor_pct=cat_floor_pct,
+                    ceiling_pct=cat_ceiling_pct,
                 ),
             )
 
@@ -764,26 +889,59 @@ with tab_categoricas:
                 )
                 st.divider()
 
-            # ---- Category Frequency Static ----
+            # ---- Category Frequency ----
+            freq_types = {
+                RuleType.CATEGORY_FREQUENCY_STATIC,
+                RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+                RuleType.CATEGORY_FREQUENCY_HYBRID,
+            }
             freq_proposals = [
                 p for p in cat_proposals
-                if p.rule_type == RuleType.CATEGORY_FREQUENCY_STATIC
+                if p.rule_type in freq_types
             ]
             if freq_proposals:
-                st.subheader("Frequencia por Valor (CustomSql)")
-                st.caption(
-                    "Para cada valor, verifica que sua proporcao (%) esta dentro da faixa esperada. "
-                    "Detecta mudancas na distribuicao dos dados."
-                )
+                mode_labels = {
+                    "static": "Estatico",
+                    "dynamic": "Dinamico",
+                    "hybrid": "Hibrido",
+                }
+                mode_label = mode_labels.get(cat_freq_mode, cat_freq_mode)
+                st.subheader(f"Frequencia por Valor — {mode_label} (CustomSql)")
+
+                if cat_freq_mode == "static":
+                    st.caption(
+                        "Para cada valor, verifica que sua proporcao (%) esta dentro da faixa esperada. "
+                        "Os limites sao fixos e precisam ser recalibrados manualmente se a distribuicao mudar."
+                    )
+                elif cat_freq_mode == "dynamic":
+                    st.caption(
+                        "Regras dinamicas: os limites se auto-ajustam a cada execucao usando "
+                        "avg(last(N)) e std(last(N)). Acompanham variacao natural da distribuicao."
+                    )
+                else:
+                    st.caption(
+                        "Regras hibridas: auto-ajuste dinamico com protecao de floor/ceiling absolutos. "
+                        "Impede que drift excessivo ultrapasse limites de negocio."
+                    )
 
                 with st.expander("Como funciona a frequencia de categorias?", expanded=False):
                     st.markdown(
                         "Para cada valor da coluna, a ferramenta calcula a **frequencia relativa** "
                         "(porcentagem de linhas com aquele valor) em cada periodo.\n\n"
-                        "Os limites sao calculados com base no historico e podem ser ajustados "
-                        "via slider de margem. Os valores sao em **percentual (0 a 100)**.\n\n"
-                        "**Nota:** estas regras usam valores fixos (estaticos). "
-                        "Na versao futura, sera possivel usar regras dinamicas."
+                        "**Estatico:** limites fixos calculados do historico. Simples, mas precisa "
+                        "recalibrar manualmente se a distribuicao mudar.\n\n"
+                        "**Dinamico:** usa `avg(last(N))` e `std(last(N))` no GDQ para auto-ajustar "
+                        "a cada execucao. Dual guard: passa se estiver na banda sigma **OU** na banda margem.\n\n"
+                        "**Hibrido:** dinamico + limites absolutos (floor/ceiling). Impede que a regra "
+                        "aceite valores fora dos limites de negocio, mesmo que o historico tenha derivado."
+                    )
+
+                # Auto-tune for first category (representative)
+                first_fp = freq_proposals[0]
+                if first_fp.history_values and first_fp.history_dates:
+                    _render_auto_tune(
+                        proposal_svc, first_fp.history_values, first_fp.history_dates,
+                        f"catfreq_{selected_cat_col}", metric_kind="frequency",
                     )
 
                 for fp in freq_proposals:
@@ -880,6 +1038,10 @@ with tab_tabela:
                 _render_rolling_chart(
                     values, dates, rc_n, rc_k, rc_margin, "Row Count",
                     margin_enabled=rc_margin_on,
+                )
+                _render_auto_tune(
+                    proposal_svc, values, dates,
+                    "rowcount", metric_kind="numeric",
                 )
 
             _render_backtest_metrics(rc_proposal)

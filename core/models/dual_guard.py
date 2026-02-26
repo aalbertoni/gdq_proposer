@@ -36,6 +36,12 @@ ROWCOUNT_PROFILE = FormattingProfile(
     avg_multiply_one=True,
     margin_format="delta",
 )
+CUSTOM_SQL_PROFILE = FormattingProfile(
+    k_as_float=False,
+    include_buffer=True,
+    avg_multiply_one=False,
+    margin_format="factor",
+)
 
 
 @dataclass
@@ -63,6 +69,8 @@ class DualGuardSpec:
     profile: FormattingProfile = None  # type: ignore[assignment]
     # Se None, inferido automaticamente do metric type
     custom_sql_expression: str = ""  # Apenas para MetricRef.CUSTOM_SQL
+    floor_pct: float = 0.0  # Apenas para modo hibrido: limite inferior absoluto
+    ceiling_pct: float = 100.0  # Apenas para modo hibrido: limite superior absoluto
 
     def __post_init__(self):
         if self.profile is None:
@@ -74,3 +82,5 @@ class DualGuardSpec:
                 self.profile = ROWCOUNT_PROFILE
                 self.buffer = 0
                 self.n_sigma = float(self.n_sigma)
+            elif self.metric == MetricRef.CUSTOM_SQL:
+                self.profile = CUSTOM_SQL_PROFILE
