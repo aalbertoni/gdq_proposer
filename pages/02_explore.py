@@ -360,21 +360,41 @@ cat_profiles = [
     if p.is_categorical and p.column_name in selected_set
 ]
 
-# --- Config summary ---
-with st.expander(
-    f"Configuracao: `{dataset_config.schema}.{dataset_config.table}` -- "
-    f"{len(selected_set)} colunas ({len(numeric_profiles)} num, {len(cat_profiles)} cat)",
-    expanded=False,
-):
-    cfg_c1, cfg_c2, cfg_c3 = st.columns(3)
-    cfg_c1.markdown(f"**Data:** `{dataset_config.date_expression or dataset_config.date_column}`")
-    cfg_c2.markdown(f"**Lookback:** {dataset_config.lookback_value} periodos")
-    cfg_c3.markdown(f"**Particao:** {dataset_config.partition_method.value}")
+# --- Config summary com lookback ajustavel ---
+_setup_lookback = dataset_config.lookback_value
 
+cfg_c1, cfg_c2, cfg_c3, cfg_c4 = st.columns([3, 2, 2, 2])
+with cfg_c1:
+    st.markdown(
+        f"**Tabela:** `{dataset_config.schema}.{dataset_config.table}` — "
+        f"{len(selected_set)} colunas ({len(numeric_profiles)} num, {len(cat_profiles)} cat)"
+    )
+with cfg_c2:
+    st.markdown(f"**Data:** `{dataset_config.date_expression or dataset_config.date_column}`")
+with cfg_c3:
+    st.markdown(f"**Particao:** {dataset_config.partition_method.value}")
+with cfg_c4:
+    effective_lookback = st.number_input(
+        "Lookback (periodos):",
+        min_value=5,
+        max_value=365,
+        value=_setup_lookback,
+        step=5,
+        key="explore_lookback",
+        help="Ajuste o periodo de historico sem voltar ao Setup. "
+             "Mais periodos = mais dados para calibrar, mas queries mais caras.",
+    )
+
+if effective_lookback != _setup_lookback:
+    st.caption(
+        f"Lookback ajustado de {_setup_lookback} para **{effective_lookback}** periodos. "
+        "Os graficos e propostas usarao o novo valor."
+    )
+
+with st.expander("Detalhes da configuracao", expanded=False):
     if dataset_config.base_filter_sql:
         st.caption(f"Filtro: `{dataset_config.base_filter_sql}`")
 
-    # Column list grouped by type
     col_list_1, col_list_2 = st.columns(2)
     with col_list_1:
         st.markdown("**Numericas**")
@@ -417,7 +437,7 @@ config_dict = {
     "partition_column": dataset_config.partition_column,
     "date_column": dataset_config.date_column,
     "date_expression": dataset_config.date_expression,
-    "lookback_value": dataset_config.lookback_value,
+    "lookback_value": effective_lookback,
     "grain_type": dataset_config.grain_type.value,
     "lookback_mode": dataset_config.lookback_mode.value,
     "base_filter_sql": dataset_config.base_filter_sql,
