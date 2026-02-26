@@ -305,23 +305,20 @@ def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeri
             f"estabilidade: {result['stability']:.2f}"
         )
 
-        # Botao para aplicar parametros sugeridos nos sliders
+        # Botao para aplicar parametros sugeridos nos sliders.
+        # Armazena em _pending_autotune para aplicar ANTES dos widgets no proximo rerun.
         if result["viable"] and st.button(
             "Aplicar parametros sugeridos",
             key=f"apply_autotune_{rule_key}",
             help="Atualiza os sliders com os parametros recomendados.",
         ):
-            st.session_state[f"n_{rule_key}"] = result["n_periods"]
-            st.session_state[f"k_{rule_key}"] = result["n_sigma"]
-            st.session_state[f"margin_{rule_key}"] = int(result["margin_pct"] * 100)
-            st.session_state[f"margin_on_{rule_key}"] = result["margin_enabled"]
-            # Limpar cache de proposals que dependem destes params
-            keys_to_clear = [
-                k for k in list(st.session_state.keys())
-                if k.startswith("proposal_") and rule_key in k
-            ]
-            for k in keys_to_clear:
-                del st.session_state[k]
+            st.session_state["_pending_autotune"] = {
+                "rule_key": rule_key,
+                "n_periods": result["n_periods"],
+                "n_sigma": result["n_sigma"],
+                "margin_pct": int(result["margin_pct"] * 100),
+                "margin_enabled": result["margin_enabled"],
+            }
             st.rerun()
 
 
@@ -330,6 +327,18 @@ def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeri
 # ---------------------------------------------------------------------------
 
 st.set_page_config(page_title="Explore - GDQ Rule Proposer", page_icon=":bar_chart:", layout="wide")
+
+# Aplicar auto-tune pendente ANTES de qualquer widget ser criado
+_pending = st.session_state.pop("_pending_autotune", None)
+if _pending:
+    rk = _pending["rule_key"]
+    st.session_state[f"n_{rk}"] = _pending["n_periods"]
+    st.session_state[f"k_{rk}"] = _pending["n_sigma"]
+    st.session_state[f"margin_{rk}"] = _pending["margin_pct"]
+    st.session_state[f"margin_on_{rk}"] = _pending["margin_enabled"]
+    # Limpar cache de proposals que dependem destes params
+    for k in [k for k in list(st.session_state.keys()) if k.startswith("proposal_") and rk in k]:
+        del st.session_state[k]
 
 st.title("Calibracao de Regras")
 st.caption(
