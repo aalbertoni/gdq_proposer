@@ -16,7 +16,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import load_config, AthenaMode
+from config import load_config, AthenaMode, Environment
 from core.models.dataset_config import DatasetConfig
 from core.models.enums import (
     GrainType,
@@ -245,87 +245,90 @@ def _apply_env_and_reconnect(env_name: str, env_vars: dict[str, str]):
 
 _current_config = load_config()
 _current_env = _current_config.environment.value
+_is_prod = _current_config.environment == Environment.PROD
 
-with st.expander("Configuracao de Ambiente", expanded=False):
-    st.caption(
-        "Defina as variaveis de ambiente para conectar ao Athena. "
-        "Ao salvar, a conexao e reestabelecida automaticamente."
-    )
-
-    _env_values = _load_env_values(_current_env)
-
-    env_col1, env_col2 = st.columns(2)
-
-    with env_col1:
-        env_env = st.selectbox(
-            "Ambiente:",
-            ["local", "dev", "prod"],
-            index=["local", "dev", "prod"].index(_current_env),
-            key="env_cfg_env",
-            format_func=lambda x: {
-                "local": "Local (DuckDB mock)",
-                "dev": "Dev (Athena + AWS CLI)",
-                "prod": "Prod (Athena + IAM role)",
-            }.get(x, x),
-            help="local = DuckDB mock, dev = Athena com AWS CLI, prod = Athena com IAM role.",
-        )
-        env_region = st.text_input(
-            "Regiao AWS:",
-            value=_env_values.get("GDQ_ATHENA_REGION", "us-east-1"),
-            key="env_cfg_region",
-            disabled=env_env == "local",
-            help="Regiao onde o Athena esta provisionado.",
-        )
-        env_workgroup = st.text_input(
-            "Workgroup Athena:",
-            value=_env_values.get("GDQ_ATHENA_WORKGROUP", "primary"),
-            key="env_cfg_workgroup",
-            disabled=env_env == "local",
-            help="Workgroup do Athena. Determina custos e permissoes.",
+# Em producao, a configuracao de ambiente vem de env vars — nao exibir UI.
+if not _is_prod:
+    with st.expander("Configuracao de Ambiente", expanded=False):
+        st.caption(
+            "Defina as variaveis de ambiente para conectar ao Athena. "
+            "Ao salvar, a conexao e reestabelecida automaticamente."
         )
 
-    with env_col2:
-        env_s3 = st.text_input(
-            "S3 Output:",
-            value=_env_values.get("GDQ_ATHENA_S3_OUTPUT", ""),
-            key="env_cfg_s3",
-            disabled=env_env == "local",
-            help="Bucket S3 para resultados do Athena. Ex: s3://meu-bucket/athena-results/",
-        )
-        env_profile = st.text_input(
-            "AWS Profile:",
-            value=_env_values.get("GDQ_AWS_PROFILE", ""),
-            key="env_cfg_profile",
-            disabled=env_env == "local",
-            help="Named profile do AWS CLI (~/.aws/credentials). Deixe vazio para IAM role.",
-        )
-        env_mock_dir = st.text_input(
-            "Mock data dir:",
-            value=_env_values.get("GDQ_MOCK_DATA_DIR", "mock_data"),
-            key="env_cfg_mock",
-            disabled=env_env != "local",
-            help="Diretorio com dados sinteticos para modo local.",
-        )
+        _env_values = _load_env_values(_current_env)
 
-    if st.button("Salvar e aplicar", type="primary"):
-        _target_env = env_env
-        _target_path = Path(_ENV_FILE_MAP.get(_target_env, ".env.local"))
-        _env_vars = {
-            "GDQ_ATHENA_REGION": env_region,
-            "GDQ_ATHENA_WORKGROUP": env_workgroup,
-            "GDQ_ATHENA_S3_OUTPUT": env_s3,
-            "GDQ_AWS_PROFILE": env_profile,
-            "GDQ_MOCK_DATA_DIR": env_mock_dir,
-        }
-        # Persistir no .env
-        _lines = [f"GDQ_ENV={_target_env}"]
-        _lines.extend(f"{k}={v}" for k, v in _env_vars.items())
-        _target_path.write_text("\n".join(_lines) + "\n")
-        # Aplicar imediatamente
-        _apply_env_and_reconnect(_target_env, _env_vars)
-        st.rerun()
+        env_col1, env_col2 = st.columns(2)
 
-    st.divider()
+        with env_col1:
+            env_env = st.selectbox(
+                "Ambiente:",
+                ["local", "dev", "prod"],
+                index=["local", "dev", "prod"].index(_current_env),
+                key="env_cfg_env",
+                format_func=lambda x: {
+                    "local": "Local (DuckDB mock)",
+                    "dev": "Dev (Athena + AWS CLI)",
+                    "prod": "Prod (Athena + IAM role)",
+                }.get(x, x),
+                help="local = DuckDB mock, dev = Athena com AWS CLI, prod = Athena com IAM role.",
+            )
+            env_region = st.text_input(
+                "Regiao AWS:",
+                value=_env_values.get("GDQ_ATHENA_REGION", "us-east-1"),
+                key="env_cfg_region",
+                disabled=env_env == "local",
+                help="Regiao onde o Athena esta provisionado.",
+            )
+            env_workgroup = st.text_input(
+                "Workgroup Athena:",
+                value=_env_values.get("GDQ_ATHENA_WORKGROUP", "primary"),
+                key="env_cfg_workgroup",
+                disabled=env_env == "local",
+                help="Workgroup do Athena. Determina custos e permissoes.",
+            )
+
+        with env_col2:
+            env_s3 = st.text_input(
+                "S3 Output:",
+                value=_env_values.get("GDQ_ATHENA_S3_OUTPUT", ""),
+                key="env_cfg_s3",
+                disabled=env_env == "local",
+                help="Bucket S3 para resultados do Athena. Ex: s3://meu-bucket/athena-results/",
+            )
+            env_profile = st.text_input(
+                "AWS Profile:",
+                value=_env_values.get("GDQ_AWS_PROFILE", ""),
+                key="env_cfg_profile",
+                disabled=env_env == "local",
+                help="Named profile do AWS CLI (~/.aws/credentials). Deixe vazio para IAM role.",
+            )
+            env_mock_dir = st.text_input(
+                "Mock data dir:",
+                value=_env_values.get("GDQ_MOCK_DATA_DIR", "mock_data"),
+                key="env_cfg_mock",
+                disabled=env_env != "local",
+                help="Diretorio com dados sinteticos para modo local.",
+            )
+
+        if st.button("Salvar e aplicar", type="primary"):
+            _target_env = env_env
+            _target_path = Path(_ENV_FILE_MAP.get(_target_env, ".env.local"))
+            _env_vars = {
+                "GDQ_ATHENA_REGION": env_region,
+                "GDQ_ATHENA_WORKGROUP": env_workgroup,
+                "GDQ_ATHENA_S3_OUTPUT": env_s3,
+                "GDQ_AWS_PROFILE": env_profile,
+                "GDQ_MOCK_DATA_DIR": env_mock_dir,
+            }
+            # Persistir no .env
+            _lines = [f"GDQ_ENV={_target_env}"]
+            _lines.extend(f"{k}={v}" for k, v in _env_vars.items())
+            _target_path.write_text("\n".join(_lines) + "\n")
+            # Aplicar imediatamente
+            _apply_env_and_reconnect(_target_env, _env_vars)
+            st.rerun()
+
+        st.divider()
 
 
 try:
@@ -428,10 +431,17 @@ with col1:
             help="Em modo local, o schema e fixo (mock_db) e usa dados sinteticos via DuckDB.",
         )
     else:
+        _schema_default = "" if _is_prod else "gdq_test_db"
+        _schema_help = (
+            "Nome do banco no Glue Catalog."
+            if _is_prod
+            else "Nome do banco no Glue Catalog. Ex: gdq_test_db, datalake_raw."
+        )
         schema = st.text_input(
             "Schema (Glue database):",
-            value="gdq_test_db",
-            help="Nome do banco no Glue Catalog. Ex: gdq_test_db, datalake_raw.",
+            value=_schema_default,
+            placeholder="ex: datalake_trusted",
+            help=_schema_help,
         )
 
 with col2:

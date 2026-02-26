@@ -13,7 +13,7 @@ Definido conforme docs/technical_spec_v1.md secao 12.
 import streamlit as st
 import plotly.graph_objects as go
 
-from config import load_config, AthenaMode
+from config import load_config, AthenaMode, Environment
 from core.models.baseline import BaselineStrategy
 from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, SemanticType
 from core.models.rule_selection import RuleSelection
@@ -398,6 +398,33 @@ if "rule_cart" not in st.session_state:
 
 
 # ---------------------------------------------------------------------------
+# Services (antes do sidebar para que client esteja disponivel)
+# ---------------------------------------------------------------------------
+
+try:
+    client = _get_client()
+except Exception as e:
+    st.error(f"Falha na conexao: {e}")
+    st.stop()
+
+analysis_svc = _get_analysis_service(client)
+proposal_svc = _get_proposal_service()
+
+config_dict = {
+    "schema": dataset_config.schema,
+    "table": dataset_config.table,
+    "partition_method": dataset_config.partition_method.value,
+    "partition_column": dataset_config.partition_column,
+    "date_column": dataset_config.date_column,
+    "date_expression": dataset_config.date_expression,
+    "lookback_value": dataset_config.lookback_value,
+    "grain_type": dataset_config.grain_type.value,
+    "lookback_mode": dataset_config.lookback_mode.value,
+    "base_filter_sql": dataset_config.base_filter_sql,
+}
+
+
+# ---------------------------------------------------------------------------
 # Sidebar: contexto da tabela + carrinho
 # ---------------------------------------------------------------------------
 
@@ -453,7 +480,9 @@ with st.sidebar:
             st.caption(f"Dados escaneados: {_bytes_label}")
             st.caption(f"Custo estimado: ${_summary['estimated_cost_usd']:.4f}")
         elif client.dialect.value == "duckdb":
-            st.caption("Modo local (DuckDB) -- sem custo Athena")
+            _app_cfg_check = st.session_state.get("config")
+            if not _app_cfg_check or _app_cfg_check.environment.value != "prod":
+                st.caption("Modo local (DuckDB) -- sem custo Athena")
 
         if _summary["errors"] > 0:
             st.caption(f":red[Erros: {_summary['errors']}]")
@@ -482,33 +511,6 @@ with st.sidebar:
     st.divider()
     if st.button("Voltar ao Setup", key="sidebar_back_setup"):
         st.switch_page("pages/01_setup.py")
-
-
-# ---------------------------------------------------------------------------
-# Services
-# ---------------------------------------------------------------------------
-
-try:
-    client = _get_client()
-except Exception as e:
-    st.error(f"Falha na conexao: {e}")
-    st.stop()
-
-analysis_svc = _get_analysis_service(client)
-proposal_svc = _get_proposal_service()
-
-config_dict = {
-    "schema": dataset_config.schema,
-    "table": dataset_config.table,
-    "partition_method": dataset_config.partition_method.value,
-    "partition_column": dataset_config.partition_column,
-    "date_column": dataset_config.date_column,
-    "date_expression": dataset_config.date_expression,
-    "lookback_value": dataset_config.lookback_value,
-    "grain_type": dataset_config.grain_type.value,
-    "lookback_mode": dataset_config.lookback_mode.value,
-    "base_filter_sql": dataset_config.base_filter_sql,
-}
 
 
 # ---------------------------------------------------------------------------
