@@ -805,20 +805,67 @@ st.success(
 
 
 # ===================================================================
-# STEP 5: Profiling de colunas
+# STEP 5: Selecao de colunas para profiling
 # ===================================================================
 
-st.header("5. Profiling de Colunas")
+st.header("5. Colunas para Profiling")
 
 dataset_config = st.session_state.get("setup_config", dataset_config)
 
-# Cost guardrail: warn for large profiling jobs on Athena
-if not is_mock and len(columns) > 20:
+# Excluir coluna temporal do profiling (ja usada como eixo)
+all_col_names = [c["name"] for c in columns if c["name"] != date_col]
+
+st.caption(
+    "Desmarque colunas que nao precisam de regras de qualidade "
+    "(IDs internos, timestamps de auditoria, etc). "
+    "Menos colunas = profiling mais rapido e mais barato."
+)
+
+# Quick select/deselect
+pf_c1, pf_c2, pf_c3 = st.columns(3)
+with pf_c1:
+    if st.button("Marcar todas", key="prof_sel_all"):
+        for cn in all_col_names:
+            st.session_state[f"prof_{cn}"] = True
+        st.rerun()
+with pf_c2:
+    if st.button("Desmarcar todas", key="prof_desel_all"):
+        for cn in all_col_names:
+            st.session_state[f"prof_{cn}"] = False
+        st.rerun()
+with pf_c3:
+    st.caption(f"{len(all_col_names)} colunas disponiveis")
+
+# Column checkboxes
+profiling_cols_selected = []
+for col_info in columns:
+    cname = col_info["name"]
+    if cname == date_col:
+        continue
+    default = st.session_state.get(f"prof_{cname}", True)
+    checked = st.checkbox(
+        f"`{cname}` ({col_info['type']})",
+        value=default,
+        key=f"prof_{cname}",
+    )
+    if checked:
+        profiling_cols_selected.append(col_info)
+
+n_profiling = len(profiling_cols_selected)
+
+# Cost guardrail
+if not is_mock and n_profiling > 20:
     st.info(
-        f"O profiling executara **{len(columns)} queries** (uma por coluna) "
-        f"contra o Athena. Considere selecionar menos colunas se o custo for uma preocupacao.",
+        f"O profiling executara queries para **{n_profiling} colunas** "
+        f"contra o Athena. Desmarque colunas desnecessarias para reduzir custo.",
         icon="💰",
     )
+
+if n_profiling == 0:
+    st.warning("Selecione pelo menos uma coluna para executar o profiling.")
+    st.stop()
+
+st.caption(f"**{n_profiling}** coluna(s) selecionada(s) para profiling.")
 
 if st.button("Executar Profiling", type="primary"):
     client_id = _get_client_id()
@@ -837,9 +884,9 @@ if st.button("Executar Profiling", type="primary"):
     profiles = []
     progress = st.progress(0, text="Classificando colunas...")
 
-    for i, col_info in enumerate(columns):
+    for i, col_info in enumerate(profiling_cols_selected):
         progress.progress(
-            (i + 1) / len(columns),
+            (i + 1) / n_profiling,
             text=f"Classificando {col_info['name']}...",
         )
         profile_list = _cached_profile_column(
@@ -875,7 +922,7 @@ if not profiles:
 # STEP 6: Classificacao + selecao de colunas
 # ===================================================================
 
-st.header("6. Selecao de Colunas")
+st.header("6. Classificacao e Selecao Final")
 
 st.caption(
     "Revise a classificacao inferida e selecione as colunas para analise. "
