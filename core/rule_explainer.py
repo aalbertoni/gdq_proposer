@@ -36,6 +36,8 @@ def explain_rule(proposal: RuleProposal) -> str:
         return _explain_distinct_count_range(proposal)
     elif rt == RuleType.IS_PRIMARY_KEY:
         return _explain_primary_key(proposal)
+    elif rt == RuleType.UNIQUENESS_CUSTOM_SQL:
+        return _explain_uniqueness_custom_sql(proposal)
     elif rt in (
         RuleType.CATEGORY_FREQUENCY_STATIC,
         RuleType.CATEGORY_FREQUENCY_DYNAMIC,
@@ -170,6 +172,20 @@ def _explain_primary_key(p: RuleProposal) -> str:
     )
 
 
+def _explain_uniqueness_custom_sql(p: RuleProposal) -> str:
+    cols = p.suggested_values or []
+    if len(cols) == 1:
+        cols_str = f"coluna `{cols[0]}`"
+    else:
+        cols_str = "combinacao de colunas (" + ", ".join(f"`{c}`" for c in cols) + ")"
+
+    return (
+        f"Verifica que a {cols_str} e unica (sem duplicatas), "
+        f"usando CustomSql. Diferente de IsPrimaryKey, nao exige completude "
+        f"(permite nulls)."
+    )
+
+
 def _explain_distinct_count_range(p: RuleProposal) -> str:
     col = p.target_column
     lower = int(p.suggested_lower) if p.suggested_lower else 0
@@ -201,17 +217,47 @@ def _explain_category_frequency(p: RuleProposal) -> str:
     value = p.category_value
     lower = p.suggested_lower or 0.0
     upper = p.suggested_upper or 100.0
-    if value:
+    rt = p.rule_type
+
+    if not value:
+        return (
+            f"Verifica se a **frequencia relativa** dos valores da coluna `{col}` "
+            f"esta dentro do esperado. Detecta mudancas na distribuicao "
+            f"(ex: um valor que era 30% passou a ser 10%)."
+        )
+
+    if rt == RuleType.CATEGORY_FREQUENCY_DYNAMIC:
+        n = p.baseline_window or 30
+        k = p.baseline_n_sigma or 2.0
+        margin = (p.baseline_margin_pct or 0.10) * 100
         return (
             f"Verifica se a **frequencia** do valor `{value}` na coluna `{col}` "
-            f"esta entre **{lower:.1f}%** e **{upper:.1f}%** das linhas. "
+            f"esta dentro do esperado, usando **banda dinamica** baseada nos "
+            f"ultimos **{n} periodos**. Aceita se estiver dentro de "
+            f"**{_fmt_k(k)} desvios padrao** da frequencia media historica, "
+            f"**ou** dentro de **{margin:.0f}%** da media. "
+            f"A regra se adapta automaticamente a evolucao natural da distribuicao."
+        )
+    elif rt == RuleType.CATEGORY_FREQUENCY_HYBRID:
+        n = p.baseline_window or 30
+        k = p.baseline_n_sigma or 2.0
+        margin = (p.baseline_margin_pct or 0.10) * 100
+        floor = p.floor_pct if p.floor_pct is not None else 0.0
+        ceiling = p.ceiling_pct if p.ceiling_pct is not None else 100.0
+        return (
+            f"Verifica se a **frequencia** do valor `{value}` na coluna `{col}` "
+            f"esta dentro do esperado, usando **banda dinamica** (ultimos **{n} periodos**, "
+            f"**{_fmt_k(k)} sigma** ou **{margin:.0f}%** de margem) "
+            f"**com limites absolutos** de **{floor:.1f}%** (piso) a **{ceiling:.1f}%** (teto). "
+            f"Combina adaptabilidade do modo dinamico com guardrails fixos de negocio."
+        )
+    else:
+        # STATIC
+        return (
+            f"Verifica se a **frequencia** do valor `{value}` na coluna `{col}` "
+            f"esta entre **{lower:.1f}%** e **{upper:.1f}%** das linhas (limites fixos). "
             f"Se a proporcao cair fora dessa faixa, a regra falha."
         )
-    return (
-        f"Verifica se a **frequencia relativa** dos valores da coluna `{col}` "
-        f"esta dentro do esperado. Detecta mudancas na distribuicao "
-        f"(ex: um valor que era 30% passou a ser 10%)."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -255,19 +301,37 @@ def _explain_params(p: RuleProposal) -> str:
         upper = int(p.suggested_upper) if p.suggested_upper else 0
         return f"- **Faixa de distintos:** {lower} a {upper}"
 
-    elif rt in (
-        RuleType.CATEGORY_FREQUENCY_STATIC,
-        RuleType.CATEGORY_FREQUENCY_DYNAMIC,
-        RuleType.CATEGORY_FREQUENCY_HYBRID,
-    ):
+    elif rt == RuleType.CATEGORY_FREQUENCY_STATIC:
         lower = p.suggested_lower or 0.0
         upper = p.suggested_upper or 100.0
         value_str = f" (`{p.category_value}`)" if p.category_value else ""
-        return f"- **Faixa{value_str}:** {lower:.1f}% a {upper:.1f}%"
+        return f"- **Faixa{value_str}:** {lower:.1f}% a {upper:.1f}% (limites fixos)"
+
+    elif rt in (RuleType.CATEGORY_FREQUENCY_DYNAMIC, RuleType.CATEGORY_FREQUENCY_HYBRID):
+        n = p.baseline_window or 30
+        k = p.baseline_n_sigma or 2.0
+        margin = (p.baseline_margin_pct or 0.10) * 100
+        value_str = f" (`{p.category_value}`)" if p.category_value else ""
+        lines = [
+            f"- **Valor{value_str}**",
+            f"- **Janela (N):** {n} periodos",
+            f"- **Sigma (K):** {_fmt_k(k)} desvios padrao",
+            f"- **Margem:** {margin:.0f}%",
+        ]
+        if rt == RuleType.CATEGORY_FREQUENCY_HYBRID:
+            floor = p.floor_pct if p.floor_pct is not None else 0.0
+            ceiling = p.ceiling_pct if p.ceiling_pct is not None else 100.0
+            lines.append(f"- **Piso:** {floor:.1f}%")
+            lines.append(f"- **Teto:** {ceiling:.1f}%")
+        return "\n".join(lines)
 
     elif rt == RuleType.IS_PRIMARY_KEY:
         cols = p.suggested_values or []
         return f"- **Colunas:** {', '.join(cols)}"
+
+    elif rt == RuleType.UNIQUENESS_CUSTOM_SQL:
+        cols = p.suggested_values or []
+        return f"- **Colunas:** {', '.join(cols)}\n- **Tipo:** CustomSql (permite nulls)"
 
     return ""
 

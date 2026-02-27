@@ -4,10 +4,14 @@ Backtest: simula a regra dual guard no histórico.
 Percorre a série com janela rolante, calcula banda a cada ponto
 e conta pass/fail. Retorna BacktestSummary.
 
+Inclui backtests para regras numéricas (dual guard), frequência categórica,
+contagem de distintos, valores permitidos e chave primária.
+
 Definido conforme docs/technical_spec_v1.md seção 5.
 """
 
 import math
+from typing import Optional
 
 from core.models.rule_proposal import BacktestSummary
 from core.statistical_engine import (
@@ -509,3 +513,355 @@ def _compute_frequency_stability(
         return 0.4
     else:
         return 0.2
+
+
+# ---------------------------------------------------------------------------
+# Backtest: DistinctCount exact
+# ---------------------------------------------------------------------------
+
+def backtest_distinct_count_exact(
+    distinct_counts: list[float],
+    dates: list[str],
+    expected_count: int,
+) -> BacktestSummary:
+    """Executa backtest de DistinctValuesCount = N (contagem exata).
+
+    Para cada periodo, verifica se distinct_count == expected_count.
+
+    Args:
+        distinct_counts: Serie de contagens de valores distintos por periodo.
+        dates: Datas correspondentes (mesmo length).
+        expected_count: Contagem esperada de valores distintos.
+
+    Returns:
+        BacktestSummary com metricas de cobertura e estabilidade.
+    """
+    n = len(distinct_counts)
+    if n == 0:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    periods_pass = 0
+    periods_fail = 0
+    outlier_periods: list[str] = []
+    false_positive_proxy = 0
+
+    for i in range(n):
+        val = distinct_counts[i]
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            continue
+
+        count = int(round(val))
+        if count == expected_count:
+            periods_pass += 1
+        else:
+            periods_fail += 1
+            if i < len(dates):
+                outlier_periods.append(dates[i])
+            # FP proxy: periods where count differs by exactly 1 (borderline)
+            if abs(count - expected_count) == 1:
+                false_positive_proxy += 1
+
+    total_periods = periods_pass + periods_fail
+    coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+
+    # Stability: 1.0 if all match, else ratio that match
+    stability_score = coverage_pct / 100.0 if total_periods > 0 else 0.0
+
+    # Drift: monotonic increase or decrease in distinct count
+    valid_counts = _filter_valid(distinct_counts)
+    has_drift = _detect_monotonic_trend(valid_counts)
+
+    return BacktestSummary(
+        total_periods=total_periods,
+        periods_pass=periods_pass,
+        periods_fail=periods_fail,
+        coverage_pct=coverage_pct,
+        false_positive_proxy=false_positive_proxy,
+        band_width_ratio=0.0,  # exact match, no band
+        stability_score=stability_score,
+        has_drift=has_drift,
+        outlier_periods=outlier_periods,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backtest: DistinctCount range
+# ---------------------------------------------------------------------------
+
+def backtest_distinct_count_range(
+    distinct_counts: list[float],
+    dates: list[str],
+    lower: int,
+    upper: int,
+) -> BacktestSummary:
+    """Executa backtest de DistinctValuesCount entre lower e upper (faixa).
+
+    Para cada periodo, verifica se lower <= distinct_count <= upper.
+
+    Args:
+        distinct_counts: Serie de contagens de valores distintos por periodo.
+        dates: Datas correspondentes (mesmo length).
+        lower: Limite inferior da faixa.
+        upper: Limite superior da faixa.
+
+    Returns:
+        BacktestSummary com metricas de cobertura e estabilidade.
+    """
+    n = len(distinct_counts)
+    if n == 0:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    periods_pass = 0
+    periods_fail = 0
+    outlier_periods: list[str] = []
+    false_positive_proxy = 0
+
+    for i in range(n):
+        val = distinct_counts[i]
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            continue
+
+        count = int(round(val))
+        if lower <= count <= upper:
+            periods_pass += 1
+        else:
+            periods_fail += 1
+            if i < len(dates):
+                outlier_periods.append(dates[i])
+            # FP proxy: just outside by 1
+            if count == lower - 1 or count == upper + 1:
+                false_positive_proxy += 1
+
+    total_periods = periods_pass + periods_fail
+    coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+
+    # Stability: ratio of periods that pass
+    stability_score = coverage_pct / 100.0 if total_periods > 0 else 0.0
+
+    # Band width ratio: (upper - lower) / center
+    center = (upper + lower) / 2.0
+    band_width_ratio = (upper - lower) / center if center > 0 else 0.0
+
+    # Drift
+    valid_counts = _filter_valid(distinct_counts)
+    has_drift = _detect_monotonic_trend(valid_counts)
+
+    return BacktestSummary(
+        total_periods=total_periods,
+        periods_pass=periods_pass,
+        periods_fail=periods_fail,
+        coverage_pct=coverage_pct,
+        false_positive_proxy=false_positive_proxy,
+        band_width_ratio=band_width_ratio,
+        stability_score=stability_score,
+        has_drift=has_drift,
+        outlier_periods=outlier_periods,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backtest: AllowedValues
+# ---------------------------------------------------------------------------
+
+def backtest_allowed_values(
+    period_values_map: dict[str, set[str]],
+    allowed_set: set[str],
+) -> BacktestSummary:
+    """Executa backtest de ColumnValues ... in [...] (valores permitidos).
+
+    Para cada periodo, verifica se todos os valores observados estao no
+    conjunto de valores permitidos.
+
+    Args:
+        period_values_map: Mapa de data -> conjunto de valores observados no periodo.
+        allowed_set: Conjunto de valores permitidos.
+
+    Returns:
+        BacktestSummary com metricas de cobertura e estabilidade.
+    """
+    if not period_values_map:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    # Sort dates for consistent ordering
+    sorted_dates = sorted(period_values_map.keys())
+
+    periods_pass = 0
+    periods_fail = 0
+    outlier_periods: list[str] = []
+    false_positive_proxy = 0
+    unexpected_counts: list[int] = []  # track unexpected value counts for drift
+
+    for date in sorted_dates:
+        observed = period_values_map[date]
+        unexpected = observed - allowed_set
+
+        if not unexpected:
+            periods_pass += 1
+            unexpected_counts.append(0)
+        else:
+            periods_fail += 1
+            outlier_periods.append(date)
+            unexpected_counts.append(len(unexpected))
+            # FP proxy: only 1 unexpected value (borderline)
+            if len(unexpected) == 1:
+                false_positive_proxy += 1
+
+    total_periods = periods_pass + periods_fail
+    coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+
+    # Stability: same as coverage ratio
+    stability_score = coverage_pct / 100.0 if total_periods > 0 else 0.0
+
+    # Drift: check if number of unexpected values is increasing over time
+    has_drift = _detect_monotonic_trend(
+        [float(c) for c in unexpected_counts]
+    )
+
+    return BacktestSummary(
+        total_periods=total_periods,
+        periods_pass=periods_pass,
+        periods_fail=periods_fail,
+        coverage_pct=coverage_pct,
+        false_positive_proxy=false_positive_proxy,
+        band_width_ratio=0.0,  # binary check, no band
+        stability_score=stability_score,
+        has_drift=has_drift,
+        outlier_periods=outlier_periods,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backtest: IsPrimaryKey
+# ---------------------------------------------------------------------------
+
+def backtest_primary_key(
+    total_rows: list[int],
+    distinct_keys: list[int],
+    null_counts_per_col: dict[str, list[int]],
+    dates: list[str],
+) -> BacktestSummary:
+    """Executa backtest de IsPrimaryKey (unicidade + completude).
+
+    Para cada periodo, verifica se:
+    - Nao ha duplicatas: total_rows == distinct_keys
+    - Todas as colunas PK tem zero nulls
+
+    Args:
+        total_rows: Total de linhas por periodo.
+        distinct_keys: Contagem de chaves distintas por periodo.
+        null_counts_per_col: Mapa de coluna -> lista de contagem de nulls por periodo.
+        dates: Datas correspondentes.
+
+    Returns:
+        BacktestSummary com metricas de cobertura e estabilidade.
+    """
+    n = len(total_rows)
+    if n == 0:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    periods_pass = 0
+    periods_fail = 0
+    outlier_periods: list[str] = []
+    false_positive_proxy = 0
+    duplicate_counts: list[int] = []
+
+    for i in range(n):
+        rows = total_rows[i]
+        keys = distinct_keys[i]
+        duplicates = rows - keys
+        duplicate_counts.append(duplicates)
+
+        # Check nulls across all PK columns
+        has_nulls = False
+        for col_name, null_list in null_counts_per_col.items():
+            if i < len(null_list) and null_list[i] > 0:
+                has_nulls = True
+                break
+
+        if duplicates == 0 and not has_nulls:
+            periods_pass += 1
+        else:
+            periods_fail += 1
+            if i < len(dates):
+                outlier_periods.append(dates[i])
+            # FP proxy: very few duplicates or nulls (borderline)
+            total_nulls = sum(
+                nl[i] for nl in null_counts_per_col.values()
+                if i < len(nl)
+            )
+            if duplicates <= 1 and total_nulls <= 1:
+                false_positive_proxy += 1
+
+    total_periods = periods_pass + periods_fail
+    coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+
+    # Stability: ratio of periods that pass
+    stability_score = coverage_pct / 100.0 if total_periods > 0 else 0.0
+
+    # Drift: increasing duplicate trend
+    has_drift = _detect_monotonic_trend([float(d) for d in duplicate_counts])
+
+    return BacktestSummary(
+        total_periods=total_periods,
+        periods_pass=periods_pass,
+        periods_fail=periods_fail,
+        coverage_pct=coverage_pct,
+        false_positive_proxy=false_positive_proxy,
+        band_width_ratio=0.0,  # binary check, no band
+        stability_score=stability_score,
+        has_drift=has_drift,
+        outlier_periods=outlier_periods,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helper: monotonic trend detection
+# ---------------------------------------------------------------------------
+
+def _detect_monotonic_trend(values: list[float], threshold: float = 0.7) -> bool:
+    """Detecta tendencia monotonica (crescente ou decrescente) na serie.
+
+    Usa a proporcao de diferencas consecutivas com mesmo sinal.
+    Se mais de `threshold` (70%) das diferencas sao positivas ou negativas,
+    considera que ha tendencia.
+
+    Args:
+        values: Serie de valores numericos.
+        threshold: Proporcao minima de diferencas no mesmo sentido (default 0.7).
+
+    Returns:
+        True se ha tendencia monotonica.
+    """
+    valid = _filter_valid(values)
+    if len(valid) < 5:
+        return False
+
+    diffs = [valid[i] - valid[i - 1] for i in range(1, len(valid))]
+    if not diffs:
+        return False
+
+    positive = sum(1 for d in diffs if d > 0)
+    negative = sum(1 for d in diffs if d < 0)
+    total = len(diffs)
+
+    return (positive / total) >= threshold or (negative / total) >= threshold

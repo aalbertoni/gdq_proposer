@@ -124,6 +124,136 @@ class AnalysisService:
 
         return result.sort_values("period").reset_index(drop=True)
 
+    def get_distinct_count_history(
+        self,
+        config: DatasetConfig,
+        column: str,
+    ) -> pd.DataFrame:
+        """Contagem de valores distintos por periodo para uma coluna categorica.
+
+        Args:
+            config: Configuracao da tabela alvo.
+            column: Coluna categorica.
+
+        Returns:
+            DataFrame com colunas: [period, distinct_count, total_count, non_null_count]
+        """
+        validate_identifier(config.schema)
+        validate_identifier(config.table)
+        validate_identifier(column)
+
+        date_expr = self.builder.resolve_date_expression(
+            config.effective_temporal_axis, config.date_expression or "",
+        )
+
+        base_filter = ""
+        if config.base_filter_sql:
+            base_filter = sanitize_filter(config.base_filter_sql)
+
+        sql = self.builder.build_distinct_count_history(
+            schema=config.schema,
+            table=config.table,
+            col=column,
+            date_expression=date_expr,
+            lookback_value=config.lookback_value,
+            base_filter=base_filter,
+        )
+
+        df = self.client.execute_df(
+            sql,
+            query_name="distinct_count_history",
+            dataset=f"{config.schema}.{config.table}",
+            column=column,
+        )
+
+        if df.empty:
+            return pd.DataFrame(columns=[
+                "period", "distinct_count", "total_count", "non_null_count",
+            ])
+
+        result = pd.DataFrame()
+        result["period"] = df["processing_period"].astype(str)
+        result["distinct_count"] = pd.to_numeric(df["distinct_count"], errors="coerce").fillna(0).astype(int)
+        result["total_count"] = pd.to_numeric(df["total_count"], errors="coerce").fillna(0).astype(int)
+        result["non_null_count"] = pd.to_numeric(df["non_null_count"], errors="coerce").fillna(0).astype(int)
+
+        return result.sort_values("period").reset_index(drop=True)
+
+    def get_uniqueness_history(
+        self,
+        config: DatasetConfig,
+        key_columns: list[str],
+    ) -> pd.DataFrame:
+        """Unicidade e completude de colunas-chave por periodo.
+
+        Verifica se a combinacao de key_columns forma uma chave primaria
+        valida em cada periodo historico, contando duplicatas e nulls.
+
+        Args:
+            config: Configuracao da tabela alvo.
+            key_columns: Lista de colunas que compoe a chave primaria.
+
+        Returns:
+            DataFrame com colunas: [period, total_rows, distinct_keys,
+            duplicate_count, non_null_{col1}, non_null_{col2}, ...]
+
+        Raises:
+            ValueError: Se key_columns esta vazio ou contem identificador invalido.
+        """
+        if not key_columns:
+            raise ValueError("key_columns nao pode ser vazio")
+
+        validate_identifier(config.schema)
+        validate_identifier(config.table)
+        for col in key_columns:
+            validate_identifier(col)
+
+        date_expr = self.builder.resolve_date_expression(
+            config.effective_temporal_axis, config.date_expression or "",
+        )
+
+        base_filter = ""
+        if config.base_filter_sql:
+            base_filter = sanitize_filter(config.base_filter_sql)
+
+        sql = self.builder.build_uniqueness_check(
+            schema=config.schema,
+            table=config.table,
+            key_columns=key_columns,
+            date_expression=date_expr,
+            lookback_value=config.lookback_value,
+            base_filter=base_filter,
+        )
+
+        df = self.client.execute_df(
+            sql,
+            query_name="uniqueness_check",
+            dataset=f"{config.schema}.{config.table}",
+        )
+
+        # Build expected column list
+        expected_cols = ["period", "total_rows", "distinct_keys", "duplicate_count"]
+        for col in key_columns:
+            expected_cols.append(f"non_null_{col}")
+
+        if df.empty:
+            return pd.DataFrame(columns=expected_cols)
+
+        result = pd.DataFrame()
+        result["period"] = df["processing_period"].astype(str)
+        result["total_rows"] = pd.to_numeric(df["total_rows"], errors="coerce").fillna(0).astype(int)
+        result["distinct_keys"] = pd.to_numeric(df["distinct_keys"], errors="coerce").fillna(0).astype(int)
+        result["duplicate_count"] = pd.to_numeric(df["duplicate_count"], errors="coerce").fillna(0).astype(int)
+
+        for col in key_columns:
+            src_col = f"non_null_{col}"
+            if src_col in df.columns:
+                result[src_col] = pd.to_numeric(df[src_col], errors="coerce").fillna(0).astype(int)
+            else:
+                result[src_col] = 0
+
+        return result.sort_values("period").reset_index(drop=True)
+
     def get_categorical_distribution(
         self,
         config: DatasetConfig,

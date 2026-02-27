@@ -13,16 +13,6 @@ from infra.athena_client import AthenaClient
 
 __version__ = "0.2.0"
 
-_SESSION_KEYS_TO_CLEAR = [
-    "client", "config",
-    "analysis_service", "proposal_service",
-    "dataset_service", "profiling_service",
-    "dataset_config", "column_profiles",
-    "setup_validated", "setup_schema", "setup_table",
-    "setup_columns", "setup_config", "setup_profiles", "setup_date_range",
-]
-
-
 def get_client() -> AthenaClient:
     """Get or create a cached AthenaClient in session_state."""
     if "client" not in st.session_state:
@@ -61,36 +51,15 @@ def render_sidebar():
     if not config:
         return
 
-    is_prod = config.environment == Environment.PROD
-
-    # Em prod: badge fixo. Em dev/local: seletor interativo.
-    if is_prod:
-        st.sidebar.markdown("**Ambiente:** :green[Producao]")
-    else:
-        env_options = [e.value for e in Environment]
-        current_env = config.environment.value
-
-        selected_env = st.sidebar.selectbox(
-            "Ambiente:",
-            env_options,
-            index=env_options.index(current_env),
-            format_func=lambda x: {
-                "local": "Local (Mock/DuckDB)",
-                "dev": "Dev (Athena real)",
-                "prod": "Prod (Athena + IAM)",
-            }.get(x, x),
-            key="env_selector",
-            help="Ambiente de execucao. Local usa DuckDB com dados sinteticos. Dev e Prod conectam ao Athena real da AWS.",
-        )
-
-        if selected_env != current_env:
-            os.environ["GDQ_ENV"] = selected_env
-            for key in _SESSION_KEYS_TO_CLEAR:
-                st.session_state.pop(key, None)
-            keys_to_remove = [k for k in st.session_state if k.startswith("proposal_")]
-            for k in keys_to_remove:
-                del st.session_state[k]
-            st.rerun()
+    # Ambiente fixo — definido no launch via run.py --env
+    env_labels = {
+        Environment.LOCAL: ":blue[Local]",
+        Environment.DEV: ":orange[Dev]",
+        Environment.PROD: ":green[Producao]",
+    }
+    st.sidebar.markdown(
+        f"**Ambiente:** {env_labels.get(config.environment, config.environment.value)}"
+    )
 
     mode_label = config.athena.mode.value.upper()
     st.sidebar.markdown(f"**Modo:** {mode_label}")
@@ -98,8 +67,8 @@ def render_sidebar():
     if config.athena.mode == AthenaMode.REAL:
         st.sidebar.markdown(f"**Region:** {config.athena.region}")
         st.sidebar.markdown(f"**Workgroup:** {config.athena.workgroup}")
-        # Em prod com IAM, AWS_PROFILE nao e necessario
-        if not is_prod and not os.environ.get("AWS_PROFILE") and not config.athena.aws_profile:
+        # Em prod com IAM role, AWS_PROFILE nao e necessario
+        if config.environment != Environment.PROD and not os.environ.get("AWS_PROFILE") and not config.athena.aws_profile:
             st.sidebar.warning("AWS_PROFILE nao configurado. Defina antes de usar Athena.")
 
     # Active config indicator
@@ -137,7 +106,6 @@ def main():
     render_sidebar()
 
     config = st.session_state.get("config")
-    is_prod = config.environment == Environment.PROD if config else False
 
     # --- Header ---
     header_col, status_col = st.columns([4, 1])

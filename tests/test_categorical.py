@@ -208,7 +208,7 @@ class TestGDQGeneratorCategorical:
         )
         syntax = self.gen.generate(p)
         assert 'CustomSql' in syntax
-        assert "STATUS = 'A'" in syntax
+        assert '"STATUS"' in syntax and "'A'" in syntax
         assert 'between 25.00 and 35.00' in syntax
         assert 'from primary' in syntax
 
@@ -237,7 +237,7 @@ class TestGDQGeneratorCategorical:
         )
         syntax = self.gen.generate(p)
         assert 'CustomSql' in syntax
-        assert "STATUS = 'A'" in syntax
+        assert '"STATUS"' in syntax and "'A'" in syntax
         assert 'avg(last(30))' in syntax
         assert 'std(last(30))' in syntax
         assert 'from primary' in syntax

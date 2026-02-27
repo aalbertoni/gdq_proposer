@@ -7,6 +7,8 @@ usa o column_classifier para inferir o tipo semântico.
 Definido conforme docs/technical_spec_v1.md seção 4.2.
 """
 
+import logging
+
 from core.column_classifier import classify_column
 from core.models.column_profile import ColumnProfile
 from core.models.dataset_config import DatasetConfig
@@ -14,6 +16,8 @@ from core.models.enums import SemanticType
 from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from infra.query_safety import validate_identifier, sanitize_filter
+
+logger = logging.getLogger(__name__)
 
 
 class ProfilingService:
@@ -72,8 +76,12 @@ class ProfilingService:
                 partition_filter=partition_filter,
                 sample_periods=sample_periods,
             )
-        except Exception:
-            pass  # fallback para profiling individual
+        except Exception as e:
+            logger.warning(
+                "Batch profiling failed for %s.%s: %s. "
+                "Falling back to individual column profiling.",
+                config.schema, config.table, e,
+            )
 
         # Fallback: 1 query por coluna
         profiles = []

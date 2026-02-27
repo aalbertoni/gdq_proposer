@@ -75,6 +75,9 @@ class RuleType(str, Enum):
     ROW_COUNT_DUAL_GUARD = "row_count_dual_guard"    # RowCount com avg(last(N))/std(last(N))
     IS_PRIMARY_KEY = "is_primary_key"                # IsPrimaryKey COL
 
+    # Unicidade
+    UNIQUENESS_CUSTOM_SQL = "uniqueness_custom_sql"  # CustomSql COUNT(DISTINCT) >= 100%
+
     # Geral
     COMPLETENESS = "completeness"                    # Completeness COL >= T
     CUSTOM_SQL = "custom_sql"                        # CustomSql genérico
@@ -108,3 +111,30 @@ class ExportOutputMode(str, Enum):
     """Modo de output do export."""
     GDQ_RUNTIME = "gdq_runtime"       # sintaxe final para cadastro
     ANALYTICAL_REPORT = "analytical"   # metadados + evidência
+
+
+# ---------------------------------------------------------------------------
+# Labels legíveis para tipos de regra
+# ---------------------------------------------------------------------------
+
+RULE_TYPE_LABELS: dict[RuleType, str] = {
+    RuleType.MEAN_DUAL_GUARD: "Mean (Dinamico)",
+    RuleType.STDDEV_DUAL_GUARD: "StdDev (Dinamico)",
+    RuleType.NUMERIC_PERCENTILE_BAND: "Percentil (Dinamico)",
+    RuleType.ALLOWED_VALUES: "Valores Permitidos",
+    RuleType.CATEGORY_FREQUENCY_STATIC: "Frequencia (Estatico)",
+    RuleType.CATEGORY_FREQUENCY_DYNAMIC: "Frequencia (Dinamico)",
+    RuleType.CATEGORY_FREQUENCY_HYBRID: "Frequencia (Hibrido)",
+    RuleType.DISTINCT_COUNT_EXACT: "Distintos (Exato)",
+    RuleType.DISTINCT_COUNT_RANGE: "Distintos (Faixa)",
+    RuleType.ROW_COUNT_DUAL_GUARD: "RowCount (Dinamico)",
+    RuleType.IS_PRIMARY_KEY: "Chave Primaria",
+    RuleType.UNIQUENESS_CUSTOM_SQL: "Unicidade (CustomSql)",
+    RuleType.COMPLETENESS: "Completude",
+    RuleType.CUSTOM_SQL: "CustomSql",
+}
+
+
+def get_rule_label(rule_type: RuleType) -> str:
+    """Retorna label legivel para o tipo de regra."""
+    return RULE_TYPE_LABELS.get(rule_type, rule_type.value.replace("_", " ").title())

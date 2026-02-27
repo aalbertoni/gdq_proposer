@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 
 from config import load_config, AthenaMode, Environment
 from core.models.baseline import BaselineStrategy
-from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, SemanticType
+from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, SemanticType, get_rule_label
 from core.models.rule_selection import RuleSelection
 from core.rule_explainer import explain_rule, explain_rule_detail
 from infra.athena_client import AthenaClient
@@ -72,6 +72,7 @@ def _build_config_from_dict(config_dict):
         grain_type=GrainType(config_dict.get("grain_type", "daily")),
         lookback_mode=LookbackMode(config_dict.get("lookback_mode", "last_n_periods")),
         base_filter_sql=config_dict.get("base_filter_sql"),
+        unique_key_columns=config_dict.get("unique_key_columns", []),
     )
 
 
@@ -450,6 +451,7 @@ config_dict = {
     "grain_type": dataset_config.grain_type.value,
     "lookback_mode": dataset_config.lookback_mode.value,
     "base_filter_sql": dataset_config.base_filter_sql,
+    "unique_key_columns": getattr(dataset_config, "unique_key_columns", []),
 }
 
 
@@ -481,7 +483,7 @@ with st.sidebar:
         for sel in st.session_state["rule_cart"]:
             p = sel.proposal
             target = p.target_column or "(tabela)"
-            label = p.rule_type.value.split("_")[0].title()
+            label = get_rule_label(p.rule_type)
             st.caption(f"- {label} `{target}`")
         if st.button("Ir para Review", type="primary", key="sidebar_review"):
             st.switch_page("pages/03_review.py")
@@ -509,9 +511,7 @@ with st.sidebar:
             st.caption(f"Dados escaneados: {_bytes_label}")
             st.caption(f"Custo estimado: ${_summary['estimated_cost_usd']:.4f}")
         elif client.dialect.value == "duckdb":
-            _app_cfg_check = st.session_state.get("config")
-            if not _app_cfg_check or _app_cfg_check.environment.value != "prod":
-                st.caption("Modo local (DuckDB) -- sem custo Athena")
+            st.caption("Modo mock (DuckDB) — sem custo Athena")
 
         if _summary["errors"] > 0:
             st.caption(f":red[Erros: {_summary['errors']}]")
@@ -568,6 +568,29 @@ def fetch_categorical_distribution(_config_dict, column):
 def fetch_categorical_domain(_config_dict, column):
     config = _build_config_from_dict(_config_dict)
     return analysis_svc.get_categorical_domain(config, column)
+
+
+@st.cache_data(ttl=900, show_spinner="Consultando historico de distintos...")
+def fetch_distinct_count_history(_config_dict, column):
+    config = _build_config_from_dict(_config_dict)
+    return analysis_svc.get_distinct_count_history(config, column)
+
+
+@st.cache_data(ttl=900, show_spinner="Consultando historico de unicidade...")
+def fetch_uniqueness_history(_config_dict, _key_columns_tuple):
+    """Busca historico de unicidade para colunas de chave primaria.
+
+    Args:
+        _config_dict: Dict com configuracao da tabela (hashable para cache).
+        _key_columns_tuple: Tuple com nomes das colunas-chave (hashable para cache).
+
+    Returns:
+        DataFrame com colunas [period, total_rows, distinct_keys,
+        duplicate_count, non_null_{col}...].
+    """
+    config = _build_config_from_dict(_config_dict)
+    # Convert tuple back to list (tuples are hashable for cache key)
+    return analysis_svc.get_uniqueness_history(config, list(_key_columns_tuple))
 
 
 # ---------------------------------------------------------------------------
@@ -633,7 +656,7 @@ with tab_numericas:
                 margin_enabled=mean_margin_on,
             )
 
-            mean_cache_key = f"proposal_mean_{selected_col}_{mean_n}_{mean_k}_{mean_margin}_{mean_margin_on}"
+            mean_cache_key = f"proposal_mean_{selected_col}_{mean_n}_{mean_k}_{mean_margin}_{mean_margin_on}_{effective_lookback}"
             mean_proposals = _get_cached_proposals(
                 mean_cache_key,
                 lambda: [
@@ -682,7 +705,7 @@ with tab_numericas:
                 margin_enabled=std_margin_on,
             )
 
-            std_cache_key = f"proposal_stddev_{selected_col}_{std_n}_{std_k}_{std_margin}_{std_margin_on}"
+            std_cache_key = f"proposal_stddev_{selected_col}_{std_n}_{std_k}_{std_margin}_{std_margin_on}_{effective_lookback}"
             std_proposals = _get_cached_proposals(
                 std_cache_key,
                 lambda: [
@@ -752,7 +775,7 @@ with tab_numericas:
                 pct_levels = [pct_options[p] for p in selected_pcts]
                 pct_cache_key = (
                     f"proposal_pct_{selected_col}_{pct_n}_{pct_k}_{pct_margin}"
-                    f"_{pct_margin_on}_{'_'.join(pct_levels)}"
+                    f"_{pct_margin_on}_{'_'.join(pct_levels)}_{effective_lookback}"
                 )
                 pct_proposals = _get_cached_proposals(
                     pct_cache_key,
@@ -788,7 +811,7 @@ with tab_numericas:
             st.divider()
 
             # ---- Completeness ----
-            comp_cache_key = f"proposal_comp_{selected_col}"
+            comp_cache_key = f"proposal_comp_{selected_col}_{effective_lookback}"
             comp_proposals = _get_cached_proposals(
                 comp_cache_key,
                 lambda: [
@@ -876,6 +899,13 @@ with tab_categoricas:
         except Exception as e:
             st.error(f"Erro ao consultar dados categoricos: {e}")
             st.stop()
+
+        try:
+            cat_dc_history_df = fetch_distinct_count_history(config_dict, selected_cat_col)
+        except Exception as e:
+            st.warning(f"Nao foi possivel consultar historico de distintos: {e}")
+            import pandas as pd
+            cat_dc_history_df = pd.DataFrame()
 
         if cat_domain_df.empty:
             st.warning(f"Nenhum dado encontrado para `{selected_cat_col}`.")
@@ -1016,7 +1046,7 @@ with tab_categoricas:
             cat_cache_key = (
                 f"cat_proposals_{selected_cat_col}_{cat_margin_pct}"
                 f"_{cat_freq_mode}_{cat_n_periods}_{cat_n_sigma}"
-                f"_{cat_floor_pct}_{cat_ceiling_pct}_{max_freq_rules}"
+                f"_{cat_floor_pct}_{cat_ceiling_pct}_{max_freq_rules}_{effective_lookback}"
             )
             cat_proposals = _get_cached_proposals(
                 cat_cache_key,
@@ -1027,6 +1057,7 @@ with tab_categoricas:
                     floor_pct=cat_floor_pct,
                     ceiling_pct=cat_ceiling_pct,
                     max_frequency_rules=max_freq_rules,
+                    distinct_count_history=cat_dc_history_df,
                 ),
             )
 
@@ -1040,12 +1071,37 @@ with tab_categoricas:
             av_proposals = [p for p in cat_proposals if p.rule_type == RuleType.ALLOWED_VALUES]
             if av_proposals:
                 st.subheader("Valores Permitidos (AllowedValues)")
+                av = av_proposals[0]
                 st.caption(
                     "Verifica que todos os valores da coluna pertencem a lista abaixo. "
                     "Qualquer valor novo faz a regra falhar."
                 )
+
+                # Historical pass/fail chart
+                if av.history_dates and av.history_values:
+                    colors = ["green" if v >= 1.0 else "red" for v in av.history_values]
+                    fig_av = go.Figure(data=[go.Bar(
+                        x=av.history_dates,
+                        y=[1] * len(av.history_dates),
+                        marker_color=colors,
+                        hovertext=[
+                            "OK" if v >= 1.0 else "Valor inesperado"
+                            for v in av.history_values
+                        ],
+                        hoverinfo="text+x",
+                    )])
+                    fig_av.update_layout(
+                        height=200,
+                        margin=dict(l=50, r=20, t=30, b=30),
+                        xaxis_title="Periodo",
+                        yaxis=dict(visible=False),
+                        title="Historico: regra teria passado?",
+                    )
+                    st.plotly_chart(fig_av, use_container_width=True)
+
+                _render_backtest_metrics(av)
                 _render_add_to_cart(
-                    av_proposals[0], "AllowedValues",
+                    av, "AllowedValues",
                     f"av_{selected_cat_col}",
                 )
                 st.divider()
@@ -1068,6 +1124,64 @@ with tab_categoricas:
                         f"Verifica que a coluna tem entre "
                         f"{int(proposal.suggested_lower)} e {int(proposal.suggested_upper)} valores distintos."
                     )
+
+                # Historical distinct count chart
+                if proposal.history_dates and proposal.history_values:
+                    dates = proposal.history_dates
+                    values = proposal.history_values
+
+                    fig_dc = go.Figure()
+
+                    # Main line
+                    fig_dc.add_trace(go.Scatter(
+                        x=dates, y=values,
+                        mode="lines+markers",
+                        name="Distintos",
+                        line=dict(color="steelblue"),
+                    ))
+
+                    if proposal.rule_type == RuleType.DISTINCT_COUNT_EXACT:
+                        expected = int(proposal.suggested_lower)
+                        fig_dc.add_hline(
+                            y=expected, line_dash="dash", line_color="green",
+                            annotation_text=f"Esperado: {expected}",
+                        )
+                        # Red markers for outliers
+                        outlier_x = [d for d, v in zip(dates, values) if int(v) != expected]
+                        outlier_y = [v for v in values if int(v) != expected]
+                        if outlier_x:
+                            fig_dc.add_trace(go.Scatter(
+                                x=outlier_x, y=outlier_y,
+                                mode="markers", name="Fora do esperado",
+                                marker=dict(color="red", size=10, symbol="x"),
+                            ))
+                    else:
+                        lower = proposal.suggested_lower
+                        upper = proposal.suggested_upper
+                        fig_dc.add_hrect(
+                            y0=lower, y1=upper, fillcolor="green", opacity=0.1,
+                            line_width=0,
+                            annotation_text=f"Faixa: {int(lower)}-{int(upper)}",
+                        )
+                        # Red markers for outliers
+                        outlier_x = [d for d, v in zip(dates, values) if v < lower or v > upper]
+                        outlier_y = [v for v in values if v < lower or v > upper]
+                        if outlier_x:
+                            fig_dc.add_trace(go.Scatter(
+                                x=outlier_x, y=outlier_y,
+                                mode="markers", name="Fora da faixa",
+                                marker=dict(color="red", size=10, symbol="x"),
+                            ))
+
+                    fig_dc.update_layout(
+                        height=300,
+                        margin=dict(l=50, r=20, t=30, b=30),
+                        xaxis_title="Periodo",
+                        yaxis_title="Valores distintos",
+                    )
+                    st.plotly_chart(fig_dc, use_container_width=True)
+
+                _render_backtest_metrics(proposal)
                 _render_add_to_cart(
                     proposal, "DistinctValuesCount",
                     f"dc_{selected_cat_col}",
@@ -1147,11 +1261,34 @@ with tab_categoricas:
             comp_proposals = [p for p in cat_proposals if p.rule_type == RuleType.COMPLETENESS]
             if comp_proposals:
                 with st.expander(f"Completeness {selected_cat_col}", expanded=False):
+                    proposal = comp_proposals[0]
                     st.caption(
                         "Regra de completude: verifica que a porcentagem de valores nao-nulos "
                         "esta acima de um limite."
                     )
-                    proposal = comp_proposals[0]
+
+                    # Completeness history chart
+                    if proposal.history_dates and proposal.history_values:
+                        fig_comp = go.Figure()
+                        fig_comp.add_trace(go.Scatter(
+                            x=proposal.history_dates, y=proposal.history_values,
+                            mode="lines+markers", name="Completude (%)",
+                            line=dict(color="steelblue"),
+                        ))
+                        if proposal.suggested_lower:
+                            fig_comp.add_hline(
+                                y=proposal.suggested_lower * 100, line_dash="dash",
+                                line_color="green",
+                                annotation_text=f"Limite: {proposal.suggested_lower * 100:.0f}%",
+                            )
+                        fig_comp.update_layout(
+                            height=250,
+                            margin=dict(l=50, r=20, t=30, b=30),
+                            xaxis_title="Periodo",
+                            yaxis_title="Completude (%)",
+                        )
+                        st.plotly_chart(fig_comp, use_container_width=True)
+
                     st.code(proposal.gdq_syntax_preview)
                     _render_add_to_cart(
                         proposal, "Completeness",
@@ -1190,7 +1327,7 @@ with tab_tabela:
             margin_enabled=rc_margin_on,
         )
 
-        rc_cache_key = f"proposal_rc_{rc_n}_{rc_k}_{rc_margin}_{rc_margin_on}"
+        rc_cache_key = f"proposal_rc_{rc_n}_{rc_k}_{rc_margin}_{rc_margin_on}_{effective_lookback}"
         rc_proposals = _get_cached_proposals(
             rc_cache_key,
             lambda: proposal_svc.propose_table_rules(
@@ -1222,6 +1359,167 @@ with tab_tabela:
                 "Verifique o lookback e o eixo temporal no Setup."
             )
 
+    # -----------------------------------------------------------------------
+    # Primary Key Analysis
+    # -----------------------------------------------------------------------
+    pk_cols = getattr(dataset_config, "unique_key_columns", []) or []
+    if pk_cols:
+        st.divider()
+        st.subheader(f"Chave Primaria -- {', '.join(pk_cols)}")
+        st.caption(
+            "Analise de unicidade e completude das colunas de chave primaria. "
+            "A regra `IsPrimaryKey` valida ambas. Se houver nulls, "
+            "uma alternativa `CustomSql` de unicidade e sugerida."
+        )
+
+        try:
+            pk_history_df = fetch_uniqueness_history(
+                config_dict, tuple(pk_cols),
+            )
+        except Exception as e:
+            st.error(f"Erro ao consultar historico de unicidade: {e}")
+            pk_history_df = None
+
+        if pk_history_df is not None and not pk_history_df.empty:
+            # --- Chart 1: Duplicate ratio over time ---
+            pk_dates = pk_history_df["period"].tolist()
+            pk_total = pk_history_df["total_rows"].tolist()
+            pk_dupes = pk_history_df["duplicate_count"].tolist()
+            pk_dupe_pct = [
+                (d / t * 100) if t > 0 else 0
+                for d, t in zip(pk_dupes, pk_total)
+            ]
+
+            fig_pk = go.Figure()
+            has_any_dupes = any(d > 0 for d in pk_dupes)
+
+            if has_any_dupes:
+                fig_pk.add_trace(go.Bar(
+                    x=pk_dates, y=pk_dupe_pct,
+                    name="Duplicatas (%)",
+                    marker_color=[
+                        "red" if d > 0 else "green" for d in pk_dupes
+                    ],
+                ))
+            else:
+                fig_pk.add_trace(go.Bar(
+                    x=pk_dates,
+                    y=[0.01] * len(pk_dates),  # minimal bar to show green
+                    name="Sem duplicatas",
+                    marker_color="green",
+                ))
+
+            fig_pk.update_layout(
+                height=250,
+                margin=dict(l=50, r=20, t=30, b=30),
+                xaxis_title="Periodo",
+                yaxis_title="Duplicatas (%)",
+                title="Duplicatas por periodo",
+            )
+            st.plotly_chart(fig_pk, use_container_width=True)
+
+            # --- Chart 2: Null ratio per key column ---
+            null_cols = [
+                c for c in pk_history_df.columns
+                if c.startswith("non_null_")
+            ]
+            if null_cols:
+                fig_nulls = go.Figure()
+                for nc in null_cols:
+                    col_name = nc.replace("non_null_", "")
+                    non_null = pk_history_df[nc].tolist()
+                    null_pct = [
+                        ((t - nn) / t * 100) if t > 0 else 0
+                        for t, nn in zip(pk_total, non_null)
+                    ]
+                    fig_nulls.add_trace(go.Scatter(
+                        x=pk_dates, y=null_pct,
+                        mode="lines+markers",
+                        name=f"Nulls {col_name} (%)",
+                    ))
+
+                fig_nulls.update_layout(
+                    height=250,
+                    margin=dict(l=50, r=20, t=30, b=30),
+                    xaxis_title="Periodo",
+                    yaxis_title="Nulls (%)",
+                    title="Nulls por coluna-chave por periodo",
+                )
+                st.plotly_chart(fig_nulls, use_container_width=True)
+
+            # --- Recommendation badge ---
+            has_dupes = any(d > 0 for d in pk_dupes)
+            has_nulls_any = False
+            for nc in null_cols:
+                non_null = pk_history_df[nc].tolist()
+                if any(t - nn > 0 for t, nn in zip(pk_total, non_null)):
+                    has_nulls_any = True
+                    break
+
+            if not has_dupes and not has_nulls_any:
+                st.success(
+                    "Recomendacao: **IsPrimaryKey** -- unicidade e completude "
+                    "perfeitas em todo o historico."
+                )
+            elif not has_dupes and has_nulls_any:
+                st.warning(
+                    "Recomendacao: **CustomSql (unicidade)** -- sem duplicatas, "
+                    "porem nulls detectados. IsPrimaryKey exige completude. "
+                    "A alternativa CustomSql valida apenas unicidade."
+                )
+            else:
+                st.error(
+                    "Duplicatas detectadas no historico. Nenhuma regra de chave "
+                    "primaria e recomendada com alta confianca. "
+                    "Verifique a definicao da chave."
+                )
+
+            # --- Generate proposals ---
+            pk_cache_key = (
+                f"proposal_pk_{'_'.join(pk_cols)}_{effective_lookback}"
+            )
+            pk_proposals = _get_cached_proposals(
+                pk_cache_key,
+                lambda: proposal_svc.propose_primary_key_rules(
+                    pk_history_df, pk_cols, dataset_config.table,
+                ),
+            )
+
+            if pk_proposals:
+                for pk_p in pk_proposals:
+                    label = get_rule_label(pk_p.rule_type)
+                    conf = _confidence_badge(pk_p.confidence)
+                    cov_str = (
+                        f"{pk_p.backtest.coverage_pct:.0f}%"
+                        if pk_p.backtest else "N/A"
+                    )
+
+                    with st.expander(
+                        f"**{label}** | Cobertura: {cov_str} | {conf}",
+                        expanded=True,
+                    ):
+                        st.code(pk_p.gdq_syntax_preview)
+                        if pk_p.warnings:
+                            for w in pk_p.warnings:
+                                st.caption(f":orange[{w}]")
+                        _render_backtest_metrics(pk_p)
+                        _render_add_to_cart(
+                            pk_p, label,
+                            f"pk_{pk_p.rule_type.value}",
+                        )
+        elif pk_history_df is not None:
+            st.warning(
+                "Nenhum dado de unicidade encontrado para as colunas "
+                "selecionadas."
+            )
+    else:
+        st.divider()
+        st.info(
+            "Nenhuma chave primaria configurada. "
+            "Defina as colunas de PK no **Setup** (passo 6b) "
+            "para analisar unicidade."
+        )
+
 
 # ===========================================================================
 # Tab: Resumo
@@ -1239,7 +1537,7 @@ with tab_resumo:
     else:
         for sel in cart:
             p = sel.proposal
-            label = p.rule_type.value.replace("_", " ").title()
+            label = get_rule_label(p.rule_type)
             target = p.target_column or "(tabela)"
             confidence = p.confidence.value.upper()
 

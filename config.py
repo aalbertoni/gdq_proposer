@@ -1,6 +1,9 @@
 """
 Configuração multi-ambiente para o GDQ Rule Proposer.
 Carrega de variáveis de ambiente ou .env file.
+
+Todos os ambientes usam Athena real por default via AWS CLI profile.
+Use --mock no run.py para DuckDB local (testes offline).
 """
 
 import os
@@ -10,7 +13,7 @@ from pathlib import Path
 
 
 class Environment(str, Enum):
-    LOCAL = "local"       # DuckDB + dados mock
+    LOCAL = "local"       # Athena real via AWS CLI profile (--mock para DuckDB)
     DEV = "dev"           # Athena real com credenciais AWS CLI
     PROD = "prod"         # Athena real com IAM roles
 
@@ -22,16 +25,16 @@ class AthenaMode(str, Enum):
 
 @dataclass
 class AthenaConfig:
-    mode: AthenaMode = AthenaMode.MOCK
-    # Athena real (dev/prod)
+    mode: AthenaMode = AthenaMode.REAL
+    # Athena real (todos os ambientes)
     region: str = "us-east-1"
     workgroup: str = "primary"
     s3_output: str = ""                # s3://bucket/athena-results/
     catalog: str = "AwsDataCatalog"
     # AWS Auth
-    aws_profile: str = ""              # para dev (AWS CLI named profile)
+    aws_profile: str = ""              # AWS CLI named profile
     # Para prod: usa IAM role automaticamente (sem profile)
-    # Mock (local)
+    # Mock (fallback local)
     mock_data_dir: str = "mock_data"
     # Geral
     query_timeout_seconds: int = 120
@@ -59,6 +62,7 @@ def load_config() -> AppConfig:
 
     Variáveis de ambiente:
     - GDQ_ENV: local, dev, prod
+    - GDQ_ATHENA_MODE: real (default) ou mock
     - GDQ_ATHENA_REGION: região AWS
     - GDQ_ATHENA_WORKGROUP: workgroup do Athena
     - GDQ_ATHENA_S3_OUTPUT: bucket de output
@@ -73,19 +77,23 @@ def load_config() -> AppConfig:
     if env_file.exists():
         _load_dotenv(env_file)
 
-    if env == Environment.LOCAL:
-        athena = AthenaConfig(
-            mode=AthenaMode.MOCK,
-            mock_data_dir=os.getenv("GDQ_MOCK_DATA_DIR", "mock_data"),
-        )
-    else:
-        athena = AthenaConfig(
-            mode=AthenaMode.REAL,
-            region=os.getenv("GDQ_ATHENA_REGION", "us-east-1"),
-            workgroup=os.getenv("GDQ_ATHENA_WORKGROUP", "primary"),
-            s3_output=os.getenv("GDQ_ATHENA_S3_OUTPUT", ""),
-            aws_profile=os.getenv("GDQ_AWS_PROFILE", ""),
-        )
+    # Modo Athena: controlado por GDQ_ATHENA_MODE (default: real)
+    athena_mode_str = os.getenv("GDQ_ATHENA_MODE", "real")
+    athena_mode = AthenaMode(athena_mode_str)
+
+    # AWS profile: da env var ou do .env file
+    aws_profile = os.getenv("GDQ_AWS_PROFILE", "")
+    if aws_profile and not os.environ.get("AWS_PROFILE"):
+        os.environ["AWS_PROFILE"] = aws_profile
+
+    athena = AthenaConfig(
+        mode=athena_mode,
+        region=os.getenv("GDQ_ATHENA_REGION", "us-east-1"),
+        workgroup=os.getenv("GDQ_ATHENA_WORKGROUP", "primary"),
+        s3_output=os.getenv("GDQ_ATHENA_S3_OUTPUT", ""),
+        aws_profile=aws_profile,
+        mock_data_dir=os.getenv("GDQ_MOCK_DATA_DIR", "mock_data"),
+    )
 
     return AppConfig(environment=env, athena=athena)
 

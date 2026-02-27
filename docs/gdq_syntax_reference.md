@@ -174,6 +174,65 @@ CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as d
 
 ---
 
+## 4b. CustomSql (Frequencia Dinamica)
+
+### Conceito
+
+Versao dinamica da regra de frequencia categorica. Em vez de limites fixos, usa
+`avg(last(N))` e `std(last(N))` para calcular a faixa aceita com base no historico.
+Segue o padrao dual guard (sigma OR margem).
+
+### Sintaxe
+
+```
+(((CustomSql "select cast(sum(case when "{COL}" = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= (avg(last({N})) - ({K} * std(last({N}))) - {BUFFER})) AND (CustomSql "select cast(sum(case when "{COL}" = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= (avg(last({N})) + ({K} * std(last({N}))) + {BUFFER}))) OR ((CustomSql "select cast(sum(case when "{COL}" = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= (avg(last({N})) * {1-MARGIN}) - {BUFFER}) AND (CustomSql "select cast(sum(case when "{COL}" = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= (avg(last({N})) * {1+MARGIN}) + {BUFFER})))
+```
+
+### Parametros
+
+Mesmos do Mean/StdDev dual guard (N, K, BUFFER, MARGIN).
+
+### Quando usar
+
+- Distribuicao categorica com drift lento (ex: migracao de sistema)
+- Valores cuja proporcao evolui naturalmente ao longo do tempo
+- Quando limites fixos geram falsos positivos frequentes
+
+---
+
+## 4c. CustomSql (Frequencia Hibrida)
+
+### Conceito
+
+Combina a adaptabilidade do modo dinamico com limites absolutos (floor/ceiling).
+A regra passa se: (dentro da banda dinamica) **AND** (entre floor e ceiling).
+
+### Sintaxe
+
+```
+((DUAL_GUARD_EXPRESSION) AND (CustomSql "..." between {FLOOR} and {CEILING}))
+```
+
+Onde `DUAL_GUARD_EXPRESSION` e a mesma expressao da secao 4b (sigma OR margem).
+
+### Parametros adicionais
+
+- `{FLOOR}`: Limite inferior absoluto (percentual 0-100). Ex: `5.0`
+- `{CEILING}`: Limite superior absoluto (percentual 0-100). Ex: `50.0`
+
+### Quando usar
+
+- Ha limites de negocio que nunca devem ser violados
+  (ex: "categoria X nunca deve passar de 50%")
+- Quer adaptabilidade do dinamico mas com guardrails fixos
+- Drift e aceitavel dentro de limites conhecidos
+
+### Referencia
+
+Veja ADR-004 para detalhes da decisao de design do modo hibrido.
+
+---
+
 ## 5. ColumnValues (Valores Permitidos)
 
 ### Sintaxe

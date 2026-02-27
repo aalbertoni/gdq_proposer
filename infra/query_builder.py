@@ -7,6 +7,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
+from infra.query_safety import validate_identifier
 from infra.sql_dialect import SQLDialect, adapt_function
 
 
@@ -225,6 +226,41 @@ class QueryBuilder:
             base_filter=base_filter,
         )
 
+    def build_distinct_count_history(
+        self,
+        schema: str,
+        table: str,
+        col: str,
+        date_expression: str,
+        lookback_value: int,
+        base_filter: str = "",
+    ) -> str:
+        """Query para contagem de valores distintos por periodo.
+
+        Args:
+            schema: Schema da tabela.
+            table: Nome da tabela.
+            col: Coluna categorica.
+            date_expression: Expressao SQL para eixo temporal.
+            lookback_value: Dias de lookback.
+            base_filter: Filtro SQL opcional.
+
+        Returns:
+            SQL renderizado.
+        """
+        template = self.env.get_template("distinct_count_history.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            col=col,
+            date_expression=date_expression,
+            date_lookback_expr=adapt_function(
+                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
+            ),
+            base_filter=base_filter,
+        )
+
     def build_categorical_distribution(
         self,
         schema: str,
@@ -303,6 +339,63 @@ class QueryBuilder:
                 "STDDEV", self.dialect, expr="",
             ).split("(")[0],  # pega só o nome da função
             approx_percentile_expr=approx_expr,
+            date_lookback_expr=adapt_function(
+                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
+            ),
+            base_filter=base_filter,
+        )
+
+    def build_uniqueness_check(
+        self,
+        schema: str,
+        table: str,
+        key_columns: list[str],
+        date_expression: str,
+        lookback_value: int,
+        base_filter: str = "",
+    ) -> str:
+        """Query para verificar unicidade e completude de colunas-chave por periodo.
+
+        Handles composite keys by CONCATing columns with '||' separator.
+        Athena does NOT support COUNT(DISTINCT col1, col2), so we use
+        CONCAT(CAST(col1 AS VARCHAR), '||', CAST(col2 AS VARCHAR)).
+
+        Args:
+            schema: Schema da tabela.
+            table: Nome da tabela.
+            key_columns: Lista de colunas que compoe a chave primaria.
+            date_expression: Expressao SQL para eixo temporal.
+            lookback_value: Dias de lookback.
+            base_filter: Filtro SQL opcional.
+
+        Returns:
+            SQL renderizado.
+
+        Raises:
+            ValueError: Se key_columns esta vazio ou contem identificador invalido.
+        """
+        if not key_columns:
+            raise ValueError("key_columns nao pode ser vazio")
+
+        # Validate all column names
+        for col in key_columns:
+            validate_identifier(col)
+
+        # Build key expression: single column or CONCAT for composite
+        if len(key_columns) == 1:
+            key_expr = f'CAST("{key_columns[0]}" AS VARCHAR)'
+        else:
+            parts = [f'CAST("{col}" AS VARCHAR)' for col in key_columns]
+            key_expr = "CONCAT(" + ", '||', ".join(parts) + ")"
+
+        template = self.env.get_template("uniqueness_check.sql")
+        return template.render(
+            table_ref=adapt_function(
+                "TABLE_REF", self.dialect, schema=schema, table=table,
+            ),
+            key_expr=key_expr,
+            key_cols=key_columns,
+            date_expression=date_expression,
             date_lookback_expr=adapt_function(
                 "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
             ),

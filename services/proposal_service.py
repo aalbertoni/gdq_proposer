@@ -11,18 +11,27 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, TypedDict
 
 if TYPE_CHECKING:
     from strategies.row_count_strategy import RowCountStrategy
 
 import pandas as pd
 
-from core.backtest import backtest_band, backtest_frequency_band, backtest_frequency_dual_guard
+from core.backtest import (
+    backtest_allowed_values,
+    backtest_band,
+    backtest_distinct_count_exact,
+    backtest_distinct_count_range,
+    backtest_frequency_band,
+    backtest_frequency_dual_guard,
+    backtest_primary_key,
+)
 from core.gdq_rule_generator import GDQRuleGenerator
 from core.models.baseline import BaselineStrategy
 from core.models.enums import (
     BaselineMethod,
+    ConfidenceLevel,
     RuleType,
     SemanticType,
 )
@@ -36,6 +45,28 @@ from core.statistical_engine import (
     compute_margin_band,
     detect_drift,
 )
+
+
+class AutoTuneResult(TypedDict, total=False):
+    """Resultado do grid search de auto-tune (find_best_params).
+
+    Campos sempre presentes: n_periods, n_sigma, margin_pct, margin_enabled,
+    coverage_pct, false_positives, stability, score_total.
+
+    Campos adicionados apos avaliacao: confidence, viable, recommendation.
+    """
+
+    n_periods: int
+    n_sigma: float
+    margin_pct: float
+    margin_enabled: bool
+    coverage_pct: float
+    false_positives: int
+    stability: float
+    score_total: float
+    confidence: "ConfidenceLevel"
+    viable: bool
+    recommendation: str
 
 
 class ProposalService:
@@ -148,6 +179,7 @@ class ProposalService:
         floor_pct: float | None = None,
         ceiling_pct: float | None = None,
         max_frequency_rules: int = 5,
+        distinct_count_history: pd.DataFrame | None = None,
     ) -> list[RuleProposal]:
         """Gera propostas de regra para coluna categorica.
 
@@ -163,6 +195,9 @@ class ProposalService:
             floor_pct: Limite inferior absoluto (modo hibrido, 0-100).
             ceiling_pct: Limite superior absoluto (modo hibrido, 0-100).
             max_frequency_rules: Máximo de regras de frequência por coluna (default 5).
+            distinct_count_history: DataFrame [period, distinct_count, total_count,
+                non_null_count] para backtest de AllowedValues/DistinctCount/Completeness.
+                Quando fornecido, as propostas recebem backtest e scoring.
         """
         proposals = []
         if domain.empty:
@@ -185,6 +220,22 @@ class ProposalService:
                 metric_name="allowed_values",
                 suggested_values=domain_values,
             )
+            # Backtest: check if all observed values per period are in allowed set
+            if distinct_count_history is not None and not distribution.empty:
+                period_values_map = self._build_period_values_map(distribution)
+                allowed_set = set(str(v) for v in domain_values)
+                av_proposal.backtest = backtest_allowed_values(
+                    period_values_map, allowed_set,
+                )
+                sorted_periods = sorted(period_values_map.keys())
+                av_proposal.history_dates = sorted_periods
+                av_proposal.history_values = [
+                    1.0 if not (period_values_map[p] - allowed_set) else 0.0
+                    for p in sorted_periods
+                ]
+                av_score = score_proposal(av_proposal, av_proposal.history_values)
+                av_proposal.confidence = av_score.confidence
+                av_proposal.warnings = av_score.warnings
             av_proposal.gdq_syntax_preview = self.generator.generate(av_proposal)
             proposals.append(av_proposal)
 
@@ -198,20 +249,46 @@ class ProposalService:
                 metric_name="distinct_count",
                 suggested_lower=float(n_distinct),
             )
+            # Backtest: check if distinct_count == expected in each period
+            if distinct_count_history is not None and not distinct_count_history.empty:
+                dc_counts = distinct_count_history["distinct_count"].tolist()
+                dc_dates = [str(d) for d in distinct_count_history["period"].tolist()]
+                dc_proposal.backtest = backtest_distinct_count_exact(
+                    dc_counts, dc_dates, n_distinct,
+                )
+                dc_proposal.history_dates = dc_dates
+                dc_proposal.history_values = [float(c) for c in dc_counts]
+                dc_score = score_proposal(dc_proposal, dc_proposal.history_values)
+                dc_proposal.confidence = dc_score.confidence
+                dc_proposal.warnings = dc_score.warnings
             dc_proposal.gdq_syntax_preview = self.generator.generate(dc_proposal)
             proposals.append(dc_proposal)
         elif is_mid:
             # Range: +/- 10% or at least +/- 2
             margin = max(int(n_distinct * 0.10), 2)
+            lower_bound = max(1, n_distinct - margin)
+            upper_bound = n_distinct + margin
             dc_proposal = RuleProposal(
                 id=str(uuid.uuid4()),
                 target_column=column,
                 target_table=table,
                 rule_type=RuleType.DISTINCT_COUNT_RANGE,
                 metric_name="distinct_count_range",
-                suggested_lower=float(max(1, n_distinct - margin)),
-                suggested_upper=float(n_distinct + margin),
+                suggested_lower=float(lower_bound),
+                suggested_upper=float(upper_bound),
             )
+            # Backtest: check if distinct_count in [lower, upper] each period
+            if distinct_count_history is not None and not distinct_count_history.empty:
+                dc_counts = distinct_count_history["distinct_count"].tolist()
+                dc_dates = [str(d) for d in distinct_count_history["period"].tolist()]
+                dc_proposal.backtest = backtest_distinct_count_range(
+                    dc_counts, dc_dates, lower_bound, upper_bound,
+                )
+                dc_proposal.history_dates = dc_dates
+                dc_proposal.history_values = [float(c) for c in dc_counts]
+                dc_score = score_proposal(dc_proposal, dc_proposal.history_values)
+                dc_proposal.confidence = dc_score.confidence
+                dc_proposal.warnings = dc_score.warnings
             dc_proposal.gdq_syntax_preview = self.generator.generate(dc_proposal)
             proposals.append(dc_proposal)
 
@@ -250,6 +327,19 @@ class ProposalService:
                 metric_name="completeness",
                 suggested_lower=threshold,
             )
+            # Add history from distinct_count_history if available
+            if distinct_count_history is not None and not distinct_count_history.empty:
+                comp_dates = [str(d) for d in distinct_count_history["period"].tolist()]
+                comp_total = distinct_count_history["total_count"].tolist()
+                comp_non_null = distinct_count_history["non_null_count"].tolist()
+                comp_values = []
+                for nn, tot in zip(comp_non_null, comp_total):
+                    if tot and tot > 0:
+                        comp_values.append(round(float(nn) / float(tot) * 100, 2))
+                    else:
+                        comp_values.append(0.0)
+                comp_proposal.history_dates = comp_dates
+                comp_proposal.history_values = comp_values
             comp_proposal.gdq_syntax_preview = self.generator.generate(comp_proposal)
             proposals.append(comp_proposal)
 
@@ -388,6 +478,193 @@ class ProposalService:
 
         return proposal
 
+    def propose_primary_key_rules(
+        self,
+        uniqueness_history: pd.DataFrame,
+        key_columns: list[str],
+        table: str,
+    ) -> list[RuleProposal]:
+        """Gera propostas de regra de chave primaria (IsPrimaryKey / UNIQUENESS_CUSTOM_SQL).
+
+        Analisa o historico de unicidade para determinar se as colunas candidatas
+        formam uma chave primaria valida. Gera IsPrimaryKey quando nao ha duplicatas
+        nem nulls, UNIQUENESS_CUSTOM_SQL quando ha nulls mas nao duplicatas,
+        ou um alerta LOW quando ha duplicatas.
+
+        Args:
+            uniqueness_history: DataFrame com colunas [period, total_rows,
+                distinct_keys, duplicate_count, non_null_{col}...].
+            key_columns: Lista de colunas candidatas a chave primaria.
+            table: Nome da tabela.
+
+        Returns:
+            Lista de RuleProposal (IsPrimaryKey e/ou UNIQUENESS_CUSTOM_SQL
+            e/ou Completeness para colunas com nulls).
+        """
+        if uniqueness_history is None or uniqueness_history.empty or not key_columns:
+            return []
+
+        proposals: list[RuleProposal] = []
+
+        # Extract arrays from DataFrame
+        total_rows = uniqueness_history["total_rows"].tolist()
+        distinct_keys = uniqueness_history["distinct_keys"].tolist()
+        duplicate_counts = uniqueness_history["duplicate_count"].tolist()
+        dates = [str(d) for d in uniqueness_history["period"].tolist()]
+
+        # Build null_counts_per_col
+        null_counts_per_col: dict[str, list[int]] = {}
+        for col in key_columns:
+            non_null_col = f"non_null_{col}"
+            if non_null_col in uniqueness_history.columns:
+                non_null_vals = uniqueness_history[non_null_col].tolist()
+                null_counts_per_col[col] = [
+                    int(tr) - int(nn)
+                    for tr, nn in zip(total_rows, non_null_vals)
+                ]
+            else:
+                # Assume no nulls if column not in history
+                null_counts_per_col[col] = [0] * len(total_rows)
+
+        # Backtest
+        bt_total_rows = [int(r) for r in total_rows]
+        bt_distinct_keys = [int(k) for k in distinct_keys]
+        backtest_result = backtest_primary_key(
+            bt_total_rows, bt_distinct_keys, null_counts_per_col, dates,
+        )
+
+        # Determine recommendation
+        has_duplicates = any(int(d) > 0 for d in duplicate_counts)
+        has_nulls = any(
+            any(nc > 0 for nc in null_list)
+            for null_list in null_counts_per_col.values()
+        )
+
+        # History values: duplicate counts per period (for visualization)
+        history_values_dup = [float(d) for d in duplicate_counts]
+
+        if not has_duplicates and not has_nulls:
+            # Recommend IsPrimaryKey
+            pk_proposal = RuleProposal(
+                id=str(uuid.uuid4()),
+                target_column=None,
+                target_table=table,
+                rule_type=RuleType.IS_PRIMARY_KEY,
+                metric_name="is_primary_key",
+                suggested_values=key_columns,
+                history_dates=dates,
+                history_values=history_values_dup,
+                backtest=backtest_result,
+            )
+            pk_proposal.gdq_syntax_preview = self.generator.generate(pk_proposal)
+            pk_score = score_proposal(pk_proposal, history_values_dup)
+            pk_proposal.confidence = pk_score.confidence
+            pk_proposal.warnings = pk_score.warnings
+            proposals.append(pk_proposal)
+
+        elif not has_duplicates and has_nulls:
+            # Recommend UNIQUENESS_CUSTOM_SQL (no duplicates but nulls prevent IsPrimaryKey)
+            uq_proposal = RuleProposal(
+                id=str(uuid.uuid4()),
+                target_column=None,
+                target_table=table,
+                rule_type=RuleType.UNIQUENESS_CUSTOM_SQL,
+                metric_name="uniqueness_custom_sql",
+                suggested_values=key_columns,
+                history_dates=dates,
+                history_values=history_values_dup,
+                backtest=backtest_result,
+            )
+            uq_proposal.gdq_syntax_preview = self.generator.generate(uq_proposal)
+            uq_score = score_proposal(uq_proposal, history_values_dup)
+            uq_proposal.confidence = uq_score.confidence
+            uq_proposal.warnings = uq_score.warnings
+            uq_proposal.warnings.append(
+                "Colunas PK contêm nulls — IsPrimaryKey não aplicável, "
+                "usando CustomSql COUNT(DISTINCT) como alternativa"
+            )
+            proposals.append(uq_proposal)
+
+            # Also create Completeness proposals for columns with nulls
+            for col in key_columns:
+                col_null_counts = null_counts_per_col.get(col, [])
+                col_has_nulls = any(nc > 0 for nc in col_null_counts)
+                if col_has_nulls:
+                    # Compute overall completeness for this column
+                    total_all = sum(int(r) for r in total_rows)
+                    null_all = sum(col_null_counts)
+                    if total_all > 0:
+                        comp_ratio = (total_all - null_all) / total_all
+                        comp_proposal = RuleProposal(
+                            id=str(uuid.uuid4()),
+                            target_column=col,
+                            target_table=table,
+                            rule_type=RuleType.COMPLETENESS,
+                            metric_name="completeness",
+                            suggested_lower=round(comp_ratio, 2),
+                            history_dates=dates,
+                            history_values=[
+                                round((float(tr) - float(nc)) / float(tr) * 100, 2)
+                                if float(tr) > 0 else 0.0
+                                for tr, nc in zip(total_rows, col_null_counts)
+                            ],
+                        )
+                        comp_proposal.gdq_syntax_preview = self.generator.generate(
+                            comp_proposal
+                        )
+                        comp_proposal.warnings.append(
+                            f"Coluna PK '{col}' contém nulls — considere corrigir os dados"
+                        )
+                        proposals.append(comp_proposal)
+
+        else:
+            # has_duplicates: warning-only proposal with LOW confidence
+            warn_proposal = RuleProposal(
+                id=str(uuid.uuid4()),
+                target_column=None,
+                target_table=table,
+                rule_type=RuleType.IS_PRIMARY_KEY,
+                metric_name="is_primary_key",
+                suggested_values=key_columns,
+                confidence=ConfidenceLevel.LOW,
+                history_dates=dates,
+                history_values=history_values_dup,
+                backtest=backtest_result,
+            )
+            # Generate syntax for reference, even though not recommended
+            warn_proposal.gdq_syntax_preview = self.generator.generate(warn_proposal)
+            max_dup = max(int(d) for d in duplicate_counts)
+            dup_periods = sum(1 for d in duplicate_counts if int(d) > 0)
+            warn_proposal.warnings = [
+                f"Duplicatas detectadas em {dup_periods}/{len(duplicate_counts)} períodos "
+                f"(máx {max_dup} duplicatas) — IsPrimaryKey não recomendado",
+                "Verifique se as colunas selecionadas realmente formam a chave primária",
+            ]
+            proposals.append(warn_proposal)
+
+        return proposals
+
+    def _build_period_values_map(
+        self,
+        distribution: pd.DataFrame,
+    ) -> dict[str, set[str]]:
+        """Constroi mapa de periodo -> conjunto de valores observados.
+
+        Args:
+            distribution: DataFrame [period, category_value, value_count, value_pct].
+
+        Returns:
+            Dict mapeando cada periodo para o set de valores categoricos observados.
+        """
+        period_values_map: dict[str, set[str]] = {}
+        for _, row in distribution.iterrows():
+            period = str(row["period"])
+            value = str(row["category_value"])
+            if period not in period_values_map:
+                period_values_map[period] = set()
+            period_values_map[period].add(value)
+        return period_values_map
+
     def _build_frequency_proposal(
         self,
         distribution: pd.DataFrame,
@@ -491,7 +768,12 @@ class ProposalService:
         proposal: RuleProposal,
         new_baseline: BaselineStrategy,
     ) -> RuleProposal:
-        """Recalcula uma proposta com novos parâmetros de baseline."""
+        """Recalcula uma proposta com novos parâmetros de baseline.
+
+        Suporta todos os tipos de regra: numeric dual guard, percentile,
+        frequency (static/dynamic/hybrid). Static frequency não recalcula
+        (valores são fixos).
+        """
         values = proposal.history_values
         dates = proposal.history_dates
 
@@ -500,7 +782,17 @@ class ProposalService:
 
         margin_enabled = new_baseline.margin_enabled
 
-        # Recalcular banda
+        # Frequency modes
+        if proposal.rule_type in (
+            RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+            RuleType.CATEGORY_FREQUENCY_HYBRID,
+        ):
+            return self._recalculate_frequency(proposal, new_baseline)
+        elif proposal.rule_type == RuleType.CATEGORY_FREQUENCY_STATIC:
+            # Static: valores fixos, não recalcula
+            return proposal
+
+        # Numeric / percentile / row count dual guard
         try:
             sigma_band = compute_dynamic_band(
                 values, new_baseline.n_periods, new_baseline.n_sigma,
@@ -538,6 +830,64 @@ class ProposalService:
         proposal.warnings = score.warnings
 
         proposal.baseline_margin_pct = new_baseline.margin_pct
+
+        # Regenerar sintaxe
+        overrides = UserOverride(
+            custom_n_periods=new_baseline.n_periods,
+            custom_n_sigma=new_baseline.n_sigma,
+            custom_margin_pct=new_baseline.margin_pct,
+            margin_enabled=margin_enabled,
+        )
+        proposal.gdq_syntax_preview = self.generator.generate(proposal, overrides)
+
+        return proposal
+
+    def _recalculate_frequency(
+        self,
+        proposal: RuleProposal,
+        new_baseline: BaselineStrategy,
+    ) -> RuleProposal:
+        """Recalcula proposta de frequência (dynamic/hybrid)."""
+        pct_series = proposal.history_values
+        dates = proposal.history_dates
+        margin_enabled = new_baseline.margin_enabled
+
+        try:
+            band = compute_frequency_band(
+                pct_series,
+                new_baseline.n_periods,
+                margin_pct=new_baseline.margin_pct * 100,
+                n_sigma=new_baseline.n_sigma,
+            )
+        except ValueError:
+            return proposal
+
+        proposal.suggested_lower = round(band["lower"], 2)
+        proposal.suggested_upper = round(band["upper"], 2)
+        proposal.baseline_window = new_baseline.n_periods
+        proposal.baseline_n_sigma = new_baseline.n_sigma
+        proposal.baseline_method = new_baseline.method
+        proposal.baseline_margin_pct = new_baseline.margin_pct
+        proposal.margin_enabled = margin_enabled
+
+        # Backtest
+        proposal.backtest = backtest_frequency_dual_guard(
+            pct_series=pct_series,
+            dates=dates,
+            n_periods=new_baseline.n_periods,
+            n_sigma=new_baseline.n_sigma,
+            margin_pct=new_baseline.margin_pct,
+            buffer=0.01,
+            min_history=new_baseline.min_history_points,
+            margin_enabled=margin_enabled,
+            floor_pct=proposal.floor_pct if proposal.rule_type == RuleType.CATEGORY_FREQUENCY_HYBRID else None,
+            ceiling_pct=proposal.ceiling_pct if proposal.rule_type == RuleType.CATEGORY_FREQUENCY_HYBRID else None,
+        )
+
+        # Score
+        score = score_proposal(proposal, pct_series)
+        proposal.confidence = score.confidence
+        proposal.warnings = score.warnings
 
         # Regenerar sintaxe
         overrides = UserOverride(
@@ -633,10 +983,25 @@ class ProposalService:
         sigma_range: list[float] | None = None,
         margin_range: list[float] | None = None,
         min_coverage: float = 70.0,
-    ) -> dict:
+    ) -> AutoTuneResult:
         """Busca a melhor combinacao de N/sigma/margem via grid search.
 
-        Scoring melhorado: penaliza bandas largas, bonus sem drift, penaliza N baixo.
+        Avalia 5×5×4×2 = 200 combinacoes de (N, sigma, margem, margin_on).
+        Scoring composto: coverage - FP_penalty + stability_bonus
+        - width_penalty + drift_bonus - n_penalty.
+        Veja ADR-005 para detalhes da formula de scoring.
+
+        Args:
+            values: Serie temporal de valores.
+            dates: Datas correspondentes.
+            metric_kind: "numeric" ou "frequency".
+            n_range: Valores de N a testar.
+            sigma_range: Valores de sigma a testar.
+            margin_range: Valores de margem a testar.
+            min_coverage: Cobertura minima para considerar viavel.
+
+        Returns:
+            AutoTuneResult com melhor combinacao, confianca e recomendacao.
         """
         if n_range is None:
             n_range = [10, 15, 20, 30, 45]
@@ -707,7 +1072,6 @@ class ProposalService:
                             }
 
         if best is None:
-            from core.models.enums import ConfidenceLevel
             return {
                 "n_periods": 20, "n_sigma": 2.0, "margin_pct": 0.10,
                 "margin_enabled": True,
@@ -717,8 +1081,6 @@ class ProposalService:
                 "viable": False,
                 "recommendation": "Dados insuficientes para avaliar — nao recomendado.",
             }
-
-        from core.models.enums import ConfidenceLevel
 
         coverage = best["coverage_pct"]
         fp = best["false_positives"]

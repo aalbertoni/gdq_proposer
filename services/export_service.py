@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from core.models.enums import ConfidenceLevel, ExportOutputMode, RuleType
+from core.models.enums import ConfidenceLevel, ExportOutputMode, RuleType, get_rule_label
 from core.models.rule_proposal import RuleProposal
 from core.models.rule_selection import RuleSelection
 from core.rule_explainer import explain_rule, explain_rule_detail
@@ -24,10 +24,10 @@ class ExportResult:
 
     Attributes:
         rules_text: Texto concatenado das regras GDQ (uma por linha).
-        rules_count: Quantidade de regras exportadas.
+        rules_count: Quantidade de regras exportadas (apenas habilitadas).
         warnings: Avisos de sintaxe/consistencia detectados na validacao.
-        report: Relatorio analitico em markdown. Populado apenas quando
-            export_analytical_report() e chamado (modo ANALYTICAL_REPORT).
+        report: Relatorio analitico em markdown. Populado automaticamente
+            quando export() e chamado com mode=ExportOutputMode.ANALYTICAL_REPORT.
     """
 
     rules_text: str = ""
@@ -87,10 +87,12 @@ class ExportService:
                 stripped,
             )
             if match_quoted:
+                rule_name = match_quoted.group(1)
                 col_name = match_quoted.group(2)
                 warnings.append(
-                    f'Linha {i}: coluna com aspas — remova as aspas. '
-                    f'Correto: {match_quoted.group(1)} {col_name}'
+                    f'Linha {i}: coluna com aspas em {rule_name} — GDQ usa nomes sem aspas '
+                    f'para regras built-in. '
+                    f'Correto: `{rule_name} {col_name}` (sem aspas duplas)'
                 )
 
             # Funcoes dinamicas devem ser lowercase
@@ -98,8 +100,10 @@ class ExportService:
             if upper_match:
                 wrong = upper_match.group(1)
                 warnings.append(
-                    f"Linha {i}: funcao '{wrong}' deve ser lowercase. "
-                    f"Correto: {wrong.lower()}(last(N))"
+                    f"Linha {i}: funcao '{wrong}' deve ser lowercase — GDQ exige casing minusculo "
+                    f"para funcoes dinamicas. "
+                    f"Correto: `{wrong.lower()}(last(N))`. "
+                    f"Exemplo: `avg(last(30))`, `std(last(30))`"
                 )
 
             # CustomSql checks
@@ -108,13 +112,18 @@ class ExportService:
                 if stripped.count('"') % 2 != 0:
                     warnings.append(
                         f"Linha {i}: CustomSql com aspas duplas desbalanceadas — "
-                        f"verifique se abriu e fechou todas as aspas no SQL"
+                        f"verifique se abriu e fechou todas as aspas no SQL. "
+                        f'Exemplo correto: CustomSql "select ... from primary" between X and Y'
                     )
                 # 'from primary' presente
                 if "from primary" not in stripped.lower():
                     warnings.append(
-                        f"Linha {i}: CustomSql sem 'from primary'. "
-                        f'Correto: CustomSql "select ... from primary" between X and Y'
+                        f"Linha {i}: CustomSql sem 'from primary' — "
+                        f"toda regra CustomSql deve referenciar a tabela como 'primary'. "
+                        f"Exemplo correto: "
+                        f'CustomSql "select cast(sum(case when COL = \'VAL\' '
+                        f"then 1 else 0 end) as double) * 100.0 / count(*) "
+                        f'from primary" between X and Y'
                     )
 
             # Completeness com between (deve usar >=)
@@ -122,8 +131,9 @@ class ExportService:
                 comp_match = re.search(r'Completeness\s+(\S+)', stripped)
                 col_ref = comp_match.group(1) if comp_match else "COL"
                 warnings.append(
-                    f"Linha {i}: Completeness deve usar >=, nao between. "
-                    f"Correto: Completeness {col_ref} >= 1.00"
+                    f"Linha {i}: Completeness deve usar >=, nao between — "
+                    f"a regra define um limite minimo de preenchimento. "
+                    f"Correto: `Completeness {col_ref} >= 1.00`"
                 )
 
             # IsPrimaryKey com virgula (deve ser espaco)
@@ -131,8 +141,8 @@ class ExportService:
                 cols_part = stripped.split("IsPrimaryKey", 1)[1].strip()
                 fixed_cols = " ".join(c.strip() for c in cols_part.split(","))
                 warnings.append(
-                    f"Linha {i}: IsPrimaryKey — colunas separadas por espaco, nao virgula. "
-                    f"Correto: IsPrimaryKey {fixed_cols}"
+                    f"Linha {i}: IsPrimaryKey — colunas devem ser separadas por espaco, nao virgula. "
+                    f"Correto: `IsPrimaryKey {fixed_cols}`"
                 )
 
         return warnings
@@ -157,7 +167,7 @@ class ExportService:
             key = f"{p.rule_type.value}|{p.target_column or '(tabela)'}|{p.category_value or ''}"
             if key in seen:
                 target = p.target_column or "(tabela)"
-                label = p.rule_type.value.replace("_", " ").title()
+                label = get_rule_label(p.rule_type)
                 suffix = f" ({p.category_value})" if p.category_value else ""
                 warnings.append(
                     f"Regra duplicada: {label} — {target}{suffix} aparece mais de uma vez"
@@ -280,7 +290,7 @@ class ExportService:
         for idx, sel in enumerate(enabled, 1):
             p = sel.proposal
             target = p.target_column or "(tabela)"
-            rule_label = p.rule_type.value.replace("_", " ").title()
+            rule_label = get_rule_label(p.rule_type)
             confidence_map = {
                 ConfidenceLevel.HIGH: "ALTA",
                 ConfidenceLevel.MEDIUM: "MEDIA",

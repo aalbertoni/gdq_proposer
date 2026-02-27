@@ -9,7 +9,7 @@ Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2).
 
 import streamlit as st
 
-from core.models.enums import ConfidenceLevel
+from core.models.enums import ConfidenceLevel, get_rule_label
 from core.rule_explainer import explain_rule, explain_rule_detail
 from services.export_service import ExportService
 
@@ -72,7 +72,7 @@ for i, selection in enumerate(cart):
         selection.enabled = enabled
 
     with col2:
-        label = p.rule_type.value.replace("_", " ").title()
+        label = get_rule_label(p.rule_type)
         target = p.target_column or "(tabela)"
         st.markdown(f"**{label}** — `{target}`")
         if p.backtest:
@@ -152,7 +152,7 @@ if result.rules_text:
         for j, sel in enumerate(enabled_sels):
             p = sel.proposal
             target = p.target_column or "(tabela)"
-            rule_label = p.rule_type.value.replace("_", " ").title()
+            rule_label = get_rule_label(p.rule_type)
             st.markdown(f"**{j + 1}. {rule_label}** — `{target}`")
             st.markdown(explain_rule(p))
             if j < len(enabled_sels) - 1:
@@ -211,8 +211,13 @@ if result.rules_text:
         file_name="gdq_analytical_report.md",
         mime="text/markdown",
         disabled=not result.rules_text,
-        help="Relatorio markdown com evidencia estatistica, racional de cada regra, "
-             "sintaxe GDQ gerada, alertas e recomendacoes.",
+        help="Relatorio analitico markdown com: "
+             "evidencia estatistica (cobertura, estabilidade, drift), "
+             "racional de cada regra em linguagem natural, "
+             "sintaxe GDQ completa com parametros aplicados, "
+             "avisos e recomendacoes de ajuste, "
+             "e resumo executivo por nivel de confianca. "
+             "Ideal para documentacao interna e aprovacao tecnica antes do cadastro no GDQ.",
     )
 else:
     st.info("Habilite ao menos uma regra para gerar o relatorio.")

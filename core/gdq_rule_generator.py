@@ -62,6 +62,8 @@ class GDQRuleGenerator:
             return self._generate_distinct_count_range(proposal, overrides)
         elif proposal.rule_type == RuleType.NUMERIC_PERCENTILE_BAND:
             return self._generate_percentile_custom_sql(proposal, overrides)
+        elif proposal.rule_type == RuleType.UNIQUENESS_CUSTOM_SQL:
+            return self._generate_uniqueness_custom_sql(proposal)
         else:
             raise ValueError(f"Tipo de regra não suportado: {proposal.rule_type}")
 
@@ -149,16 +151,17 @@ class GDQRuleGenerator:
                 lower = overrides.custom_lower
             if overrides.custom_upper is not None:
                 upper = overrides.custom_upper
-        sql_inner = (
-            f"select cast(sum(case when {col} = '{value}' "
-            f"then 1 else 0 end) as double) * 100.0 / count(*) from primary"
-        )
+        sql_inner = self._build_custom_sql_expression(col, value)
         return f'CustomSql "{sql_inner}" between {lower:.2f} and {upper:.2f}'
 
     def _build_custom_sql_expression(self, col: str, value: str) -> str:
-        """Constrói a expressão SQL interna do CustomSql frequency."""
+        """Constrói a expressão SQL interna do CustomSql frequency.
+
+        Coluna é quoted com aspas duplas para compatibilidade com palavras
+        reservadas SQL (ex: ORDER, DATE, GROUP).
+        """
         return (
-            f"select cast(sum(case when {col} = '{value}' "
+            f'select cast(sum(case when "{col}" = \'{value}\' '
             f"then 1 else 0 end) as double) * 100.0 / count(*) from primary"
         )
 
@@ -259,6 +262,40 @@ class GDQRuleGenerator:
             f"(DistinctValuesCount {col} <= {upper})"
         )
 
+    def _generate_uniqueness_custom_sql(
+        self,
+        proposal: RuleProposal,
+    ) -> str:
+        """CustomSql uniqueness check: COUNT(DISTINCT ...) / COUNT(*) >= 100%.
+
+        Para coluna unica, gera:
+            CustomSql "select cast(count(distinct cast(\"COL\" as varchar))
+            as double) * 100.0 / count(*) from primary" >= 100.0
+
+        Para chave composta, usa concat com separador '||':
+            CustomSql "select cast(count(distinct concat(cast(\"COL1\" as varchar),
+            '||', cast(\"COL2\" as varchar))) as double) * 100.0 / count(*)
+            from primary" >= 100.0
+        """
+        cols = proposal.suggested_values or []
+        if not cols:
+            raise ValueError("UNIQUENESS_CUSTOM_SQL requires suggested_values with column names")
+
+        if len(cols) == 1:
+            distinct_expr = f'cast(\\"{cols[0]}\\" as varchar)'
+        else:
+            # concat(cast("COL1" as varchar), '||', cast("COL2" as varchar), ...)
+            parts = []
+            for col in cols:
+                parts.append(f'cast(\\"{col}\\" as varchar)')
+            distinct_expr = "concat(" + ", '||', ".join(parts) + ")"
+
+        sql_expr = (
+            f'select cast(count(distinct {distinct_expr}) '
+            f'as double) * 100.0 / count(*) from primary'
+        )
+        return f'CustomSql "{sql_expr}" >= 100.0'
+
     def _generate_percentile_custom_sql(
         self,
         proposal: RuleProposal,
@@ -283,7 +320,7 @@ class GDQRuleGenerator:
                 margin_enabled = overrides.margin_enabled
 
         sql_expr = (
-            f"select approx_percentile(cast({col} as double), {pct_value}) from primary"
+            f'select approx_percentile(cast("{col}" as double), {pct_value}) from primary'
         )
 
         spec = DualGuardSpec(

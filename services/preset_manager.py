@@ -39,6 +39,7 @@ class Preset:
     date_expression: Optional[str] = None
     base_filter_sql: Optional[str] = None
     selected_columns: list[str] = field(default_factory=list)
+    unique_key_columns: list[str] = field(default_factory=list)
     overrides: dict[str, str] = field(default_factory=dict)
     date_range: dict = field(default_factory=dict)
     metadata: PresetMetadata = field(default_factory=PresetMetadata)
@@ -121,6 +122,7 @@ class PresetManager:
             "schema", "table", "partition_method", "partition_column",
             "date_column", "grain_type", "lookback_mode", "lookback_value",
             "date_expression", "base_filter_sql", "selected_columns",
+            "unique_key_columns",
         ]
 
         for f in compare_fields:
