@@ -237,7 +237,12 @@ class ProfilingService:
                     non_null_count=non_null,
                 )
                 if suggested is not None:
-                    warnings.append(warning_msg)
+                    semantic_type = suggested
+                    warnings.append(
+                        f"Reclassificado automaticamente: {warning_msg} "
+                        f"Tipo alterado para **{semantic_type.value}**. "
+                        f"Altere manualmente se necessario."
+                    )
 
                 null_ratio = (total_count - non_null) / total_count if total_count > 0 else 0.0
                 distinct_ratio = distinct / non_null if non_null > 0 else 0.0
@@ -322,7 +327,12 @@ class ProfilingService:
                         non_null_count=non_null_count,
                     )
                     if suggested is not None:
-                        warnings.append(warning_msg)
+                        semantic_type = suggested
+                        warnings.append(
+                            f"Reclassificado automaticamente: {warning_msg} "
+                            f"Tipo alterado para **{semantic_type.value}**. "
+                            f"Altere manualmente se necessario."
+                        )
             except Exception:
                 pass  # fallback: classificar como NUMERIC sem guardrail
 

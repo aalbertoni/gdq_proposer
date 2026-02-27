@@ -1067,6 +1067,75 @@ with tab_categoricas:
                     "Regras de valores permitidos e frequencia nao sao recomendadas."
                 )
 
+            # ---- Category Frequency (individual per value with charts) ----
+            freq_types = {
+                RuleType.CATEGORY_FREQUENCY_STATIC,
+                RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+                RuleType.CATEGORY_FREQUENCY_HYBRID,
+            }
+            freq_proposals = [
+                p for p in cat_proposals
+                if p.rule_type in freq_types
+            ]
+            if freq_proposals:
+                mode_labels = {
+                    "static": "Estatico",
+                    "dynamic": "Dinamico",
+                    "hybrid": "Hibrido",
+                }
+                mode_label = mode_labels.get(cat_freq_mode, cat_freq_mode)
+                st.subheader(f"Frequencia por Valor ({mode_label})")
+
+                st.caption(
+                    f"Top {len(freq_proposals)} valores por frequencia. "
+                    f"Cada valor tem grafico individual e pode ter modo diferente."
+                )
+
+                for fp in freq_proposals:
+                    cat_val = fp.category_value
+                    cov_str = f"{fp.backtest.coverage_pct:.0f}%" if fp.backtest else "N/A"
+                    conf_str = _confidence_badge(fp.confidence)
+
+                    with st.expander(
+                        f"**{cat_val}** -- faixa: {fp.suggested_lower:.1f}% a {fp.suggested_upper:.1f}% "
+                        f"| Cobertura: {cov_str} | {conf_str}",
+                        expanded=False,
+                    ):
+                        # Individual rolling chart
+                        if fp.history_values and fp.history_dates:
+                            margin_pct_chart = cat_margin_pct / 100.0
+                            _render_rolling_chart(
+                                fp.history_values, fp.history_dates,
+                                cat_n_periods, cat_n_sigma, margin_pct_chart,
+                                f"Freq % ({cat_val})",
+                                margin_enabled=cat_freq_mode != "static",
+                            )
+
+                        _render_backtest_metrics(fp)
+                        _render_add_to_cart(
+                            fp, f"Freq({cat_val})",
+                            f"freq_{selected_cat_col}_{cat_val}",
+                        )
+
+                if len(freq_proposals) > 1:
+                    # Bulk add button
+                    existing_ids = {s.proposal_id for s in st.session_state["rule_cart"]}
+                    not_in_cart = [p for p in freq_proposals if p.id not in existing_ids]
+                    if not_in_cart and st.button(
+                        f"Adicionar todas {len(not_in_cart)} frequencias ao carrinho",
+                        key=f"freq_bulk_{selected_cat_col}",
+                    ):
+                        for fp in not_in_cart:
+                            from core.models.rule_selection import RuleSelection as RS
+                            st.session_state["rule_cart"].append(RS(
+                                proposal_id=fp.id,
+                                proposal=fp,
+                                final_gdq_syntax=fp.gdq_syntax_preview,
+                            ))
+                        st.rerun()
+
+                st.divider()
+
             # ---- AllowedValues (CAT_LOW) ----
             av_proposals = [p for p in cat_proposals if p.rule_type == RuleType.ALLOWED_VALUES]
             if av_proposals:
@@ -1186,75 +1255,6 @@ with tab_categoricas:
                     proposal, "DistinctValuesCount",
                     f"dc_{selected_cat_col}",
                 )
-                st.divider()
-
-            # ---- Category Frequency (individual per value with charts) ----
-            freq_types = {
-                RuleType.CATEGORY_FREQUENCY_STATIC,
-                RuleType.CATEGORY_FREQUENCY_DYNAMIC,
-                RuleType.CATEGORY_FREQUENCY_HYBRID,
-            }
-            freq_proposals = [
-                p for p in cat_proposals
-                if p.rule_type in freq_types
-            ]
-            if freq_proposals:
-                mode_labels = {
-                    "static": "Estatico",
-                    "dynamic": "Dinamico",
-                    "hybrid": "Hibrido",
-                }
-                mode_label = mode_labels.get(cat_freq_mode, cat_freq_mode)
-                st.subheader(f"Frequencia por Valor ({mode_label})")
-
-                st.caption(
-                    f"Top {len(freq_proposals)} valores por frequencia. "
-                    f"Cada valor tem grafico individual e pode ter modo diferente."
-                )
-
-                for fp in freq_proposals:
-                    cat_val = fp.category_value
-                    cov_str = f"{fp.backtest.coverage_pct:.0f}%" if fp.backtest else "N/A"
-                    conf_str = _confidence_badge(fp.confidence)
-
-                    with st.expander(
-                        f"**{cat_val}** -- faixa: {fp.suggested_lower:.1f}% a {fp.suggested_upper:.1f}% "
-                        f"| Cobertura: {cov_str} | {conf_str}",
-                        expanded=False,
-                    ):
-                        # Individual rolling chart
-                        if fp.history_values and fp.history_dates:
-                            margin_pct_chart = cat_margin_pct / 100.0
-                            _render_rolling_chart(
-                                fp.history_values, fp.history_dates,
-                                cat_n_periods, cat_n_sigma, margin_pct_chart,
-                                f"Freq % ({cat_val})",
-                                margin_enabled=cat_freq_mode != "static",
-                            )
-
-                        _render_backtest_metrics(fp)
-                        _render_add_to_cart(
-                            fp, f"Freq({cat_val})",
-                            f"freq_{selected_cat_col}_{cat_val}",
-                        )
-
-                if len(freq_proposals) > 1:
-                    # Bulk add button
-                    existing_ids = {s.proposal_id for s in st.session_state["rule_cart"]}
-                    not_in_cart = [p for p in freq_proposals if p.id not in existing_ids]
-                    if not_in_cart and st.button(
-                        f"Adicionar todas {len(not_in_cart)} frequencias ao carrinho",
-                        key=f"freq_bulk_{selected_cat_col}",
-                    ):
-                        for fp in not_in_cart:
-                            from core.models.rule_selection import RuleSelection as RS
-                            st.session_state["rule_cart"].append(RS(
-                                proposal_id=fp.id,
-                                proposal=fp,
-                                final_gdq_syntax=fp.gdq_syntax_preview,
-                            ))
-                        st.rerun()
-
                 st.divider()
 
             # ---- Completeness ----
