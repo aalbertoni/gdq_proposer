@@ -26,6 +26,18 @@ class QueryLogEntry:
     exception_type: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    @property
+    def estimated_cost_usd(self) -> float:
+        """Custo estimado desta query: $5 per TB scanned.
+
+        Athena has a 10MB minimum charge per query.
+        """
+        if self.bytes_scanned is None or self.bytes_scanned == 0:
+            return 0.0
+        ATHENA_MIN_BYTES = 10 * 1024 * 1024  # 10MB minimum per query
+        billable = max(self.bytes_scanned, ATHENA_MIN_BYTES)
+        return (billable / (1024 ** 4)) * 5.0
+
 
 class QueryLogger:
     """Logger estruturado para queries Athena.
@@ -43,16 +55,27 @@ class QueryLogger:
         """Registra uma query executada."""
         self.entries.append(entry)
         level = logging.WARNING if entry.exception_type else logging.INFO
+
+        # Build optional suffixes
+        suffixes = []
+        if entry.bytes_scanned is not None and entry.bytes_scanned > 0:
+            mb = entry.bytes_scanned / (1024 ** 2)
+            suffixes.append(f"scanned={mb:.2f}MB")
+            suffixes.append(f"cost=${entry.estimated_cost_usd:.6f}")
+        if entry.exception_type:
+            suffixes.append(f"ERROR={entry.exception_type}")
+        suffix_str = (", " + ", ".join(suffixes)) if suffixes else ""
+
         self.logger.log(
             level,
-            "[%s] %s.%s → %d rows, %dms, cache=%s%s",
+            "[%s] %s.%s -> %d rows, %dms, cache=%s%s",
             entry.query_name,
             entry.dataset,
             entry.column or "*",
             entry.rows_returned,
             entry.elapsed_ms,
             "HIT" if entry.cache_hit else "MISS",
-            f", ERROR={entry.exception_type}" if entry.exception_type else "",
+            suffix_str,
         )
 
     def get_session_summary(self) -> dict:
@@ -90,11 +113,19 @@ class QueryLogger:
         }
 
     def export_json(self) -> str:
-        """Exporta log da sessao como JSON (summary + entries)."""
+        """Exporta log da sessao como JSON (summary + entries).
+
+        Each entry includes ``estimated_cost_usd`` computed from bytes_scanned.
+        """
+        entries = []
+        for e in self.entries:
+            d = asdict(e)
+            d["estimated_cost_usd"] = e.estimated_cost_usd
+            entries.append(d)
         return json.dumps(
             {
                 "summary": self.get_session_summary(),
-                "entries": [asdict(e) for e in self.entries],
+                "entries": entries,
             },
             indent=2,
             ensure_ascii=False,

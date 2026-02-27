@@ -4,10 +4,17 @@ Configuração da tabela alvo para análise.
 Definido conforme docs/technical_spec_v1.md seção 3.1.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
 from core.models.enums import GrainType, LookbackMode, PartitionMethod
+
+logger = logging.getLogger(__name__)
+
+# Maximum lookback value allowed (in periods or days).
+# Higher values cause expensive Athena queries (full-table scans over long ranges).
+MAX_LOOKBACK_VALUE = 365
 
 
 @dataclass
@@ -66,6 +73,29 @@ class DatasetConfig:
     # === Colunas selecionadas ===
     selected_columns: list[str] = field(default_factory=list)
     unique_key_columns: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        """Validate and cap lookback_value at MAX_LOOKBACK_VALUE.
+
+        If the user provides a lookback_value exceeding the maximum, it is
+        silently capped and a warning is logged.  This prevents runaway
+        Athena queries that scan excessive time ranges.
+        """
+        if self.lookback_value > MAX_LOOKBACK_VALUE:
+            logger.warning(
+                "lookback_value %d exceeds maximum %d — capping to %d",
+                self.lookback_value,
+                MAX_LOOKBACK_VALUE,
+                MAX_LOOKBACK_VALUE,
+            )
+            self.lookback_value = MAX_LOOKBACK_VALUE
+
+        if self.lookback_value < 1:
+            logger.warning(
+                "lookback_value %d is below minimum 1 — setting to 1",
+                self.lookback_value,
+            )
+            self.lookback_value = 1
 
     @property
     def effective_temporal_axis(self) -> str:

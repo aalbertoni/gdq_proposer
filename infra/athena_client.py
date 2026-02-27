@@ -3,8 +3,10 @@ Client unificado que funciona com DuckDB (local) ou Athena real (dev/prod).
 A interface é idêntica — só muda o backend.
 """
 
+import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional
 
 import pandas as pd
@@ -13,6 +15,8 @@ from config import AppConfig, AthenaMode
 from infra.mock_athena import MockAthenaBackend
 from infra.query_logger import QueryLogger, QueryLogEntry
 from infra.sql_dialect import SQLDialect
+
+logger = logging.getLogger(__name__)
 
 
 class AthenaClient:
@@ -23,11 +27,12 @@ class AthenaClient:
         df = client.execute_df("SELECT COUNT(*) FROM tabela")
     """
 
-    def __init__(self, config: AppConfig, logger: Optional[QueryLogger] = None):
+    def __init__(self, config: AppConfig, query_logger: Optional[QueryLogger] = None):
         self.config = config
-        self.logger = logger or QueryLogger()
+        self.logger = query_logger or QueryLogger()
         self._backend: Optional[MockAthenaBackend] = None
         self._conn = None  # pyathena connection (modo real)
+        self._query_timeout: int = config.athena.query_timeout_seconds
 
         if config.athena.mode == AthenaMode.MOCK:
             self.dialect = SQLDialect.DUCKDB
@@ -80,21 +85,18 @@ class AthenaClient:
         dataset: str = "",
         column: str = "",
     ) -> pd.DataFrame:
-        """Executa query e retorna DataFrame. Loga métricas."""
+        """Executa query e retorna DataFrame. Loga metricas."""
         start = time.time()
         rows = 0
         exception_type = None
-
-        bytes_scanned = None
+        bytes_scanned: Optional[int] = 0 if self.config.athena.mode == AthenaMode.MOCK else None
+        cache_hit = False
 
         try:
             if self.config.athena.mode == AthenaMode.MOCK:
                 df = self._backend.execute_df(sql)
             else:
-                cursor = self._conn.cursor()
-                cursor.execute(sql)
-                df = cursor.as_pandas()
-                bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
+                df, bytes_scanned, cache_hit = self._execute_real_df(sql)
 
             rows = len(df)
             return df
@@ -110,21 +112,131 @@ class AthenaClient:
                 dataset=dataset,
                 column=column,
                 elapsed_ms=elapsed,
-                cache_hit=False,
+                cache_hit=cache_hit,
                 rows_returned=rows,
                 bytes_scanned=bytes_scanned,
                 exception_type=exception_type,
             ))
 
-    def execute(self, sql: str) -> list[dict]:
-        """Executa query e retorna lista de dicts."""
-        if self.config.athena.mode == AthenaMode.MOCK:
-            return self._backend.execute(sql)
-        else:
-            cursor = self._conn.cursor()
+    def _execute_real_df(self, sql: str) -> tuple[pd.DataFrame, Optional[int], bool]:
+        """Execute query on real Athena with timeout enforcement.
+
+        Uses a thread pool to run the query and enforces the configured
+        ``query_timeout_seconds``.  On timeout, attempts to cancel the
+        running Athena query to avoid unnecessary cost.
+
+        Args:
+            sql: SQL statement to execute.
+
+        Returns:
+            Tuple of (DataFrame, bytes_scanned, cache_hit) where:
+            - bytes_scanned: Number of bytes scanned by Athena (None if unavailable).
+            - cache_hit: True if Athena reused a previous result (result_reuse_enable).
+
+        Raises:
+            TimeoutError: If the query exceeds ``query_timeout_seconds``.
+        """
+        cursor = self._conn.cursor()
+
+        def _run():
             cursor.execute(sql)
-            columns = [desc[0] for desc in cursor.description]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            df = cursor.as_pandas()
+            bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
+            cache_hit = bool(getattr(cursor, "reused_previous_result", False))
+            return df, bytes_scanned, cache_hit
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_run)
+            try:
+                return future.result(timeout=self._query_timeout)
+            except FuturesTimeoutError:
+                # Attempt to cancel the Athena query to save cost
+                try:
+                    cursor.cancel()
+                    logger.warning(
+                        "Query cancelled after %ds timeout", self._query_timeout,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Query timed out after %ds but cancel failed",
+                        self._query_timeout,
+                    )
+                raise TimeoutError(
+                    f"Query exceeded timeout of {self._query_timeout}s. "
+                    f"Consider reducing the lookback period or simplifying the query."
+                )
+
+    def execute(
+        self,
+        sql: str,
+        query_name: str = "unnamed",
+        dataset: str = "",
+        column: str = "",
+    ) -> list[dict]:
+        """Executa query e retorna lista de dicts. Loga metricas.
+
+        Args:
+            sql: SQL statement to execute.
+            query_name: Identificador da query para logging (ex: "table_exists").
+            dataset: schema.table para logging.
+            column: Coluna analisada (vazio para queries de tabela).
+
+        Returns:
+            Lista de dicts, um por linha retornada.
+        """
+        start = time.time()
+        rows = 0
+        exception_type = None
+        bytes_scanned: Optional[int] = 0 if self.config.athena.mode == AthenaMode.MOCK else None
+        cache_hit = False
+
+        try:
+            if self.config.athena.mode == AthenaMode.MOCK:
+                result = self._backend.execute(sql)
+            else:
+                cursor = self._conn.cursor()
+
+                def _run():
+                    cursor.execute(sql)
+                    return cursor
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(_run)
+                    try:
+                        cursor = future.result(timeout=self._query_timeout)
+                    except FuturesTimeoutError:
+                        try:
+                            cursor.cancel()
+                        except Exception:
+                            pass
+                        raise TimeoutError(
+                            f"Query exceeded timeout of {self._query_timeout}s."
+                        )
+
+                bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
+                cache_hit = bool(getattr(cursor, "reused_previous_result", False))
+                columns = [desc[0] for desc in cursor.description]
+                result = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            rows = len(result)
+            return result
+
+        except Exception as e:
+            exception_type = type(e).__name__
+            raise
+
+        finally:
+            elapsed = int((time.time() - start) * 1000)
+            self.logger.log_query(QueryLogEntry(
+                query_name=query_name,
+                dataset=dataset,
+                column=column,
+                elapsed_ms=elapsed,
+                cache_hit=cache_hit,
+                rows_returned=rows,
+                bytes_scanned=bytes_scanned,
+                exception_type=exception_type,
+            ))
 
     def table_exists(self, schema: str, table: str) -> bool:
         """Verifica se a tabela existe."""
@@ -132,7 +244,11 @@ class AthenaClient:
             return self._backend.table_exists(table)
         else:
             try:
-                self.execute(f'SELECT 1 FROM "{schema}"."{table}" LIMIT 1')
+                self.execute(
+                    f'SELECT 1 FROM "{schema}"."{table}" LIMIT 1',
+                    query_name="table_exists",
+                    dataset=f"{schema}.{table}",
+                )
                 return True
             except Exception:
                 return False

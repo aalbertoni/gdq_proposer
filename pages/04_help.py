@@ -245,37 +245,54 @@ with st.expander("Drift (tendencia)"):
     )
 
 with st.expander("Tipos de regra"):
-    st.markdown("**Regras de coluna numerica:**")
+    st.markdown("**Regras de coluna numerica (dinamicas):**")
     st.markdown(
         "- **Mean (media):** verifica se a media da coluna esta dentro da banda "
         "esperada. Detecta mudancas no nivel dos dados (ex: valores sistematicamente "
-        "maiores ou menores que o normal).\n"
+        "maiores ou menores que o normal). Usa dual guard com `avg(last(N))` e `std(last(N))`.\n"
         "- **StdDev (desvio padrao):** verifica se o desvio padrao da coluna "
         "esta dentro do esperado. Detecta mudancas na dispersao (ex: dados "
-        "ficaram muito mais volateis ou muito mais homogeneos).\n"
-        "- **Completeness (completude):** verifica se a porcentagem de valores "
-        "nao-nulos esta acima de um limite. Util para colunas que devem "
-        "estar sempre preenchidas."
+        "ficaram muito mais volateis ou muito mais homogeneos). Mesmo padrao dual guard.\n"
+        "- **Percentil (analise):** analisa a distribuicao via percentis P5 e P95 "
+        "para identificar caudas extremas. Usado como insumo de analise para "
+        "calibrar outras regras."
     )
     st.markdown("**Regras de coluna categorica:**")
     st.markdown(
         "- **AllowedValues (valores permitidos):** verifica se todos os valores "
         "da coluna pertencem a uma lista fixa. Qualquer valor fora da lista "
-        "reprova a regra. Util para colunas com dominio estavel (ex: UF, status).\n"
+        "reprova a regra. Util para colunas com dominio estavel (ex: UF, status). "
+        "Regra estatica.\n"
         "- **DistinctValuesCount (distintos):** verifica se o numero de valores "
         "distintos esta correto (exato ou dentro de um range). Detecta se valores "
-        "sumiram ou apareceram.\n"
-        "- **Frequencia de categoria (CustomSql):** verifica se a proporcao de "
-        "cada valor esta dentro de uma faixa esperada. Detecta mudancas na "
-        "distribuicao dos dados (ex: um valor que era 30% passou a ser 10%).\n"
-        "- **IsPrimaryKey (chave primaria):** verifica se uma combinacao de "
-        "colunas nao tem duplicatas. Util para validar integridade referencial."
+        "sumiram ou apareceram. Regra estatica.\n"
+        "- **Frequencia estatica (CustomSql):** verifica se a proporcao de "
+        "cada valor esta dentro de uma faixa fixa (between X and Y). "
+        "Calculada com base no historico, mas nao se auto-ajusta.\n"
+        "- **Frequencia dinamica (CustomSql):** como a estatica, mas usa "
+        "`avg(last(N))` e `std(last(N))` para auto-ajustar os limites "
+        "a cada execucao. Ideal para distribuicoes que mudam gradualmente.\n"
+        "- **Frequencia hibrida (CustomSql):** combina modo dinamico com "
+        "floor/ceiling absolutos. O dual guard se auto-ajusta, mas o resultado "
+        "e validado AND com limites fixos de negocio."
     )
-    st.markdown("**Regras de tabela:**")
+    st.markdown("**Regras de tabela e chave:**")
     st.markdown(
         "- **RowCount (volume):** verifica se a quantidade de linhas por periodo "
         "esta dentro do esperado. Detecta cargas com volume anomalo "
-        "(muito acima ou muito abaixo do normal)."
+        "(muito acima ou muito abaixo do normal). Dinamica com dual guard.\n"
+        "- **IsPrimaryKey (chave primaria):** verifica se uma combinacao de "
+        "colunas nao tem duplicatas. Util para validar integridade referencial. "
+        "Regra estatica.\n"
+        "- **Unicidade (CustomSql):** verifica que o COUNT(DISTINCT) de uma "
+        "coluna e 100% dos registros. Util para colunas que devem ser unicas "
+        "individualmente."
+    )
+    st.markdown("**Regra geral:**")
+    st.markdown(
+        "- **Completeness (completude):** verifica se a porcentagem de valores "
+        "nao-nulos esta acima de um limite. Aplica-se a qualquer tipo de coluna. "
+        "Util para colunas que devem estar sempre preenchidas. Regra estatica."
     )
 
 with st.expander("Classificacao de colunas (profiling)"):
@@ -623,10 +640,230 @@ with st.expander("Como exportar"):
 
 
 # =====================================================================
-# 7. Perguntas Frequentes
+# 7. Referencia Rapida — Sintaxe GDQ
 # =====================================================================
 
-st.header("7. Perguntas Frequentes")
+st.header("7. Referencia Rapida — Sintaxe GDQ")
+
+st.markdown(
+    "Esta secao lista a sintaxe exata de cada tipo de regra gerada pela ferramenta. "
+    "Use como referencia ao revisar ou debugar regras exportadas."
+)
+
+st.caption(
+    "Convencoes: nomes de coluna SEM aspas e em UPPERCASE. "
+    "Nomes de regra em CamelCase. Funcoes dinamicas em lowercase."
+)
+
+with st.expander("Mean (coluna numerica — dual guard dinamico)"):
+    st.markdown(
+        "Verifica se a **media** da coluna esta dentro da banda esperada. "
+        "Usa dual guard: banda sigma OR banda margem, com buffer 0.01."
+    )
+    st.code(
+        "(((Mean VLR_SALDO >= (avg(last(30)) - (2 * std(last(30))) - 0.01)) "
+        "AND (Mean VLR_SALDO <= (avg(last(30)) + (2 * std(last(30))) + 0.01))) "
+        "OR ((Mean VLR_SALDO >= (avg(last(30)) * 0.9) - 0.01) "
+        "AND (Mean VLR_SALDO <= (avg(last(30)) * 1.1) + 0.01)))",
+        language=None,
+    )
+    st.caption(
+        "Parametros: N=30 (lookback), K=2 (sigma), Margem=10%, Buffer=0.01"
+    )
+
+with st.expander("StandardDeviation (coluna numerica — dual guard dinamico)"):
+    st.markdown(
+        "Verifica se o **desvio padrao** da coluna esta dentro do esperado. "
+        "Mesmo padrao do Mean, troca apenas o nome da regra."
+    )
+    st.code(
+        "(((StandardDeviation VLR_PARC >= (avg(last(30)) - (2 * std(last(30))) - 0.01)) "
+        "AND (StandardDeviation VLR_PARC <= (avg(last(30)) + (2 * std(last(30))) + 0.01))) "
+        "OR ((StandardDeviation VLR_PARC >= (avg(last(30)) * 0.9) - 0.01) "
+        "AND (StandardDeviation VLR_PARC <= (avg(last(30)) * 1.1) + 0.01)))",
+        language=None,
+    )
+    st.caption(
+        "As funcoes avg/std dentro de StandardDeviation referem-se a media "
+        "e desvio padrao historicos do proprio desvio padrao (nao da coluna)."
+    )
+
+with st.expander("RowCount (tabela — dual guard dinamico, sem buffer)"):
+    st.markdown(
+        "Verifica se a **quantidade de linhas** esta dentro do esperado. "
+        "Sem buffer, K como float (2.0), formato de margem diferente."
+    )
+    st.code(
+        "(((RowCount >= (avg(last(30)) * 1.0 - (2.0 * std(last(30))))) "
+        "AND (RowCount <= (avg(last(30)) * 1.0 + (2.0 * std(last(30)))))) "
+        "OR ((RowCount >= (avg(last(30)) - (avg(last(30)) * 0.1))) "
+        "AND (RowCount <= (avg(last(30)) + (avg(last(30)) * 0.1)))))",
+        language=None,
+    )
+    col_rc1, col_rc2, col_rc3 = st.columns(3)
+    with col_rc1:
+        st.caption("K usa float: `2.0`")
+    with col_rc2:
+        st.caption("Sem buffer (0)")
+    with col_rc3:
+        st.caption("Margem: `avg - (avg * 0.1)`")
+
+with st.expander("Completeness (qualquer coluna — estatico)"):
+    st.markdown(
+        "Verifica a porcentagem de valores **nao-nulos**. "
+        "Usa `>=`, nunca `between`. Threshold em decimal (1.00 = 100%)."
+    )
+    st.code(
+        "Completeness VLR_SALDO >= 1.00",
+        language=None,
+    )
+
+with st.expander("ColumnValues (categorica — estatico)"):
+    st.markdown(
+        "Verifica se todos os valores pertencem a uma **lista fixa**. "
+        "Sem aspas em valores numericos. Ordem nao importa."
+    )
+    st.code(
+        "ColumnValues COD_SITU_OPCR in [2, 1, 3]",
+        language=None,
+    )
+
+with st.expander("DistinctValuesCount (categorica — estatico)"):
+    st.markdown(
+        "Verifica o **numero de valores distintos**. "
+        "Pode ser exato (`= N`) ou range (`between X and Y`)."
+    )
+    st.code(
+        "DistinctValuesCount COD_SITU_OPCR = 3",
+        language=None,
+    )
+    st.code(
+        "DistinctValuesCount COD_CIDADE between 180 and 220",
+        language=None,
+    )
+
+with st.expander("CustomSql — Frequencia estatica (categorica)"):
+    st.markdown(
+        "Verifica se a **proporcao** de um valor esta entre limites fixos. "
+        "Resultado em percentual 0-100. Uma regra por valor monitorado."
+    )
+    st.code(
+        'CustomSql "select cast(sum(case when COD_SITU_OPCR = \'1\' then 1 '
+        'else 0 end) as double) * 100.0 / count(*) from primary" '
+        'between 85.61 and 97.66',
+        language=None,
+    )
+    st.caption(
+        "SQL entre aspas duplas. Valores string com aspas simples. "
+        "`from primary` referencia a tabela sendo avaliada."
+    )
+
+with st.expander("CustomSql — Frequencia dinamica (categorica)"):
+    st.markdown(
+        "Versao dinamica da frequencia. Usa `avg(last(N))` e `std(last(N))` "
+        "com dual guard (sigma OR margem), igual ao Mean."
+    )
+    st.code(
+        '(((CustomSql "select cast(sum(case when "COD_SITU" = \'1\' then 1 '
+        'else 0 end) as double) * 100.0 / count(*) from primary" '
+        '>= (avg(last(30)) - (2 * std(last(30))) - 0.01)) '
+        'AND (CustomSql "..." <= (avg(last(30)) + (2 * std(last(30))) + 0.01))) '
+        'OR ((CustomSql "..." >= (avg(last(30)) * 0.9) - 0.01) '
+        'AND (CustomSql "..." <= (avg(last(30)) * 1.1) + 0.01)))',
+        language=None,
+    )
+    st.caption(
+        "Exemplo simplificado — na sintaxe real, o SQL completo e repetido "
+        "em cada comparacao (>=, <=)."
+    )
+
+with st.expander("CustomSql — Frequencia hibrida (categorica)"):
+    st.markdown(
+        "Igual a dinamica, mas com floor e ceiling absolutos. "
+        "Dual guard AND entre floor e ceiling."
+    )
+    st.code(
+        '((DUAL_GUARD_EXPRESSION) AND (CustomSql "select ... from primary" '
+        'between 5.0 and 50.0))',
+        language=None,
+    )
+    st.caption(
+        "DUAL_GUARD_EXPRESSION e a mesma expressao da frequencia dinamica. "
+        "Floor=5.0% e ceiling=50.0% sao limites absolutos de negocio."
+    )
+
+with st.expander("IsPrimaryKey (chave primaria — estatico)"):
+    st.markdown(
+        "Valida **unicidade** de uma combinacao de colunas. "
+        "Colunas separadas por espaco (nao virgula). Sem aspas."
+    )
+    st.code(
+        "IsPrimaryKey NUM_CTRT COD_PRODUTO DT_REF",
+        language=None,
+    )
+
+
+# =====================================================================
+# 8. Perguntas Frequentes
+# =====================================================================
+
+st.header("8. Perguntas Frequentes")
+
+with st.expander("Como escolher N (lookback)?"):
+    st.markdown(
+        "O N define quantos periodos recentes sao usados para calcular media e "
+        "desvio padrao. A escolha depende do comportamento dos dados:\n\n"
+        "- **N=20 a 30 (padrao):** bom ponto de partida para a maioria das tabelas. "
+        "Equilibra estabilidade e sensibilidade.\n"
+        "- **N=10 a 15:** use quando os dados tem drift (tendencia) ou mudaram "
+        "de patamar recentemente. Janela curta acompanha mudancas mais rapido.\n"
+        "- **N=45 a 60:** use quando os dados tem sazonalidade semanal "
+        "(inclui varias semanas completas) ou mensal.\n"
+        "- **N=60+:** use apenas para dados muito estaveis ou quando quer "
+        "suavizar variacao sazonal forte.\n\n"
+        "**Regra pratica:** se o backtest mostra boa cobertura (>90%), o N esta adequado. "
+        "Se a cobertura e baixa e ha drift, reduza o N. Se a banda oscila muito, "
+        "aumente o N."
+    )
+
+with st.expander("Qual sigma (K) usar?"):
+    st.markdown(
+        "O sigma (K) controla a largura da banda de desvio padrao:\n\n"
+        "- **K=1.5 (rigoroso):** banda apertada, mais sensivel a desvios. "
+        "Use para colunas criticas onde qualquer variacao acima do normal "
+        "deve ser investigada. Risco: mais falsos positivos.\n"
+        "- **K=2.0 (padrao):** cobre ~95% dos dados normais. "
+        "Bom equilibrio entre sensibilidade e tolerancia. "
+        "Recomendado para a maioria dos casos.\n"
+        "- **K=2.5:** intermediario. Use quando K=2.0 gera 1-2 FPs "
+        "e voce quer reduzir sem perder muita sensibilidade.\n"
+        "- **K=3.0 (tolerante):** cobre ~99.7% dos dados normais. "
+        "Use para colunas com variacao natural alta ou quando falsos positivos "
+        "sao mais custosos que deixar passar anomalias.\n\n"
+        "**Dica:** o auto-tuning testa K=1.5, 2.0, 2.5 e 3.0 automaticamente "
+        "e recomenda o melhor valor."
+    )
+
+with st.expander("Cobertura vs. Falsos Positivos — como equilibrar?"):
+    st.markdown(
+        "**Cobertura** e **falsos positivos** sao metricas complementares:\n\n"
+        "- **Cobertura:** porcentagem de periodos historicos que passariam na regra. "
+        "Mede quao **tolerante** a regra e. Ideal: >= 90%.\n"
+        "- **Falsos positivos (~N):** estimativa de periodos **normais** que seriam "
+        "reprovados. Mede quao **precisa** a regra e. Ideal: 0.\n\n"
+        "O equilibrio depende do contexto:\n\n"
+        "| Cenario | Prioridade | Acao |\n"
+        "|---------|------------|------|\n"
+        "| Coluna critica (financeiro) | Sensibilidade | Aceitar cobertura ~85%, K=1.5 |\n"
+        "| Coluna de monitoramento geral | Equilibrio | Cobertura >= 90%, K=2.0 |\n"
+        "| Coluna com variacao natural alta | Tolerancia | Cobertura >= 95%, K=3.0 |\n\n"
+        "**Situacoes problematicas:**\n"
+        "- Cobertura alta (95%) mas 3+ FPs: a banda pode estar desalinhada "
+        "por drift. Reduza N.\n"
+        "- Cobertura baixa (70%) e 0 FPs: os dados podem ter mudado de patamar. "
+        "Reduza N ou investigue o historico.\n"
+        "- Cobertura baixa e muitos FPs: a regra nao e adequada para essa coluna."
+    )
 
 with st.expander("A cobertura esta abaixo de 90%. O que fazer?"):
     st.markdown(
@@ -796,50 +1033,58 @@ with st.expander("O que acontece se eu mudar os parametros depois de adicionar a
 
 
 # =====================================================================
-# 8. Glossario
+# 9. Glossario
 # =====================================================================
 
-st.header("8. Glossario")
+st.header("9. Glossario")
 
 st.caption(
     "Referencia rapida de todos os termos usados na ferramenta."
 )
 
 glossary = [
+    ("AllowedValues", "Regra GDQ estatica que verifica se todos os valores de uma coluna pertencem a uma lista fixa. Sintaxe: ColumnValues COL in [...]."),
     ("Athena", "Servico da AWS para consultar dados no data lake via SQL. A ferramenta usa Athena para analisar historico de tabelas."),
     ("Auto-tuning", "Busca automatica da melhor combinacao de N/sigma/margem via grid search. Testa multiplas combinacoes e retorna a que maximiza cobertura com menos falsos positivos."),
-    ("Backtest", "Simulacao da regra no historico passado para medir cobertura, falsos positivos e estabilidade."),
+    ("Backtest", "Simulacao da regra no historico passado para medir cobertura, falsos positivos e estabilidade. Usa janela rolante para simular o comportamento real da regra em producao."),
     ("Banda margem", "Faixa de aceitacao calculada como porcentagem fixa da media (ex: media +/- 10%). Parte do dual guard."),
     ("Banda sigma", "Faixa de aceitacao calculada como media +/- K desvios padrao. Parte do dual guard."),
-    ("Buffer", "Valor minimo (ex: 0.01) adicionado aos limites das bandas para evitar falsos positivos por arredondamento."),
-    ("Carrinho", "Lista de regras selecionadas para exportacao. Funciona como um carrinho de compras."),
+    ("Buffer", "Valor minimo (ex: 0.01) adicionado aos limites das bandas para evitar falsos positivos por arredondamento. RowCount nao usa buffer."),
+    ("Cardinalidade", "Numero de valores distintos em uma coluna categorica. Baixa (<50), media (50-500), alta (>500). Determina quais regras sao geradas."),
+    ("Carrinho", "Lista de regras selecionadas para exportacao. Funciona como um carrinho de compras. Persiste na sessao do Streamlit."),
     ("Ceiling", "Limite superior absoluto (%) usado no modo hibrido. A frequencia nunca pode ultrapassar este valor, independente do dual guard."),
-    ("Cobertura", "Porcentagem de periodos historicos que passariam na regra. Quanto maior, melhor."),
-    ("Completeness", "Regra que verifica se uma coluna tem uma porcentagem minima de valores preenchidos (nao-nulos)."),
-    ("Confianca", "Avaliacao geral da qualidade da regra: HIGH (recomendada), MEDIUM (revisar), LOW (nao recomendada)."),
-    ("Drift", "Tendencia de crescimento ou queda nos dados ao longo do tempo. Pode tornar as bandas desalinhadas."),
-    ("Dual guard", "Mecanismo que combina banda sigma OR banda margem. A regra passa se o valor estiver dentro de qualquer uma das duas."),
-    ("DuckDB", "Banco de dados local usado em modo mock para simular o Athena durante desenvolvimento."),
-    ("Estabilidade", "Metrica de 0 a 1 que indica quao pouco a banda muda ao variar parametros. 1.0 = muito estavel."),
+    ("Cobertura", "Porcentagem de periodos historicos que passariam na regra. Quanto maior, melhor. Ideal: >= 90%."),
+    ("Completeness", "Regra que verifica se uma coluna tem uma porcentagem minima de valores preenchidos (nao-nulos). Usa >=, nao between."),
+    ("Confianca", "Avaliacao geral da qualidade da regra: HIGH (recomendada), MEDIUM (revisar), LOW (nao recomendada). Baseada em cobertura, FPs e estabilidade."),
+    ("CustomSql", "Tipo de regra GDQ que permite executar SQL customizado. Usado para frequencia categorica (estatica, dinamica ou hibrida). Usa `from primary` para referenciar a tabela."),
+    ("DistinctValuesCount", "Regra GDQ que verifica o numero de valores distintos de uma coluna. Pode ser exata (= N) ou range (between X and Y)."),
+    ("Drift", "Tendencia de crescimento ou queda nos dados ao longo do tempo. Pode tornar as bandas desalinhadas. Solucao: reduzir N ou aumentar margem."),
+    ("Dual guard", "Mecanismo que combina banda sigma OR banda margem. A regra passa se o valor estiver dentro de qualquer uma das duas bandas."),
+    ("DuckDB", "Banco de dados local usado em modo mock para simular o Athena durante desenvolvimento. Carrega dados sinteticos de mock_data/."),
+    ("Estabilidade", "Metrica de 0 a 1 que indica quao pouco a banda muda ao variar parametros. 1.0 = muito estavel. Abaixo de 0.5 pode indicar instabilidade."),
     ("Falso positivo", "Estimativa (~) de periodos normais que seriam reprovados pela regra. Criterio: viola a regra mas esta dentro de 4 sigma da media global. Ideal: 0."),
     ("Floor", "Limite inferior absoluto (%) usado no modo hibrido. A frequencia nunca pode ficar abaixo deste valor, independente do dual guard."),
     ("Frequencia dinamica", "Regra CustomSql de frequencia que usa avg(last(N)) e std(last(N)) para auto-ajustar os limites a cada execucao do GDQ."),
-    ("Frequencia hibrida", "Regra dinamica com floor/ceiling absolutos. Combina auto-ajuste com limites de negocio fixos."),
-    ("GDQ", "AWS Glue Data Quality. Servico da AWS para definir e executar regras de qualidade de dados."),
+    ("Frequencia estatica", "Regra CustomSql de frequencia com limites fixos (between X and Y). Calculada pela ferramenta com base no historico, mas nao se auto-ajusta."),
+    ("Frequencia hibrida", "Regra dinamica com floor/ceiling absolutos. Combina auto-ajuste com limites de negocio fixos. Logica: dual guard AND between floor and ceiling."),
+    ("GDQ", "AWS Glue Data Quality. Servico da AWS para definir e executar regras de qualidade de dados em pipelines Glue."),
     ("Granularidade", "Frequencia dos periodos de analise: diario (1 periodo por dia), mensal (1 periodo por mes)."),
-    ("K (sigma)", "Multiplicador do desvio padrao para a banda sigma. K=2 cobre ~95% dos dados normais. K=3 cobre ~99.7%."),
-    ("Lookback", "Quantidade de periodos recentes considerados na analise (ex: ultimos 30 dias)."),
-    ("Mean", "Regra GDQ que verifica se a media de uma coluna esta dentro da banda esperada."),
-    ("Margem %", "Porcentagem fixa usada para calcular a banda margem do dual guard (ex: 10%)."),
-    ("N (periodos)", "Tamanho da janela movel de historico usada para calcular media e desvio padrao."),
-    ("Outlier", "Valor atipico que se destaca significativamente do padrao normal dos dados."),
-    ("Particao", "Organizacao fisica dos dados em pastas por periodo (ex: dt_ref=2024-01-15/). Otimiza custo e performance."),
-    ("Preset", "Configuracao salva em arquivo JSON que pode ser reutilizada em futuras analises."),
-    ("Profiling", "Processo de classificacao automatica das colunas (numerico, categorico, data, etc.)."),
-    ("RowCount", "Regra GDQ que verifica se a quantidade de linhas por periodo esta dentro do esperado."),
+    ("IsPrimaryKey", "Regra GDQ que valida unicidade de uma combinacao de colunas. Colunas separadas por espaco, sem aspas."),
+    ("K (sigma)", "Multiplicador do desvio padrao para a banda sigma. K=1.5 (rigoroso), K=2 (~95%), K=3 (~99.7%)."),
+    ("Lookback", "Quantidade de periodos recentes considerados na analise (ex: ultimos 30 dias). Controla o tamanho da janela de historico usada nas queries."),
+    ("Mean", "Regra GDQ dinamica que verifica se a media de uma coluna esta dentro da banda esperada. Usa dual guard com avg(last(N)) e std(last(N))."),
+    ("Margem %", "Porcentagem fixa usada para calcular a banda margem do dual guard (ex: 10%). Funciona como rede de seguranca quando a banda sigma e muito estreita."),
+    ("N (periodos)", "Tamanho da janela movel de historico usada para calcular media e desvio padrao. Valores tipicos: 10 a 60."),
+    ("Outlier", "Valor atipico que se destaca significativamente do padrao normal dos dados. Detectado pelo backtest usando heuristica de 4 sigma global."),
+    ("Particao", "Organizacao fisica dos dados em pastas por periodo (ex: dt_ref=2024-01-15/). Otimiza custo e performance no Athena."),
+    ("Percentil", "Ponto de corte que divide a distribuicao em partes. P5 e P95 delimitam os extremos. Usado como analise complementar para calibracao."),
+    ("Preset", "Configuracao salva em arquivo JSON que pode ser reutilizada em futuras analises. Inclui tabela, eixo temporal, lookback, filtro e colunas."),
+    ("Profiling", "Processo de classificacao automatica das colunas (numerico, categorico, data, etc.) com base no tipo Athena e heuristicas estatisticas."),
+    ("RowCount", "Regra GDQ dinamica que verifica se a quantidade de linhas por periodo esta dentro do esperado. Sem buffer, K como float."),
     ("Schema", "Nome do banco de dados no Glue Catalog (ex: gdq_test_db, datalake_raw)."),
-    ("StdDev", "Regra GDQ que verifica se o desvio padrao de uma coluna esta dentro do esperado."),
-    ("Tipo semantico", "Classificacao inferida pelo profiling: numerico, categorico (low/mid/high), data, identificador."),
+    ("Score", "Avaliacao composta da regra que combina cobertura (35%), estabilidade (25%), interpretabilidade (20%) e custo (20%). Determina a confianca."),
+    ("StdDev", "Regra GDQ dinamica que verifica se o desvio padrao de uma coluna esta dentro do esperado. Detecta mudancas na dispersao dos dados."),
+    ("Tipo semantico", "Classificacao inferida pelo profiling: NUMERIC, CAT_LOW, CAT_MID, CAT_HIGH, DATETIME, IDENTIFIER. Determina quais regras sao propostas."),
 ]
 
 for term, definition in glossary:

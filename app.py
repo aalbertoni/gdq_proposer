@@ -135,13 +135,31 @@ def main():
     has_config = "dataset_config" in st.session_state
 
     # Cost from query logger
-    cost_str = "$0.00"
-    if hasattr(client, "logger"):
-        summary = client.logger.get_session_summary()
-        if summary["estimated_cost_usd"] > 0:
-            cost_str = f"${summary['estimated_cost_usd']:.4f}"
-        elif config and config.athena.mode == AthenaMode.MOCK:
-            cost_str = "Local"
+    summary = client.logger.get_session_summary()
+    is_mock = config and config.athena.mode == AthenaMode.MOCK
+    if is_mock:
+        cost_str = "Local"
+        cost_help = (
+            f"{summary['total_queries']} queries executadas no DuckDB (sem custo Athena)"
+            if summary["total_queries"] > 0
+            else "Modo mock (DuckDB) — sem custo Athena"
+        )
+    elif summary["estimated_cost_usd"] > 0:
+        cost_str = f"${summary['estimated_cost_usd']:.4f}"
+        cost_help = (
+            f"{summary['total_queries']} queries, "
+            f"{summary['cache_hits']} cache hits, "
+            f"${summary['estimated_cost_usd']:.4f} estimado"
+        )
+    elif summary["total_queries"] > 0:
+        cost_str = "$0.0000"
+        cost_help = (
+            f"{summary['total_queries']} queries executadas "
+            f"({summary['cache_hits']} cache hits Athena, 0 bytes escaneados)"
+        )
+    else:
+        cost_str = "$0.00"
+        cost_help = "Nenhuma query executada nesta sessao"
 
     m1, m2, m3 = st.columns(3)
     with m1:
@@ -149,7 +167,7 @@ def main():
     with m2:
         st.metric("Regras no carrinho", n_cart)
     with m3:
-        st.metric("Custo da sessao", cost_str)
+        st.metric("Custo da sessao", cost_str, help=cost_help)
 
     st.divider()
 
