@@ -159,9 +159,11 @@ class GDQRuleGenerator:
 
         Coluna é quoted com aspas duplas para compatibilidade com palavras
         reservadas SQL (ex: ORDER, DATE, GROUP).
+        Single quotes in category values are escaped ('' in SQL).
         """
+        safe_value = value.replace("'", "''")
         return (
-            f'select cast(sum(case when "{col}" = \'{value}\' '
+            f'select cast(sum(case when "{col}" = \'{safe_value}\' '
             f"then 1 else 0 end) as double) * 100.0 / count(*) from primary"
         )
 

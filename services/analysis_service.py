@@ -15,7 +15,7 @@ import pandas as pd
 from core.models.dataset_config import DatasetConfig
 from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
-from infra.query_safety import validate_identifier, sanitize_filter
+from infra.query_safety import validate_identifier, sanitize_filter, sanitize_expression
 
 
 class AnalysisService:
@@ -45,8 +45,11 @@ class AnalysisService:
         validate_identifier(config.table)
         validate_identifier(column)
 
+        raw_date_expr = config.date_expression or ""
+        if raw_date_expr:
+            raw_date_expr = sanitize_expression(raw_date_expr)
         date_expr = self.builder.resolve_date_expression(
-            config.effective_temporal_axis, config.date_expression or "",
+            config.effective_temporal_axis, raw_date_expr,
         )
 
         base_filter = ""
@@ -93,8 +96,11 @@ class AnalysisService:
         validate_identifier(config.schema)
         validate_identifier(config.table)
 
+        raw_date_expr = config.date_expression or ""
+        if raw_date_expr:
+            raw_date_expr = sanitize_expression(raw_date_expr)
         date_expr = self.builder.resolve_date_expression(
-            config.effective_temporal_axis, config.date_expression or "",
+            config.effective_temporal_axis, raw_date_expr,
         )
 
         base_filter = ""
@@ -142,8 +148,11 @@ class AnalysisService:
         validate_identifier(config.table)
         validate_identifier(column)
 
+        raw_date_expr = config.date_expression or ""
+        if raw_date_expr:
+            raw_date_expr = sanitize_expression(raw_date_expr)
         date_expr = self.builder.resolve_date_expression(
-            config.effective_temporal_axis, config.date_expression or "",
+            config.effective_temporal_axis, raw_date_expr,
         )
 
         base_filter = ""
@@ -208,8 +217,11 @@ class AnalysisService:
         for col in key_columns:
             validate_identifier(col)
 
+        raw_date_expr = config.date_expression or ""
+        if raw_date_expr:
+            raw_date_expr = sanitize_expression(raw_date_expr)
         date_expr = self.builder.resolve_date_expression(
-            config.effective_temporal_axis, config.date_expression or "",
+            config.effective_temporal_axis, raw_date_expr,
         )
 
         base_filter = ""
@@ -272,8 +284,11 @@ class AnalysisService:
         validate_identifier(config.table)
         validate_identifier(column)
 
+        raw_date_expr = config.date_expression or ""
+        if raw_date_expr:
+            raw_date_expr = sanitize_expression(raw_date_expr)
         date_expr = self.builder.resolve_date_expression(
-            config.effective_temporal_axis, config.date_expression or "",
+            config.effective_temporal_axis, raw_date_expr,
         )
 
         base_filter = ""
@@ -329,8 +344,11 @@ class AnalysisService:
         validate_identifier(config.table)
         validate_identifier(column)
 
+        raw_date_expr = config.date_expression or ""
+        if raw_date_expr:
+            raw_date_expr = sanitize_expression(raw_date_expr)
         date_expr = self.builder.resolve_date_expression(
-            config.effective_temporal_axis, config.date_expression or "",
+            config.effective_temporal_axis, raw_date_expr,
         )
 
         base_filter = ""

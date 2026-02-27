@@ -19,7 +19,8 @@ MAX_LOOKBACK_PERIODS = 100
 # Palavras-chave bloqueadas em filtros customizados (case-insensitive)
 _BLOCKED_KEYWORDS = [
     "UNION", "INSERT", "DELETE", "DROP", "ALTER",
-    "CREATE", "UPDATE", "EXEC",
+    "CREATE", "UPDATE", "EXEC", "TRUNCATE", "GRANT",
+    "REVOKE", "MERGE",
 ]
 _BLOCKED_KEYWORDS_PATTERN = re.compile(
     r"\b(" + "|".join(_BLOCKED_KEYWORDS) + r")\b",
@@ -74,6 +75,44 @@ def validate_lookback(value: int, mode: LookbackMode = LookbackMode.DAYS) -> int
             f"Lookback {mode.value}={value} excede limite máximo de {limit}"
         )
     return value
+
+
+def sanitize_expression(sql_expression: str) -> str:
+    """Validação de expressões SQL como date_expression.
+
+    Aceita expressões com parênteses, CAST, AS, DATE, VARCHAR etc.
+    Bloqueia as mesmas keywords destrutivas e tokens perigosos que
+    sanitize_filter.
+
+    Args:
+        sql_expression: Expressão SQL (ex: 'CAST("dt_ref" AS DATE)').
+
+    Returns:
+        A expressão sanitizada (stripped), se segura.
+
+    Raises:
+        ValueError: Se a expressão contém tokens ou keywords bloqueados.
+    """
+    stripped = sql_expression.strip()
+
+    if not stripped:
+        raise ValueError("Expressão não pode ser vazia")
+
+    # Checar tokens perigosos
+    for token in _BLOCKED_TOKENS:
+        if token in stripped:
+            raise ValueError(
+                f"Expressão contém token bloqueado: {token!r}"
+            )
+
+    # Checar keywords bloqueadas
+    match = _BLOCKED_KEYWORDS_PATTERN.search(stripped)
+    if match:
+        raise ValueError(
+            f"Expressão contém keyword bloqueada: {match.group()!r}"
+        )
+
+    return stripped
 
 
 def sanitize_filter(sql_fragment: str) -> str:
