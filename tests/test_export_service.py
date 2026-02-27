@@ -31,6 +31,8 @@ def _make_selection(
     baseline_n_sigma: float | None = None,
     baseline_margin_pct: float | None = None,
     category_value: str | None = None,
+    suggested_upper: float | None = None,
+    suggested_lower: float | None = None,
 ) -> RuleSelection:
     proposal = RuleProposal(
         id="test",
@@ -45,6 +47,8 @@ def _make_selection(
         baseline_n_sigma=baseline_n_sigma,
         baseline_margin_pct=baseline_margin_pct,
         category_value=category_value,
+        suggested_upper=suggested_upper,
+        suggested_lower=suggested_lower,
     )
     return RuleSelection(
         proposal_id="test",
@@ -296,6 +300,280 @@ class TestCheckConsistency:
         )
         warnings = service.check_consistency([s1, s2])
         assert not any("duplicada" in w.lower() for w in warnings)
+
+
+# ============================================================================
+# check_consistency — frequency sum > 100%
+# ============================================================================
+
+class TestFrequencySumConflict:
+    """Testes para deteccao de soma de frequencias > 100%."""
+
+    def test_frequency_sum_over_100(self, service):
+        """Duas regras de frequencia estatica com soma de upper > 100% geram conflito."""
+        s1 = _make_selection(
+            'CustomSql "..." between 40 and 60',
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            column="STATUS",
+            category_value="A",
+            suggested_lower=40.0,
+            suggested_upper=60.0,
+        )
+        s2 = _make_selection(
+            'CustomSql "..." between 50 and 70',
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            column="STATUS",
+            category_value="B",
+            suggested_lower=50.0,
+            suggested_upper=70.0,
+        )
+        warnings = service.check_consistency([s1, s2])
+        assert any("conflito" in w.lower() and "100%" in w for w in warnings)
+
+    def test_frequency_sum_under_100(self, service):
+        """Duas regras de frequencia estatica com soma de upper <= 100% nao geram conflito."""
+        s1 = _make_selection(
+            'CustomSql "..." between 20 and 40',
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            column="STATUS",
+            category_value="A",
+            suggested_lower=20.0,
+            suggested_upper=40.0,
+        )
+        s2 = _make_selection(
+            'CustomSql "..." between 30 and 50',
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            column="STATUS",
+            category_value="B",
+            suggested_lower=30.0,
+            suggested_upper=50.0,
+        )
+        warnings = service.check_consistency([s1, s2])
+        assert not any("conflito" in w.lower() for w in warnings)
+
+    def test_frequency_sum_exactly_100(self, service):
+        """Soma exatamente 100% nao gera conflito (limite inclusivo)."""
+        s1 = _make_selection(
+            'CustomSql "..." between 20 and 50',
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            column="STATUS",
+            category_value="A",
+            suggested_lower=20.0,
+            suggested_upper=50.0,
+        )
+        s2 = _make_selection(
+            'CustomSql "..." between 30 and 50',
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            column="STATUS",
+            category_value="B",
+            suggested_lower=30.0,
+            suggested_upper=50.0,
+        )
+        warnings = service.check_consistency([s1, s2])
+        assert not any("conflito" in w.lower() for w in warnings)
+
+    def test_frequency_single_rule_no_conflict(self, service):
+        """Uma unica regra de frequencia nao gera conflito de soma."""
+        s1 = _make_selection(
+            'CustomSql "..." between 80 and 95',
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            column="STATUS",
+            category_value="A",
+            suggested_lower=80.0,
+            suggested_upper=95.0,
+        )
+        warnings = service.check_consistency([s1])
+        assert not any("conflito" in w.lower() for w in warnings)
+
+    def test_frequency_dynamic_rules_not_checked(self, service):
+        """Regras dinamicas nao entram na soma (sao avaliadas em runtime)."""
+        s1 = _make_selection(
+            'CustomSql "..." between avg(last(30))*0.9 and avg(last(30))*1.1',
+            rule_type=RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+            column="STATUS",
+            category_value="A",
+            suggested_lower=40.0,
+            suggested_upper=60.0,
+        )
+        s2 = _make_selection(
+            'CustomSql "..." between avg(last(30))*0.9 and avg(last(30))*1.1',
+            rule_type=RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+            column="STATUS",
+            category_value="B",
+            suggested_lower=50.0,
+            suggested_upper=70.0,
+        )
+        warnings = service.check_consistency([s1, s2])
+        assert not any("conflito" in w.lower() and "100%" in w for w in warnings)
+
+
+# ============================================================================
+# check_consistency — IsPrimaryKey + Completeness redundancy
+# ============================================================================
+
+class TestPKCompletenessRedundancy:
+    """Testes para deteccao de redundancia IsPrimaryKey + Completeness."""
+
+    def test_pk_completeness_redundancy(self, service):
+        """IsPrimaryKey + Completeness na mesma coluna gera aviso de redundancia."""
+        pk = _make_selection(
+            "IsPrimaryKey COL_A COL_B",
+            rule_type=RuleType.IS_PRIMARY_KEY,
+            column="COL_A COL_B",
+            metric="is_primary_key",
+        )
+        comp = _make_selection(
+            "Completeness COL_A >= 1.00",
+            rule_type=RuleType.COMPLETENESS,
+            column="COL_A",
+            metric="completeness",
+        )
+        warnings = service.check_consistency([pk, comp])
+        assert any("redundancia" in w.lower() and "IsPrimaryKey" in w for w in warnings)
+
+    def test_pk_completeness_different_column_ok(self, service):
+        """IsPrimaryKey e Completeness em colunas diferentes nao geram redundancia."""
+        pk = _make_selection(
+            "IsPrimaryKey COL_A COL_B",
+            rule_type=RuleType.IS_PRIMARY_KEY,
+            column="COL_A COL_B",
+            metric="is_primary_key",
+        )
+        comp = _make_selection(
+            "Completeness COL_C >= 1.00",
+            rule_type=RuleType.COMPLETENESS,
+            column="COL_C",
+            metric="completeness",
+        )
+        warnings = service.check_consistency([pk, comp])
+        assert not any("redundancia" in w.lower() for w in warnings)
+
+    def test_completeness_without_pk_ok(self, service):
+        """Completeness sem IsPrimaryKey nao gera redundancia."""
+        comp = _make_selection(
+            "Completeness COL_A >= 1.00",
+            rule_type=RuleType.COMPLETENESS,
+            column="COL_A",
+            metric="completeness",
+        )
+        warnings = service.check_consistency([comp])
+        assert not any("redundancia" in w.lower() for w in warnings)
+
+
+# ============================================================================
+# check_consistency — RowCount + Mean with very different N
+# ============================================================================
+
+class TestRowCountMeanDifferentN:
+    """Testes para deteccao de RowCount e Mean com N muito diferentes."""
+
+    def test_rowcount_mean_different_n(self, service):
+        """RowCount N=30 e Mean N=10 (diferenca > 15) gera aviso."""
+        rc = _make_selection(
+            "RowCount >= ...",
+            rule_type=RuleType.ROW_COUNT_DUAL_GUARD,
+            column=None,
+            metric="row_count",
+            baseline_window=30,
+        )
+        mean = _make_selection(
+            "Mean COL >= ...",
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            column="VLR_SALDO",
+            metric="mean",
+            baseline_window=10,
+        )
+        warnings = service.check_consistency([rc, mean])
+        assert any(
+            "RowCount" in w and "Mean" in w and "N=" in w
+            for w in warnings
+        )
+
+    def test_rowcount_mean_similar_n_ok(self, service):
+        """RowCount N=30 e Mean N=25 (diferenca <= 15) nao gera aviso."""
+        rc = _make_selection(
+            "RowCount >= ...",
+            rule_type=RuleType.ROW_COUNT_DUAL_GUARD,
+            column=None,
+            metric="row_count",
+            baseline_window=30,
+        )
+        mean = _make_selection(
+            "Mean COL >= ...",
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            column="VLR_SALDO",
+            metric="mean",
+            baseline_window=25,
+        )
+        warnings = service.check_consistency([rc, mean])
+        assert not any(
+            "RowCount" in w and "Mean" in w
+            for w in warnings
+        )
+
+    def test_rowcount_mean_same_n_ok(self, service):
+        """RowCount e Mean com mesmo N nao gera aviso."""
+        rc = _make_selection(
+            "RowCount >= ...",
+            rule_type=RuleType.ROW_COUNT_DUAL_GUARD,
+            column=None,
+            metric="row_count",
+            baseline_window=30,
+        )
+        mean = _make_selection(
+            "Mean COL >= ...",
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            column="VLR_SALDO",
+            metric="mean",
+            baseline_window=30,
+        )
+        warnings = service.check_consistency([rc, mean])
+        assert not any(
+            "RowCount" in w and "Mean" in w
+            for w in warnings
+        )
+
+    def test_rowcount_without_mean_ok(self, service):
+        """RowCount sem Mean nao gera aviso."""
+        rc = _make_selection(
+            "RowCount >= ...",
+            rule_type=RuleType.ROW_COUNT_DUAL_GUARD,
+            column=None,
+            metric="row_count",
+            baseline_window=30,
+        )
+        warnings = service.check_consistency([rc])
+        assert not any("RowCount" in w and "Mean" in w for w in warnings)
+
+    def test_rowcount_mean_warns_only_once(self, service):
+        """Com multiplas colunas Mean com N diferente, avisa apenas uma vez."""
+        rc = _make_selection(
+            "RowCount >= ...",
+            rule_type=RuleType.ROW_COUNT_DUAL_GUARD,
+            column=None,
+            metric="row_count",
+            baseline_window=30,
+        )
+        mean1 = _make_selection(
+            "Mean COL1 >= ...",
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            column="COL1",
+            metric="mean",
+            baseline_window=10,
+        )
+        mean2 = _make_selection(
+            "Mean COL2 >= ...",
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            column="COL2",
+            metric="mean",
+            baseline_window=5,
+        )
+        warnings = service.check_consistency([rc, mean1, mean2])
+        rowcount_mean_warnings = [
+            w for w in warnings
+            if "RowCount" in w and "Mean" in w
+        ]
+        assert len(rowcount_mean_warnings) == 1
 
 
 # ============================================================================

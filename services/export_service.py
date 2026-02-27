@@ -197,6 +197,86 @@ class ExportService:
                         f"— considere usar o mesmo N para consistencia"
                     )
 
+        # Check 3: Frequency upper bounds sum > 100%
+        freq_rules = [
+            s for s in enabled
+            if s.proposal.rule_type in (
+                RuleType.CATEGORY_FREQUENCY_STATIC,
+                RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+                RuleType.CATEGORY_FREQUENCY_HYBRID,
+            )
+        ]
+        freq_by_col: dict[str, list[RuleSelection]] = {}
+        for s in freq_rules:
+            col = s.proposal.target_column or "(tabela)"
+            freq_by_col.setdefault(col, []).append(s)
+
+        for col, col_sels in freq_by_col.items():
+            static_sels = [
+                s for s in col_sels
+                if s.proposal.rule_type == RuleType.CATEGORY_FREQUENCY_STATIC
+            ]
+            if len(static_sels) >= 2:
+                upper_sum = sum(
+                    s.proposal.suggested_upper
+                    for s in static_sels
+                    if s.proposal.suggested_upper is not None
+                )
+                if upper_sum > 100:
+                    warnings.append(
+                        f"Conflito: as frequencias de {len(static_sels)} valores de `{col}` "
+                        f"somam ate {upper_sum:.0f}% (maximo possivel: 100%). "
+                        f"Revise os limites superiores das regras de frequencia."
+                    )
+
+        # Check 4: IsPrimaryKey + Completeness redundancy
+        pk_sels = [s for s in enabled if s.proposal.rule_type == RuleType.IS_PRIMARY_KEY]
+        completeness_sels = [s for s in enabled if s.proposal.rule_type == RuleType.COMPLETENESS]
+
+        if pk_sels and completeness_sels:
+            pk_cols: set[str] = set()
+            for s in pk_sels:
+                # IsPrimaryKey column field contains space-separated columns
+                if s.proposal.target_column:
+                    pk_cols.update(s.proposal.target_column.split())
+
+            redundant = [
+                s for s in completeness_sels
+                if s.proposal.target_column in pk_cols
+            ]
+            if redundant:
+                cols_str = ", ".join(
+                    s.proposal.target_column for s in redundant
+                    if s.proposal.target_column
+                )
+                warnings.append(
+                    f"Redundancia: `Completeness` para {cols_str} e redundante com "
+                    f"`IsPrimaryKey` que ja valida completude dessas colunas."
+                )
+
+        # Check 5: RowCount + Mean with very different N
+        rowcount_sels = [
+            s for s in enabled
+            if s.proposal.rule_type == RuleType.ROW_COUNT_DUAL_GUARD
+        ]
+        mean_sels = [
+            s for s in enabled
+            if s.proposal.rule_type == RuleType.MEAN_DUAL_GUARD
+        ]
+
+        if rowcount_sels and mean_sels:
+            rc_n = rowcount_sels[0].proposal.baseline_window
+            for ms in mean_sels:
+                mr_n = ms.proposal.baseline_window
+                if mr_n and rc_n and abs(mr_n - rc_n) > 15:
+                    warnings.append(
+                        f"Aviso: RowCount usa N={rc_n} mas Mean `{ms.proposal.target_column}` "
+                        f"usa N={mr_n}. "
+                        f"Janelas de analise muito diferentes podem causar "
+                        f"resultados inconsistentes."
+                    )
+                    break  # Only warn once
+
         return warnings
 
     def export(

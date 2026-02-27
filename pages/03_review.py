@@ -162,6 +162,21 @@ else:
 
 
 # ---------------------------------------------------------------------------
+# Consistency check
+# ---------------------------------------------------------------------------
+
+enabled_rules = [s for s in cart if s.enabled and s.final_gdq_syntax.strip()]
+if len(enabled_rules) >= 2:
+    consistency_warnings = export_svc.check_consistency(cart)
+    if consistency_warnings:
+        st.warning(f"{len(consistency_warnings)} avisos de consistencia detectados:")
+        for w in consistency_warnings:
+            st.caption(f"- {w}")
+    else:
+        st.caption(":green[Nenhum conflito detectado entre as regras.]")
+
+
+# ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
 
