@@ -8,12 +8,19 @@ import pytest
 
 from core.statistical_engine import (
     compute_dynamic_band,
+    compute_iqr_band,
+    compute_mad_band,
     compute_margin_band,
     compute_percentile_band,
     compute_frequency_band,
+    detect_change_points,
     detect_drift,
+    detect_outliers,
+    detect_seasonality,
     _filter_valid,
     _last_n,
+    _median,
+    _percentile,
 )
 from tests.fixtures import (
     make_stable_series,
@@ -243,3 +250,276 @@ class TestDetectDrift:
         result = detect_drift(data["values"])
         # Seasonal should not show strong linear drift
         assert result["r_squared"] < 0.5 or result["has_drift"] is False
+
+
+# ---------------------------------------------------------------------------
+# detect_seasonality
+# ---------------------------------------------------------------------------
+
+class TestDetectSeasonality:
+    def test_seasonal_series_detected(self):
+        """make_seasonal_series has clear weekly pattern."""
+        data = make_seasonal_series(n=30)
+        result = detect_seasonality(data["values"], data["dates"])
+        assert result["has_seasonality"] is True
+        assert result["seasonality_strength"] > 0.15
+        assert result["amplitude_ratio"] > 0.10
+        assert len(result["day_of_week_means"]) == 7
+
+    def test_stable_series_no_seasonality(self):
+        """Stable series has no seasonal pattern."""
+        data = make_stable_series(n=30)
+        result = detect_seasonality(data["values"], data["dates"])
+        assert result["has_seasonality"] is False
+        # Amplitude ratio is the key discriminator for random noise
+        assert result["amplitude_ratio"] < 0.10
+
+    def test_drift_series_no_seasonality(self):
+        """Drift series has trend but no weekly pattern."""
+        data = make_drift_series(n=30)
+        result = detect_seasonality(data["values"], data["dates"])
+        # Drift is linear, not seasonal
+        assert result["has_seasonality"] is False
+
+    def test_insufficient_data(self):
+        """Less than min_periods returns no seasonality."""
+        result = detect_seasonality(
+            [1.0, 2.0, 3.0],
+            ["2026-01-01", "2026-01-02", "2026-01-03"],
+        )
+        assert result["has_seasonality"] is False
+        assert "insuficientes" in result["message"].lower()
+
+    def test_all_same_values(self):
+        """Constant series has no seasonality."""
+        values = [100.0] * 30
+        dates = [f"2026-01-{i + 1:02d}" for i in range(30)]
+        result = detect_seasonality(values, dates)
+        assert result["has_seasonality"] is False
+
+    def test_empty_series(self):
+        result = detect_seasonality([], [])
+        assert result["has_seasonality"] is False
+
+    def test_message_contains_day_names_when_seasonal(self):
+        """When seasonality detected, message mentions peak/valley days."""
+        data = make_seasonal_series(n=30)
+        result = detect_seasonality(data["values"], data["dates"])
+        if result["has_seasonality"]:
+            # Message should contain Portuguese day names
+            day_names = ["Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado", "Domingo"]
+            assert any(name in result["message"] for name in day_names)
+
+    def test_amplitude_and_ratio_positive_for_seasonal(self):
+        """Seasonal series should have positive amplitude and ratio."""
+        data = make_seasonal_series(n=30)
+        result = detect_seasonality(data["values"], data["dates"])
+        assert result["amplitude"] > 0
+        assert result["amplitude_ratio"] > 0
+
+    def test_nan_values_filtered(self):
+        """NaN values should be filtered out before analysis."""
+        data = make_seasonal_series(n=30)
+        # Insert some NaN values
+        values = data["values"][:]
+        values[5] = float("nan")
+        values[10] = None
+        result = detect_seasonality(values, data["dates"])
+        # Should still detect seasonality with enough valid data
+        assert result["has_seasonality"] is True
+
+
+# ---------------------------------------------------------------------------
+# Robust Statistics: IQR, MAD, detect_outliers
+# ---------------------------------------------------------------------------
+
+class TestRobustStatistics:
+    def test_iqr_band_stable(self):
+        """Stable series: IQR band similar to sigma band."""
+        data = make_stable_series(n=30)
+        iqr = compute_iqr_band(data["values"], 30)
+        sigma = compute_dynamic_band(data["values"], 30, 2.0)
+        assert iqr["lower"] < iqr["upper"]
+        assert iqr["q1"] < iqr["q3"]
+        assert iqr["iqr"] > 0
+        # For normal data, IQR and sigma should be reasonably close
+        assert abs(iqr["center"] - sigma["center"]) < 10
+
+    def test_iqr_band_outlier_resistant(self):
+        """Outlier series: IQR band narrower than sigma band."""
+        data = make_outlier_series(n=30)
+        iqr = compute_iqr_band(data["values"], 30)
+        sigma = compute_dynamic_band(data["values"], 30, 2.0)
+        # IQR should be narrower because it ignores outliers
+        iqr_width = iqr["upper"] - iqr["lower"]
+        sigma_width = sigma["upper"] - sigma["lower"]
+        assert iqr_width < sigma_width
+
+    def test_mad_band_stable(self):
+        """Stable series: MAD band reasonable."""
+        data = make_stable_series(n=30)
+        mad = compute_mad_band(data["values"], 30)
+        assert mad["lower"] < mad["upper"]
+        assert mad["mad_raw"] > 0
+        assert mad["mad_scaled"] > mad["mad_raw"]  # scale factor > 1
+
+    def test_mad_band_outlier_resistant(self):
+        """Outlier series: MAD band much narrower than sigma."""
+        data = make_outlier_series(n=30)
+        mad = compute_mad_band(data["values"], 30, n_mad=3.0)
+        sigma = compute_dynamic_band(data["values"], 30, 2.0)
+        mad_width = mad["upper"] - mad["lower"]
+        sigma_width = sigma["upper"] - sigma["lower"]
+        assert mad_width < sigma_width
+
+    def test_detect_outliers_iqr(self):
+        """Detect outliers in outlier series."""
+        data = make_outlier_series(n=30)
+        result = detect_outliers(data["values"], method="iqr")
+        assert result["n_outliers"] >= 1
+        assert result["method"] == "iqr"
+        assert len(result["outlier_indices"]) == result["n_outliers"]
+
+    def test_detect_outliers_mad(self):
+        """Detect outliers via MAD method."""
+        data = make_outlier_series(n=30)
+        result = detect_outliers(data["values"], method="mad")
+        assert result["n_outliers"] >= 1
+        assert result["method"] == "mad"
+
+    def test_detect_outliers_stable_none(self):
+        """Stable series should have few or no outliers."""
+        data = make_stable_series(n=30)
+        result = detect_outliers(data["values"], method="iqr")
+        # Stable normal data: at most a couple statistical outliers
+        assert result["pct_outliers"] < 0.15
+
+    def test_iqr_band_few_values(self):
+        """Fewer than 3 values: degenerate band."""
+        result = compute_iqr_band([5.0, 10.0], 2)
+        assert result["iqr"] == 0.0
+        assert result["n_periods_used"] == 2
+
+    def test_mad_band_few_values(self):
+        """Fewer than 3 values: degenerate band."""
+        result = compute_mad_band([5.0], 1)
+        assert result["mad_raw"] == 0.0
+        assert result["n_periods_used"] == 1
+
+    def test_iqr_band_empty(self):
+        result = compute_iqr_band([], 10)
+        assert result["center"] == 0.0
+        assert result["n_periods_used"] == 0
+
+    def test_percentile_function(self):
+        """Basic percentile computation."""
+        vals = [1.0, 2.0, 3.0, 4.0, 5.0]
+        assert _percentile(vals, 50.0) == 3.0
+        assert _percentile(vals, 0.0) == 1.0
+        assert _percentile(vals, 100.0) == 5.0
+
+    def test_median_function(self):
+        assert _median([1.0, 2.0, 3.0]) == 2.0
+        assert _median([1.0, 2.0, 3.0, 4.0]) == 2.5
+        assert _median([]) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# detect_change_points (CUSUM)
+# ---------------------------------------------------------------------------
+
+class TestChangePointDetection:
+    def test_regime_change_detected(self):
+        """Regime change series should detect change point."""
+        data = make_regime_change_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        assert result["has_change_point"] is True
+        assert result["change_index"] is not None
+        assert len(result["post_change_values"]) >= 5
+        assert len(result["segments"]) >= 2
+
+    def test_stable_no_change(self):
+        """Stable series has no change point."""
+        data = make_stable_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        assert result["has_change_point"] is False
+
+    def test_drift_may_or_may_not_detect(self):
+        """Drift series: gradual change, not abrupt."""
+        data = make_drift_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        # Drift is gradual, CUSUM may or may not detect depending on threshold
+        # Just verify it returns valid structure
+        assert "has_change_point" in result
+        assert "segments" in result
+
+    def test_insufficient_data(self):
+        """Too few points returns no change."""
+        result = detect_change_points([1.0, 2.0, 3.0])
+        assert result["has_change_point"] is False
+
+    def test_constant_series(self):
+        """All same values: no change point."""
+        values = [100.0] * 30
+        result = detect_change_points(values)
+        assert result["has_change_point"] is False
+
+    def test_empty_series(self):
+        result = detect_change_points([])
+        assert result["has_change_point"] is False
+
+    def test_post_change_values_correct(self):
+        """Verify post_change_values are from after the change."""
+        data = make_regime_change_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        if result["has_change_point"]:
+            idx = result["change_index"]
+            assert result["post_change_values"] == data["values"][idx:]
+
+    def test_segments_cover_full_series(self):
+        """Segments should cover all values."""
+        data = make_regime_change_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        total_in_segments = sum(s["end"] - s["start"] for s in result["segments"])
+        valid_count = len([v for v in data["values"] if v is not None and v == v])
+        assert total_in_segments == valid_count
+
+    def test_change_date_populated(self):
+        """When dates provided, change_date should be set."""
+        data = make_regime_change_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        if result["has_change_point"]:
+            assert result["change_date"] is not None
+            assert result["change_date"] in data["dates"]
+
+    def test_no_dates_still_works(self):
+        """Without dates, detection still works but change_date is from indices."""
+        data = make_regime_change_series(n=30)
+        result = detect_change_points(data["values"])
+        assert result["has_change_point"] is True
+        assert result["change_date"] is None
+        assert result["post_change_dates"] == []
+
+    def test_message_present(self):
+        """Result always has a message."""
+        data = make_regime_change_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        assert isinstance(result["message"], str)
+        assert len(result["message"]) > 0
+
+    def test_nan_values_handled(self):
+        """NaN values should be filtered before detection."""
+        data = make_regime_change_series(n=30)
+        values = data["values"][:]
+        values[3] = float("nan")
+        values[7] = None
+        result = detect_change_points(values, data["dates"])
+        # Should still detect the regime change
+        assert result["has_change_point"] is True
+
+    def test_high_threshold_fewer_detections(self):
+        """Higher threshold means fewer change points detected."""
+        data = make_regime_change_series(n=30)
+        result_low = detect_change_points(data["values"], data["dates"], threshold=2.0)
+        result_high = detect_change_points(data["values"], data["dates"], threshold=8.0)
+        assert result_low["n_change_points"] >= result_high["n_change_points"]
