@@ -23,6 +23,35 @@ from core.statistical_engine import (
 )
 
 
+# Half-life ~14 periods: ln(2)/0.05 ~ 13.9
+_RECENCY_LAMBDA = 0.05
+
+
+def _compute_weighted_coverage(results: list[dict]) -> float:
+    """Compute coverage with exponential recency bias.
+
+    Recent periods get higher weight: w_i = exp(-lambda * (n - 1 - i)).
+    Lambda = 0.05 gives ~14-period half-life.
+
+    Args:
+        results: List of dicts with 'passed' bool, in chronological order.
+
+    Returns:
+        Weighted coverage percentage (0-100).
+    """
+    if not results:
+        return 0.0
+    n = len(results)
+    weights = [math.exp(-_RECENCY_LAMBDA * (n - 1 - i)) for i in range(n)]
+    total_weight = sum(weights)
+    if total_weight == 0:
+        return 0.0
+    weighted_passes = sum(
+        w * (1.0 if r["passed"] else 0.0) for w, r in zip(weights, results)
+    )
+    return round(weighted_passes / total_weight * 100, 2)
+
+
 def backtest_band(
     values: list[float],
     dates: list[str],
@@ -75,6 +104,7 @@ def backtest_band(
     evaluated = 0
     last_sigma_band = None
     last_margin_band = None
+    eval_results: list[dict] = []  # for weighted coverage
 
     # Estatísticas globais para estimativa de FP
     global_mean = sum(valid_values) / len(valid_values)
@@ -112,7 +142,10 @@ def backtest_band(
             else False
         )
 
-        if in_sigma or in_margin:
+        passed = in_sigma or in_margin
+        eval_results.append({"passed": passed})
+
+        if passed:
             periods_pass += 1
         else:
             periods_fail += 1
@@ -124,6 +157,7 @@ def backtest_band(
 
     total_periods = periods_pass + periods_fail
     coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+    weighted_coverage_pct = _compute_weighted_coverage(eval_results)
 
     # Band width ratio usando última banda calculada
     band_width_ratio = 0.0
@@ -151,6 +185,7 @@ def backtest_band(
         stability_score=stability_score,
         has_drift=drift_result["has_drift"],
         outlier_periods=outlier_periods,
+        weighted_coverage_pct=weighted_coverage_pct,
     )
 
 
@@ -255,6 +290,7 @@ def backtest_frequency_band(
     outlier_periods = []
     false_positive_proxy = 0
     last_band = None
+    eval_results: list[dict] = []  # for weighted coverage
 
     # Global stats for FP proxy
     global_mean = sum(valid_values) / len(valid_values)
@@ -278,7 +314,10 @@ def backtest_frequency_band(
 
         last_band = band
 
-        if band["lower"] <= current <= band["upper"]:
+        passed = band["lower"] <= current <= band["upper"]
+        eval_results.append({"passed": passed})
+
+        if passed:
             periods_pass += 1
         else:
             periods_fail += 1
@@ -289,6 +328,7 @@ def backtest_frequency_band(
 
     total_periods = periods_pass + periods_fail
     coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+    weighted_coverage_pct = _compute_weighted_coverage(eval_results)
 
     band_width_ratio = 0.0
     if last_band:
@@ -314,6 +354,7 @@ def backtest_frequency_band(
         stability_score=stability_score,
         has_drift=drift_result["has_drift"],
         outlier_periods=outlier_periods,
+        weighted_coverage_pct=weighted_coverage_pct,
     )
 
 
@@ -374,6 +415,7 @@ def backtest_frequency_dual_guard(
     outlier_periods = []
     false_positive_proxy = 0
     last_sigma_band = None
+    eval_results: list[dict] = []  # for weighted coverage
 
     global_mean = sum(valid_values) / len(valid_values)
     global_std = math.sqrt(
@@ -426,6 +468,8 @@ def backtest_frequency_dual_guard(
         else:
             passes = passes_dual_guard
 
+        eval_results.append({"passed": passes})
+
         if passes:
             periods_pass += 1
         else:
@@ -437,6 +481,7 @@ def backtest_frequency_dual_guard(
 
     total_periods = periods_pass + periods_fail
     coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+    weighted_coverage_pct = _compute_weighted_coverage(eval_results)
 
     band_width_ratio = 0.0
     if last_sigma_band:
@@ -462,6 +507,7 @@ def backtest_frequency_dual_guard(
         stability_score=stability_score,
         has_drift=drift_result["has_drift"],
         outlier_periods=outlier_periods,
+        weighted_coverage_pct=weighted_coverage_pct,
     )
 
 

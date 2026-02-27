@@ -23,6 +23,7 @@ class BacktestSummary:
     stability_score: float  # 0-1; banda muda pouco com variacao de n?
     has_drift: bool  # tendencia detectada
     outlier_periods: list[str] = field(default_factory=list)  # datas dos outliers
+    weighted_coverage_pct: float = 0.0  # Coverage with recency bias (recent periods weighted more)
 
 
 @dataclass
@@ -57,6 +58,15 @@ class RuleProposal:
 
     # Sintaxe
     gdq_syntax_preview: str = ""
+
+    # Sazonalidade (informacional, nao altera sintaxe GDQ)
+    seasonality_info: Optional[dict] = None
+
+    # Mudanca de regime (informacional — pode afetar baseline efetivo)
+    change_point_info: Optional[dict] = None
+
+    # Estatisticas robustas (informacional, nao altera sintaxe GDQ)
+    robust_info: Optional[dict] = None  # IQR/MAD analysis results
 
     # Historico para grafico (dados agregados, nao raw)
     history_dates: list[str] = field(default_factory=list)
