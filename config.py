@@ -45,9 +45,27 @@ class AthenaConfig:
 
 
 @dataclass
+class GlueTestConfig:
+    """Configuracao para integracao com Thundera (Glue DQ)."""
+    glue_job_name: str = "glueplataformathundera"
+    region: str = ""  # defaults to AthenaConfig.region if empty
+    poll_interval_seconds: int = 15
+    poll_timeout_seconds: int = 600
+    default_squad: str = ""
+    default_comunidade: str = ""
+    default_racf: str = ""
+    default_periodicidade: str = "D"
+    default_tipo_qualidade: str = "POUSADO"
+    default_conta: str = "DISTRIBUICAOMODELO"
+    default_timeout: str = "60"
+    default_workers: str = "20"
+
+
+@dataclass
 class AppConfig:
     environment: Environment = Environment.LOCAL
     athena: AthenaConfig = field(default_factory=AthenaConfig)
+    glue_test: GlueTestConfig = field(default_factory=GlueTestConfig)
     log_dir: str = "logs"
     preset_dir: str = "presets"
 
@@ -95,7 +113,15 @@ def load_config() -> AppConfig:
         mock_data_dir=os.getenv("GDQ_MOCK_DATA_DIR", "mock_data"),
     )
 
-    return AppConfig(environment=env, athena=athena)
+    glue_test = GlueTestConfig(
+        glue_job_name=os.getenv("GDQ_GLUE_JOB_NAME", "glueplataformathundera"),
+        region=os.getenv("GDQ_GLUE_REGION", ""),
+        default_racf=os.getenv("GDQ_RACF", ""),
+        default_squad=os.getenv("GDQ_SQUAD", ""),
+        default_comunidade=os.getenv("GDQ_COMUNIDADE", ""),
+    )
+
+    return AppConfig(environment=env, athena=athena, glue_test=glue_test)
 
 
 def _load_dotenv(path: Path):

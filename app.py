@@ -174,13 +174,13 @@ def main():
     # --- "Como funciona" — 4 steps ---
     st.subheader("Como funciona")
 
-    s1, s2, s3, s4 = st.columns(4)
+    s1, s2, s3, s4, s5 = st.columns(5)
 
     with s1:
         st.markdown("### 1. Setup")
         st.markdown(
             "Configure a **tabela**, o **eixo temporal** e selecione as **colunas** "
-            "para analise. O profiling classifica cada coluna automaticamente."
+            "para analise."
         )
         if st.button("Ir para Setup", type="primary", key="nav_setup"):
             st.switch_page("pages/01_setup.py")
@@ -188,8 +188,7 @@ def main():
     with s2:
         st.markdown("### 2. Explore")
         st.markdown(
-            "Calibre regras **Mean**, **StdDev**, **Percentil**, **Frequencia** "
-            "e **RowCount** com graficos interativos e backtest em tempo real."
+            "Calibre regras com graficos interativos e **backtest** em tempo real."
         )
         if has_config:
             if st.button("Ir para Explore", key="nav_explore"):
@@ -200,8 +199,7 @@ def main():
     with s3:
         st.markdown("### 3. Review")
         st.markdown(
-            "Revise as regras no carrinho, valide a **sintaxe GDQ**, "
-            "gere o **relatorio analitico** e **exporte** para arquivo."
+            "Revise as regras, valide a **sintaxe GDQ** e **exporte** para arquivo."
         )
         if n_cart > 0:
             if st.button("Ir para Review", key="nav_review"):
@@ -210,13 +208,23 @@ def main():
             st.caption("Adicione regras no Explore primeiro.")
 
     with s4:
-        st.markdown("### 4. Ajuda")
+        st.markdown("### 4. Teste")
         st.markdown(
-            "Documentacao completa: conceitos, parametros, "
-            "sintaxe GDQ, perguntas frequentes e glossario."
+            "Teste as regras via **Glue job Thundera** antes de implantar."
+        )
+        if n_cart > 0:
+            if st.button("Ir para Teste", key="nav_test"):
+                st.switch_page("pages/04_test.py")
+        else:
+            st.caption("Adicione regras no Explore primeiro.")
+
+    with s5:
+        st.markdown("### 5. Ajuda")
+        st.markdown(
+            "Documentacao completa, conceitos e **glossario**."
         )
         if st.button("Ver Ajuda", key="nav_help"):
-            st.switch_page("pages/04_help.py")
+            st.switch_page("pages/05_help.py")
 
     st.divider()
 

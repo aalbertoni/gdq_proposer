@@ -236,3 +236,21 @@ if result.rules_text:
     )
 else:
     st.info("Habilite ao menos uma regra para gerar o relatorio.")
+
+
+# ---------------------------------------------------------------------------
+# Testar via Thundera
+# ---------------------------------------------------------------------------
+
+st.divider()
+st.header("Testar via Thundera")
+st.caption(
+    "Teste as regras exportadas em um Glue job de teste antes de "
+    "implantar em producao."
+)
+
+if result.rules_count > 0:
+    if st.button("Ir para pagina de Teste", type="secondary", key="go_test"):
+        st.switch_page("pages/04_test.py")
+else:
+    st.info("Habilite ao menos uma regra para testar.")

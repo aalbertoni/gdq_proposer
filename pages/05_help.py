@@ -1,5 +1,5 @@
 """
-Pagina 04 — Ajuda: Documentacao completa do usuario.
+Pagina 05 — Ajuda: Documentacao completa do usuario.
 
 Guia de uso da ferramenta GDQ Rule Proposer com explicacoes
 de conceitos, fluxo de trabalho e perguntas frequentes.
