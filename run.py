@@ -100,6 +100,35 @@ Flags:
     if args.debug:
         env["GDQ_LOG_LEVEL"] = "DEBUG"
 
+    # Verificar SSO login (apenas em modo real com profile)
+    if not args.mock and profile and profile != "(IAM role)":
+        try:
+            result = subprocess.run(
+                ["aws", "sts", "get-caller-identity", "--profile", profile],
+                capture_output=True, timeout=10,
+            )
+            if result.returncode != 0:
+                print(f"\n  [!] SSO nao esta ativo para o profile '{profile}'.")
+                print(f"  Execute: aws sso login --profile {profile}\n")
+                answer = input("  Deseja executar o login agora? (s/N): ").strip().lower()
+                if answer in ("s", "sim", "y", "yes"):
+                    subprocess.run(["aws", "sso", "login", "--profile", profile])
+                    # Re-check
+                    recheck = subprocess.run(
+                        ["aws", "sts", "get-caller-identity", "--profile", profile],
+                        capture_output=True, timeout=10,
+                    )
+                    if recheck.returncode != 0:
+                        print("\n  [!] Login falhou. Iniciando em modo mock.\n")
+                        env["GDQ_ATHENA_MODE"] = "mock"
+                        args.mock = True
+                else:
+                    print("\n  [!] Continuando sem SSO. A conexao pode falhar.\n")
+        except FileNotFoundError:
+            print("\n  [!] AWS CLI nao encontrado. Verifique a instalacao.\n")
+        except subprocess.TimeoutExpired:
+            print("\n  [!] Timeout ao verificar credenciais AWS.\n")
+
     # Banner
     mode = "DuckDB Mock" if args.mock else "Athena Real"
     profile = env.get("AWS_PROFILE", env.get("GDQ_AWS_PROFILE", "(IAM role)"))
