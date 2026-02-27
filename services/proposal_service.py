@@ -42,8 +42,13 @@ from core.rule_scoring import score_proposal
 from core.statistical_engine import (
     compute_dynamic_band,
     compute_frequency_band,
+    compute_iqr_band,
+    compute_mad_band,
     compute_margin_band,
+    detect_change_points,
     detect_drift,
+    detect_outliers,
+    detect_seasonality,
 )
 
 
@@ -51,9 +56,17 @@ class AutoTuneResult(TypedDict, total=False):
     """Resultado do grid search de auto-tune (find_best_params).
 
     Campos sempre presentes: n_periods, n_sigma, margin_pct, margin_enabled,
-    coverage_pct, false_positives, stability, score_total.
+    coverage_pct, weighted_coverage_pct, false_positives, stability, score_total.
+
+    Campos de breakdown do score (sempre presentes quando score_total > 0):
+    coverage_norm, fp_penalty, stability_bonus, width_penalty, drift_bonus,
+    n_penalty, recency_bonus. Estes sao os componentes individuais que somam
+    score_total.
 
     Campos adicionados apos avaliacao: confidence, viable, recommendation.
+
+    Campos opcionais de comparacao (presentes quando current_* fornecido):
+    band_width_ratio.
     """
 
     n_periods: int
@@ -61,9 +74,19 @@ class AutoTuneResult(TypedDict, total=False):
     margin_pct: float
     margin_enabled: bool
     coverage_pct: float
+    weighted_coverage_pct: float
     false_positives: int
     stability: float
     score_total: float
+    # Score breakdown components
+    coverage_norm: float
+    fp_penalty: float
+    stability_bonus: float
+    width_penalty: float
+    drift_bonus: float
+    n_penalty: float
+    recency_bonus: float
+    band_width_ratio: float
     confidence: "ConfidenceLevel"
     viable: bool
     recommendation: str
@@ -923,13 +946,29 @@ class ProposalService:
 
         margin_enabled = baseline.margin_enabled
 
+        # Detect seasonality (uses full series)
+        seasonality = detect_seasonality(clean, dates)
+
+        # Detect change points (uses full series)
+        change_info = detect_change_points(clean, dates)
+
+        # If change point detected, use only post-change values for band computation
+        effective_values = clean
+        effective_dates = dates
+        effective_n = baseline.n_periods
+        if change_info["has_change_point"] and len(change_info["post_change_values"]) >= 5:
+            effective_values = change_info["post_change_values"]
+            effective_dates = change_info["post_change_dates"]
+            # Adjust n_periods to not exceed available data
+            effective_n = min(baseline.n_periods, len(effective_values))
+
         try:
             sigma_band = compute_dynamic_band(
-                clean, baseline.n_periods, baseline.n_sigma,
+                effective_values, effective_n, baseline.n_sigma,
             )
             if margin_enabled:
                 margin_band = compute_margin_band(
-                    clean, baseline.n_periods, baseline.margin_pct,
+                    effective_values, effective_n, baseline.margin_pct,
                 )
             else:
                 margin_band = sigma_band  # fallback: same as sigma
@@ -953,7 +992,7 @@ class ProposalService:
             history_values=clean,
         )
 
-        # Backtest
+        # Backtest (uses full series for complete evaluation)
         proposal.backtest = backtest_band(
             values=clean,
             dates=dates,
@@ -968,6 +1007,37 @@ class ProposalService:
         score = score_proposal(proposal, clean)
         proposal.confidence = score.confidence
         proposal.warnings = score.warnings
+
+        # Store seasonality and change-point info
+        proposal.seasonality_info = seasonality
+        proposal.change_point_info = change_info
+
+        # Robust analysis (informational — does not change bands)
+        n_periods = baseline.n_periods
+        iqr_band = compute_iqr_band(clean, n_periods)
+        mad_band = compute_mad_band(clean, n_periods)
+        outliers = detect_outliers(clean, method="iqr", n_periods=n_periods)
+        robust_info = {
+            "iqr_band": iqr_band,
+            "mad_band": mad_band,
+            "outliers": outliers,
+            "iqr_vs_sigma": {
+                "sigma_width": sigma_band["upper"] - sigma_band["lower"],
+                "iqr_width": iqr_band["upper"] - iqr_band["lower"],
+                "mad_width": mad_band["upper"] - mad_band["lower"],
+                "recommendation": "classical",
+            },
+        }
+        # Recommend robust method if outliers distort classical band significantly
+        sigma_width = sigma_band["upper"] - sigma_band["lower"]
+        iqr_width = iqr_band["upper"] - iqr_band["lower"]
+        if sigma_width > 0 and iqr_width > 0:
+            width_ratio = sigma_width / iqr_width
+            if width_ratio > 2.0 and outliers["n_outliers"] >= 2:
+                robust_info["iqr_vs_sigma"]["recommendation"] = "robust_iqr"
+            elif width_ratio > 3.0:
+                robust_info["iqr_vs_sigma"]["recommendation"] = "robust_mad"
+        proposal.robust_info = robust_info
 
         # Sintaxe GDQ
         proposal.gdq_syntax_preview = self.generator.generate(proposal)
@@ -1014,6 +1084,21 @@ class ProposalService:
         drift_result = detect_drift(values)
         drift_bonus = 0.05 if not drift_result["has_drift"] else -0.05
 
+        # Detectar sazonalidade uma vez
+        seasonality_result = detect_seasonality(values, dates)
+        has_strong_seasonality = (
+            seasonality_result["has_seasonality"]
+            and seasonality_result["amplitude_ratio"] > 0.10
+        )
+
+        # Detectar mudanca de regime uma vez
+        change_result = detect_change_points(values, dates)
+        has_change_point = (
+            change_result["has_change_point"]
+            and len(change_result["post_change_values"]) >= 5
+        )
+        post_change_len = len(change_result["post_change_values"]) if has_change_point else 0
+
         best = None
         best_score = -1.0
 
@@ -1049,6 +1134,23 @@ class ProposalService:
                         width_penalty = max(0, (bt.band_width_ratio - 0.3)) * 0.15
                         n_penalty = 0.05 if n < 15 else 0.0
 
+                        # Bonus for N multiple of 7 when seasonality detected
+                        seasonality_bonus = (
+                            0.02 if has_strong_seasonality and n % 7 == 0 else 0.0
+                        )
+
+                        # Bonus for N <= post-change data when regime shift detected
+                        change_point_bonus = (
+                            0.03 if has_change_point and n <= post_change_len else 0.0
+                        )
+
+                        # Recency bonus: reward when recent coverage is better than overall
+                        weighted_cov = bt.weighted_coverage_pct
+                        if weighted_cov > bt.coverage_pct:
+                            recency_bonus = (weighted_cov - bt.coverage_pct) / 100 * 0.10
+                        else:
+                            recency_bonus = 0.0
+
                         combo_score = (
                             coverage_norm
                             - fp_penalty
@@ -1056,6 +1158,9 @@ class ProposalService:
                             - width_penalty
                             + drift_bonus
                             - n_penalty
+                            + seasonality_bonus
+                            + change_point_bonus
+                            + recency_bonus
                         )
 
                         if combo_score > best_score:
@@ -1066,17 +1171,33 @@ class ProposalService:
                                 "margin_pct": margin,
                                 "margin_enabled": margin_on,
                                 "coverage_pct": bt.coverage_pct,
+                                "weighted_coverage_pct": bt.weighted_coverage_pct,
                                 "false_positives": bt.false_positive_proxy,
                                 "stability": bt.stability_score,
                                 "score_total": round(combo_score, 4),
+                                # Score breakdown components
+                                "coverage_norm": round(coverage_norm, 4),
+                                "fp_penalty": round(fp_penalty, 4),
+                                "stability_bonus": round(stability_bonus, 4),
+                                "width_penalty": round(width_penalty, 4),
+                                "drift_bonus": round(drift_bonus, 4),
+                                "n_penalty": round(n_penalty, 4),
+                                "recency_bonus": round(recency_bonus, 4),
+                                "band_width_ratio": round(bt.band_width_ratio, 4),
                             }
 
         if best is None:
             return {
                 "n_periods": 20, "n_sigma": 2.0, "margin_pct": 0.10,
                 "margin_enabled": True,
-                "coverage_pct": 0.0, "false_positives": 0,
+                "coverage_pct": 0.0, "weighted_coverage_pct": 0.0,
+                "false_positives": 0,
                 "stability": 0.0, "score_total": 0.0,
+                "coverage_norm": 0.0, "fp_penalty": 0.0,
+                "stability_bonus": 0.0, "width_penalty": 0.0,
+                "drift_bonus": 0.0, "n_penalty": 0.0,
+                "recency_bonus": 0.0,
+                "band_width_ratio": 0.0,
                 "confidence": ConfidenceLevel.LOW,
                 "viable": False,
                 "recommendation": "Dados insuficientes para avaliar — nao recomendado.",
@@ -1108,6 +1229,22 @@ class ProposalService:
                 f"Nao recomendado: a melhor combinacao atinge apenas {coverage:.1f}% de cobertura"
                 f" com {fp} falso(s) positivo(s). "
                 f"Esta metrica pode ser instavel demais para uma regra automatica."
+            )
+
+        # Append seasonality warning if detected
+        if has_strong_seasonality:
+            amp_ratio = seasonality_result["amplitude_ratio"]
+            recommendation += (
+                f" Sazonalidade detectada (amplitude {amp_ratio:.0%})."
+                f" Considere usar N multiplo de 7 para suavizar efeito semanal."
+            )
+
+        # Append change-point note if detected
+        if has_change_point:
+            cp_date = change_result.get("change_date", "periodo desconhecido")
+            recommendation += (
+                f" Mudanca de regime detectada em {cp_date}."
+                f" Apenas os {post_change_len} periodos pos-mudanca foram priorizados."
             )
 
         best["confidence"] = confidence

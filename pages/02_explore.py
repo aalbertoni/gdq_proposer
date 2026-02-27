@@ -221,6 +221,18 @@ def _render_backtest_metrics(proposal):
                 help="Avaliacao geral: HIGH = recomendada, MEDIUM = revisar parametros, LOW = nao recomendada.",
             )
 
+        if hasattr(bt, 'weighted_coverage_pct') and abs(bt.weighted_coverage_pct - bt.coverage_pct) > 2.0:
+            if bt.weighted_coverage_pct > bt.coverage_pct:
+                st.caption(
+                    f"Cobertura recente: {bt.weighted_coverage_pct:.1f}% "
+                    f"(periodos mais recentes estao mais estaveis)"
+                )
+            else:
+                st.caption(
+                    f"Cobertura recente: {bt.weighted_coverage_pct:.1f}% "
+                    f"(periodos mais recentes estao mais instaveis)"
+                )
+
         if bt.has_drift:
             st.warning(
                 "Tendencia (drift) detectada no historico. "
@@ -266,9 +278,77 @@ def _get_cached_proposals(cache_key, generate_fn):
     return st.session_state[cache_key]
 
 
+def _update_col_health(column: str, rule_key: str, confidence: ConfidenceLevel) -> None:
+    """Store proposal confidence in a summary dict for the Resumo tab.
+
+    Args:
+        column: Column name (or "__table__" for table-level rules).
+        rule_key: Short key identifying the rule type (e.g. "mean", "stddev",
+                  "completeness", "allowed_values", "frequency", "distinct_count",
+                  "rowcount", "pk").
+        confidence: The ConfidenceLevel of the proposal.
+    """
+    health_key = "col_health"
+    if health_key not in st.session_state:
+        st.session_state[health_key] = {}
+    if column not in st.session_state[health_key]:
+        st.session_state[health_key][column] = {}
+    st.session_state[health_key][column][rule_key] = confidence
+
+
+def _render_robust_info(proposal):
+    """Renderiza informacoes de analise robusta (IQR/MAD) quando outliers detectados."""
+    if not proposal or not proposal.robust_info:
+        return
+
+    info = proposal.robust_info
+    outlier_info = info.get("outliers", {})
+    comparison = info.get("iqr_vs_sigma", {})
+
+    if outlier_info.get("n_outliers", 0) > 0:
+        with st.expander(
+            f"Analise de outliers: {outlier_info['n_outliers']} detectados "
+            f"({outlier_info['pct_outliers']:.1%} dos periodos)",
+            expanded=False,
+        ):
+            st.caption(
+                f"Metodo IQR (Tukey): valores fora de [Q1 - 1.5*IQR, Q3 + 1.5*IQR] "
+                f"sao considerados outliers."
+            )
+            iqr_b = info["iqr_band"]
+            mad_b = info["mad_band"]
+            st.caption(
+                f"Banda IQR: [{iqr_b['lower']:.2f}, {iqr_b['upper']:.2f}] "
+                f"(centro: {iqr_b['center']:.2f}, IQR: {iqr_b['iqr']:.2f})"
+            )
+            st.caption(
+                f"Banda MAD: [{mad_b['lower']:.2f}, {mad_b['upper']:.2f}] "
+                f"(centro: {mad_b['center']:.2f}, MAD: {mad_b['mad_scaled']:.2f})"
+            )
+
+            rec = comparison.get("recommendation", "classical")
+            if rec != "classical":
+                st.warning(
+                    f"A banda classica (sigma) e {comparison['sigma_width']:.2f} de largura, "
+                    f"enquanto a banda IQR e {comparison['iqr_width']:.2f}. "
+                    f"Os outliers podem estar distorcendo a banda classica. "
+                    f"Considere aumentar sigma (K) ou usar margem % para compensar."
+                )
+
+
 def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeric"):
-    """Renderiza botao de auto-tuning, exibe resultado e aplica parametros."""
+    """Renderiza botao de auto-tuning, exibe resultado com justificativa e aplica parametros.
+
+    Alem de mostrar os parametros recomendados, exibe um breakdown detalhado
+    do score composto e uma comparacao antes/depois quando possivel.
+    """
     cache_key = f"autotune_{rule_key}"
+
+    # Captura parametros atuais dos sliders para comparacao antes/depois
+    current_n = st.session_state.get(f"n_{rule_key}")
+    current_k = st.session_state.get(f"k_{rule_key}")
+    current_margin_pct_int = st.session_state.get(f"margin_{rule_key}")
+    current_margin_on = st.session_state.get(f"margin_on_{rule_key}")
 
     if st.button(
         "Sugerir melhor combinacao",
@@ -280,10 +360,26 @@ def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeri
             result = proposal_svc.find_best_params(
                 values=values, dates=dates, metric_kind=metric_kind,
             )
+            # Captura tambem o backtest com parametros atuais para comparacao
+            current_snapshot = None
+            if current_n is not None and current_k is not None:
+                try:
+                    current_margin = (current_margin_pct_int or 10) / 100.0
+                    current_margin_enabled = current_margin_on if current_margin_on is not None else True
+                    current_snapshot = proposal_svc.find_best_params(
+                        values=values, dates=dates, metric_kind=metric_kind,
+                        n_range=[current_n],
+                        sigma_range=[current_k],
+                        margin_range=[current_margin],
+                    )
+                except Exception:
+                    current_snapshot = None
             st.session_state[cache_key] = result
+            st.session_state[f"{cache_key}_before"] = current_snapshot
 
     if cache_key in st.session_state:
         result = st.session_state[cache_key]
+        before = st.session_state.get(f"{cache_key}_before")
         confidence = result["confidence"]
         badge = _confidence_badge(confidence)
 
@@ -296,15 +392,168 @@ def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeri
                 f"{badge} {result['recommendation']}"
             )
 
-        st.caption(
-            f"Melhor: N={result['n_periods']}, "
-            f"sigma={result['n_sigma']}, "
-            f"margem={result['margin_pct']*100:.0f}%"
-            f"{' (ativada)' if result['margin_enabled'] else ' (desativada)'} "
-            f"-- cobertura {result['coverage_pct']:.1f}%, "
-            f"FP: {result['false_positives']}, "
-            f"estabilidade: {result['stability']:.2f}"
-        )
+        # -- Metricas-chave em colunas --
+        m_c1, m_c2, m_c3, m_c4 = st.columns(4)
+        with m_c1:
+            cov_delta = None
+            if before and before.get("coverage_pct", 0) > 0:
+                cov_delta = f"{result['coverage_pct'] - before['coverage_pct']:+.1f}%"
+            st.metric(
+                "Cobertura",
+                f"{result['coverage_pct']:.1f}%",
+                delta=cov_delta,
+                help="Porcentagem de periodos historicos que passariam na regra com os parametros sugeridos.",
+            )
+        with m_c2:
+            fp_delta = None
+            if before and "false_positives" in before:
+                fp_diff = result["false_positives"] - before["false_positives"]
+                if fp_diff != 0:
+                    fp_delta = f"{fp_diff:+d}"
+            st.metric(
+                "Falsos Positivos",
+                f"~{result['false_positives']}",
+                delta=fp_delta,
+                delta_color="inverse",
+                help="Estimativa de periodos normais que seriam reprovados indevidamente.",
+            )
+        with m_c3:
+            score_delta = None
+            if before and before.get("score_total", 0) > 0:
+                score_delta = f"{result['score_total'] - before['score_total']:+.4f}"
+            st.metric(
+                "Score Total",
+                f"{result['score_total']:.4f}",
+                delta=score_delta,
+                help="Score composto do grid search. Maior = melhor. "
+                     "Combina cobertura, FP, estabilidade, largura da banda e drift.",
+            )
+        with m_c4:
+            st.metric(
+                "Confianca",
+                badge,
+                help="HIGH = recomendada, MEDIUM = revisar, LOW = nao recomendada.",
+            )
+
+        # -- Parametros recomendados --
+        p_c1, p_c2, p_c3, p_c4 = st.columns(4)
+        with p_c1:
+            st.caption(f"**N:** {result['n_periods']} periodos")
+        with p_c2:
+            st.caption(f"**Sigma:** {result['n_sigma']}")
+        with p_c3:
+            st.caption(f"**Margem:** {result['margin_pct']*100:.0f}%")
+        with p_c4:
+            st.caption(f"**Margem:** {'ativada' if result['margin_enabled'] else 'desativada'}")
+
+        # -- Expander com detalhes do score e comparacao --
+        with st.expander("Detalhes do auto-tune", expanded=False):
+            # Score breakdown table
+            st.markdown("**Decomposicao do Score**")
+            st.caption(
+                "O score total e a soma dos componentes abaixo. "
+                "Valores positivos contribuem, negativos penalizam."
+            )
+
+            breakdown_items = [
+                ("Cobertura normalizada", result.get("coverage_norm", 0), "+", "coverage / 100"),
+                ("Penalidade FP", result.get("fp_penalty", 0), "-", "FP * 0.05"),
+                ("Bonus estabilidade", result.get("stability_bonus", 0), "+", "stability * 0.10"),
+                ("Penalidade largura", result.get("width_penalty", 0), "-", "max(0, width_ratio - 0.3) * 0.15"),
+                ("Bonus/penalidade drift", result.get("drift_bonus", 0), "+/-", "+0.05 sem drift, -0.05 com drift"),
+                ("Penalidade N curto", result.get("n_penalty", 0), "-", "0.05 se N < 15"),
+                ("Bonus recencia", result.get("recency_bonus", 0), "+", "(weighted_cov - flat_cov)/100 * 0.10"),
+            ]
+
+            # Build markdown table
+            md_rows = ["| Componente | Valor | Sinal | Formula |", "|---|---|---|---|"]
+            for name, value, sign, formula in breakdown_items:
+                if sign == "-" and value > 0:
+                    md_rows.append(f"| {name} | :red[-{value:.4f}] | {sign} | `{formula}` |")
+                elif sign == "+/-":
+                    if value >= 0:
+                        md_rows.append(f"| {name} | :green[+{value:.4f}] | {sign} | `{formula}` |")
+                    else:
+                        md_rows.append(f"| {name} | :red[{value:.4f}] | {sign} | `{formula}` |")
+                else:
+                    md_rows.append(f"| {name} | :green[+{value:.4f}] | {sign} | `{formula}` |")
+            md_rows.append(f"| **Score Total** | **{result['score_total']:.4f}** | = | soma |")
+            st.markdown("\n".join(md_rows))
+
+            # Largura da banda
+            bwr = result.get("band_width_ratio", 0)
+            if bwr > 0:
+                st.caption(
+                    f"Largura relativa da banda: {bwr:.4f} "
+                    f"({'estreita' if bwr < 0.3 else 'moderada' if bwr < 1.0 else 'larga'}). "
+                    f"Penalidade aplicada quando > 0.30."
+                )
+
+            # Weighted coverage insight
+            weighted_cov = result.get("weighted_coverage_pct", 0)
+            flat_cov = result.get("coverage_pct", 0)
+            if abs(weighted_cov - flat_cov) > 1.0:
+                if weighted_cov > flat_cov:
+                    st.caption(
+                        f":green[Cobertura recente ({weighted_cov:.1f}%) e melhor que historica ({flat_cov:.1f}%).] "
+                        f"Os periodos mais recentes estao mais estaveis."
+                    )
+                else:
+                    st.caption(
+                        f":orange[Cobertura recente ({weighted_cov:.1f}%) e pior que historica ({flat_cov:.1f}%).] "
+                        f"Os periodos mais recentes estao mais instaveis."
+                    )
+
+            # Comparacao antes vs depois
+            if before and before.get("score_total", 0) > 0:
+                st.divider()
+                st.markdown("**Comparacao: parametros atuais vs sugeridos**")
+
+                cmp_c1, cmp_c2 = st.columns(2)
+                with cmp_c1:
+                    st.markdown("**Antes** (parametros atuais)")
+                    st.caption(
+                        f"N={before['n_periods']}, "
+                        f"sigma={before['n_sigma']}, "
+                        f"margem={before['margin_pct']*100:.0f}%"
+                        f"{' (ativada)' if before['margin_enabled'] else ' (desativada)'}"
+                    )
+                    st.caption(
+                        f"Cobertura: {before['coverage_pct']:.1f}% | "
+                        f"FP: ~{before['false_positives']} | "
+                        f"Score: {before['score_total']:.4f}"
+                    )
+                with cmp_c2:
+                    st.markdown("**Depois** (parametros sugeridos)")
+                    st.caption(
+                        f"N={result['n_periods']}, "
+                        f"sigma={result['n_sigma']}, "
+                        f"margem={result['margin_pct']*100:.0f}%"
+                        f"{' (ativada)' if result['margin_enabled'] else ' (desativada)'}"
+                    )
+                    st.caption(
+                        f"Cobertura: {result['coverage_pct']:.1f}% | "
+                        f"FP: ~{result['false_positives']} | "
+                        f"Score: {result['score_total']:.4f}"
+                    )
+
+                # Highlight improvements
+                improvements = []
+                cov_diff = result["coverage_pct"] - before["coverage_pct"]
+                fp_diff = result["false_positives"] - before["false_positives"]
+                score_diff = result["score_total"] - before["score_total"]
+
+                if cov_diff > 0:
+                    improvements.append(f"cobertura +{cov_diff:.1f}pp")
+                if fp_diff < 0:
+                    improvements.append(f"FP {fp_diff:+d}")
+                if score_diff > 0:
+                    improvements.append(f"score +{score_diff:.4f}")
+
+                if improvements:
+                    st.caption(f"Ganhos: {', '.join(improvements)}")
+                elif score_diff == 0 and cov_diff == 0:
+                    st.caption("Os parametros atuais ja sao otimos para esta metrica.")
 
         # Botao para aplicar parametros sugeridos nos sliders.
         # Armazena em _pending_autotune para aplicar ANTES dos widgets no proximo rerun.
@@ -500,6 +749,12 @@ with st.sidebar:
         _cols[0].metric("Executadas", _summary["total_queries"])
         _cols[1].metric("Tempo total", f"{_summary['total_elapsed_ms'] / 1000:.1f}s")
 
+        if _summary["cache_hits"] > 0:
+            st.caption(
+                f"Cache hits Athena: {_summary['cache_hits']}/{_summary['total_queries']} "
+                f"({_summary['cache_hit_rate']:.0%})"
+            )
+
         if _summary["total_bytes_scanned"] > 0:
             _bytes = _summary["total_bytes_scanned"]
             if _bytes >= 1024 ** 3:
@@ -669,6 +924,7 @@ with tab_numericas:
 
             if mean_proposals:
                 proposal = mean_proposals[0]
+                _update_col_health(selected_col, "mean", proposal.confidence)
                 values = proposal.history_values
                 dates = proposal.history_dates
 
@@ -677,6 +933,38 @@ with tab_numericas:
                         values, dates, mean_n, mean_k, mean_margin, "Mean",
                         margin_enabled=mean_margin_on,
                     )
+
+                    # Seasonality info box
+                    if (
+                        proposal.seasonality_info
+                        and proposal.seasonality_info.get("has_seasonality")
+                    ):
+                        info = proposal.seasonality_info
+                        st.info(
+                            f"Sazonalidade semanal detectada "
+                            f"(forca: {info['seasonality_strength']:.0%}, "
+                            f"amplitude: {info['amplitude_ratio']:.0%}). "
+                            f"{info['message']}"
+                        )
+
+                    # Change point info box
+                    if (
+                        proposal.change_point_info
+                        and proposal.change_point_info.get("has_change_point")
+                    ):
+                        cp = proposal.change_point_info
+                        st.warning(
+                            f"Mudanca de regime detectada em "
+                            f"{cp.get('change_date', 'periodo desconhecido')}. "
+                            f"{cp['message']} "
+                            f"Os limites foram calculados usando apenas os "
+                            f"{len(cp['post_change_values'])} "
+                            f"periodos mais recentes (pos-mudanca)."
+                        )
+
+                    # Robust statistics info
+                    _render_robust_info(proposal)
+
                     _render_auto_tune(
                         proposal_svc, values, dates,
                         f"mean_{selected_col}", metric_kind="numeric",
@@ -718,6 +1006,7 @@ with tab_numericas:
 
             if std_proposals:
                 proposal = std_proposals[0]
+                _update_col_health(selected_col, "stddev", proposal.confidence)
                 values = proposal.history_values
                 dates = proposal.history_dates
 
@@ -726,6 +1015,10 @@ with tab_numericas:
                         values, dates, std_n, std_k, std_margin, "StdDev",
                         margin_enabled=std_margin_on,
                     )
+
+                    # Robust statistics info
+                    _render_robust_info(proposal)
+
                     _render_auto_tune(
                         proposal_svc, values, dates,
                         f"stddev_{selected_col}", metric_kind="numeric",
@@ -786,6 +1079,7 @@ with tab_numericas:
                 )
 
                 for pct_prop in pct_proposals:
+                    _update_col_health(selected_col, f"pct_{pct_prop.metric_name}", pct_prop.confidence)
                     pct_label = pct_prop.metric_name.upper()
                     with st.expander(f"{pct_label} -- {selected_col}", expanded=len(pct_proposals) <= 2):
                         pct_vals = pct_prop.history_values
@@ -795,11 +1089,6 @@ with tab_numericas:
                             _render_rolling_chart(
                                 pct_vals, pct_dates, pct_n, pct_k, pct_margin,
                                 pct_label, margin_enabled=pct_margin_on,
-                            )
-                            _render_auto_tune(
-                                proposal_svc, pct_vals, pct_dates,
-                                f"pct_{selected_col}_{pct_prop.metric_name}",
-                                metric_kind="numeric",
                             )
 
                         _render_backtest_metrics(pct_prop)
@@ -824,6 +1113,7 @@ with tab_numericas:
             )
 
             if comp_proposals:
+                _update_col_health(selected_col, "completeness", comp_proposals[0].confidence)
                 with st.expander(f"Completeness {selected_col}", expanded=False):
                     st.caption(
                         "Regra de completude: verifica que a porcentagem de valores nao-nulos "
@@ -891,6 +1181,16 @@ with tab_categoricas:
             )
 
         st.divider()
+
+        # --- Cost guardrail for high-cardinality columns ---
+        if effective == SemanticType.CATEGORICAL_HIGH_CARDINALITY:
+            st.warning(
+                f"Coluna `{selected_cat_col}` tem alta cardinalidade "
+                f"({cat_profile.distinct_count} valores distintos). "
+                f"As queries categoricas podem ser mais caras e lentas. "
+                f"Apenas regras de completude e contagem de distintos serao geradas. "
+                f"Considere reclassificar a coluna no Setup se a cardinalidade real for menor.",
+            )
 
         # --- Fetch data ---
         try:
@@ -1060,6 +1360,24 @@ with tab_categoricas:
                     distinct_count_history=cat_dc_history_df,
                 ),
             )
+
+            # --- Update col_health for categorical proposals ---
+            _freq_tracked = False
+            for cp in cat_proposals:
+                if cp.rule_type in (
+                    RuleType.CATEGORY_FREQUENCY_STATIC,
+                    RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+                    RuleType.CATEGORY_FREQUENCY_HYBRID,
+                ):
+                    if not _freq_tracked:
+                        _update_col_health(selected_cat_col, "frequency", cp.confidence)
+                        _freq_tracked = True
+                elif cp.rule_type == RuleType.ALLOWED_VALUES:
+                    _update_col_health(selected_cat_col, "allowed_values", cp.confidence)
+                elif cp.rule_type in (RuleType.DISTINCT_COUNT_EXACT, RuleType.DISTINCT_COUNT_RANGE):
+                    _update_col_health(selected_cat_col, "distinct_count", cp.confidence)
+                elif cp.rule_type == RuleType.COMPLETENESS:
+                    _update_col_health(selected_cat_col, "completeness", cp.confidence)
 
             if is_high:
                 st.warning(
@@ -1337,6 +1655,7 @@ with tab_tabela:
 
         if rc_proposals:
             rc_proposal = rc_proposals[0]
+            _update_col_health("__table__", "rowcount", rc_proposal.confidence)
 
             values = rc_proposal.history_values
             dates = rc_proposal.history_dates
@@ -1487,6 +1806,7 @@ with tab_tabela:
 
             if pk_proposals:
                 for pk_p in pk_proposals:
+                    _update_col_health("__table__", f"pk_{pk_p.rule_type.value}", pk_p.confidence)
                     label = get_rule_label(pk_p.rule_type)
                     conf = _confidence_badge(pk_p.confidence)
                     cov_str = (
@@ -1526,9 +1846,256 @@ with tab_tabela:
 # ===========================================================================
 
 with tab_resumo:
-    st.subheader("Resumo de Regras")
 
+    # ------------------------------------------------------------------
+    # Column Health Dashboard
+    # ------------------------------------------------------------------
+    st.subheader("Visao Geral das Colunas")
+    st.caption(
+        "Panorama das colunas analisadas. Visite cada coluna nas abas "
+        "Numericas/Categoricas/Tabela para preencher o painel."
+    )
+
+    col_health = st.session_state.get("col_health", {})
     cart = st.session_state.get("rule_cart", [])
+
+    # Build set of (column, rule_type) in cart for quick lookup
+    _cart_by_col: dict[str, set[str]] = {}
+    for sel in cart:
+        p = sel.proposal
+        col_key = p.target_column or "__table__"
+        if col_key not in _cart_by_col:
+            _cart_by_col[col_key] = set()
+        _cart_by_col[col_key].add(p.rule_type.value)
+
+    # Determine which columns to show: all selected + table-level
+    all_display_cols: list[tuple[str, str]] = []  # (display_name, health_key)
+    for p in numeric_profiles:
+        all_display_cols.append((p.column_name, p.column_name))
+    for p in cat_profiles:
+        if p.column_name not in {c[1] for c in all_display_cols}:
+            all_display_cols.append((p.column_name, p.column_name))
+    all_display_cols.append((f"{dataset_config.table} (tabela)", "__table__"))
+
+    # Define rule columns to display
+    _rule_cols = [
+        ("Mean", "mean"),
+        ("StdDev", "stddev"),
+        ("Compl.", "completeness"),
+        ("Freq.", "frequency"),
+        ("RowCount", "rowcount"),
+    ]
+
+    if all_display_cols:
+        # Header row
+        hdr = st.columns([3] + [1] * len(_rule_cols) + [1])
+        hdr[0].markdown("**Coluna**")
+        for i, (label, _) in enumerate(_rule_cols):
+            hdr[i + 1].markdown(f"**{label}**")
+        hdr[len(_rule_cols) + 1].markdown("**Carrinho**")
+
+        # Data rows
+        for display_name, health_key in all_display_cols:
+            row = st.columns([3] + [1] * len(_rule_cols) + [1])
+            row[0].caption(display_name)
+
+            health_data = col_health.get(health_key, {})
+            cart_types = _cart_by_col.get(health_key, set())
+
+            for i, (_, rule_key) in enumerate(_rule_cols):
+                if rule_key in health_data:
+                    row[i + 1].markdown(_confidence_badge(health_data[rule_key]))
+                else:
+                    row[i + 1].caption("--")
+
+            # Cart indicator: count rules in cart for this column
+            n_in_cart = len(cart_types)
+            if n_in_cart > 0:
+                row[len(_rule_cols) + 1].markdown(f":white_check_mark: {n_in_cart}")
+            else:
+                row[len(_rule_cols) + 1].caption("--")
+
+        # Summary counts
+        n_analyzed = sum(1 for _, hk in all_display_cols if hk in col_health)
+        n_total = len(all_display_cols)
+        n_in_cart_total = len({
+            (sel.proposal.target_column or "__table__")
+            for sel in cart
+        })
+        st.caption(
+            f"{n_analyzed}/{n_total} colunas analisadas | "
+            f"{n_in_cart_total} com regras no carrinho | "
+            f"{len(cart)} regra(s) total no carrinho"
+        )
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # Batch Calibrate All
+    # ------------------------------------------------------------------
+    st.subheader("Calibracao em lote")
+    st.caption(
+        "Executa auto-tune em todas as colunas numericas e adiciona "
+        "regras de alta confianca ao carrinho automaticamente."
+    )
+
+    batch_min_confidence = st.selectbox(
+        "Confianca minima para adicionar ao carrinho",
+        options=["HIGH", "MEDIUM"],
+        index=0,
+        key="batch_min_confidence",
+        help="HIGH: apenas regras muito confiaveis. MEDIUM: inclui regras que precisam revisao.",
+    )
+
+    if st.button("Auto-calibrar todas as colunas numericas", key="btn_batch_calibrate"):
+        if not config_dict:
+            st.error("Configure a tabela no Setup primeiro.")
+            st.stop()
+
+        batch_numeric_cols = [p.column_name for p in numeric_profiles]
+
+        if not batch_numeric_cols:
+            st.warning("Nenhuma coluna numerica encontrada.")
+            st.stop()
+
+        batch_progress = st.progress(0, text="Iniciando calibracao em lote...")
+        batch_results = []
+
+        for batch_i, batch_col in enumerate(batch_numeric_cols):
+            batch_progress.progress(
+                (batch_i + 1) / len(batch_numeric_cols),
+                text=f"Analisando {batch_col} ({batch_i + 1}/{len(batch_numeric_cols)})...",
+            )
+
+            try:
+                # Fetch history (uses Streamlit cache)
+                batch_history_df = fetch_numeric_history(config_dict, batch_col)
+                if batch_history_df.empty or len(batch_history_df) < 5:
+                    batch_results.append({
+                        "column": batch_col, "status": "skip",
+                        "reason": "dados insuficientes",
+                    })
+                    continue
+
+                # Extract values for auto-tune
+                batch_values = batch_history_df["mean"].tolist()
+                batch_dates = batch_history_df["period"].astype(str).tolist()
+
+                # Run auto-tune
+                batch_best = proposal_svc.find_best_params(
+                    values=batch_values, dates=batch_dates,
+                )
+
+                if batch_best["confidence"].value == "LOW":
+                    batch_results.append({
+                        "column": batch_col, "status": "skip",
+                        "reason": "confianca LOW",
+                    })
+                    continue
+
+                if (
+                    batch_min_confidence == "HIGH"
+                    and batch_best["confidence"] != ConfidenceLevel.HIGH
+                ):
+                    batch_results.append({
+                        "column": batch_col, "status": "skip",
+                        "reason": f"confianca {batch_best['confidence'].value}",
+                    })
+                    continue
+
+                # Generate proposals with best params
+                batch_baseline = BaselineStrategy(
+                    n_periods=batch_best["n_periods"],
+                    n_sigma=batch_best["n_sigma"],
+                    margin_pct=batch_best["margin_pct"],
+                    margin_enabled=batch_best["margin_enabled"],
+                )
+
+                batch_proposals = proposal_svc.propose_numeric_rules(
+                    history=batch_history_df,
+                    column=batch_col,
+                    table=config_dict.get("table", ""),
+                    baseline=batch_baseline,
+                )
+
+                # Add Mean and StdDev to cart (skip Completeness)
+                batch_cart = st.session_state.get("rule_cart", [])
+                batch_added = 0
+                for batch_prop in batch_proposals:
+                    if batch_prop.rule_type in (
+                        RuleType.MEAN_DUAL_GUARD,
+                        RuleType.STDDEV_DUAL_GUARD,
+                    ):
+                        # Check not already in cart
+                        already_in_cart = any(
+                            r.proposal.rule_type == batch_prop.rule_type
+                            and r.proposal.target_column == batch_prop.target_column
+                            for r in batch_cart
+                        )
+                        if not already_in_cart:
+                            batch_cart.append(RuleSelection(
+                                proposal_id=batch_prop.id,
+                                proposal=batch_prop,
+                                final_gdq_syntax=batch_prop.gdq_syntax_preview,
+                            ))
+                            batch_added += 1
+
+                st.session_state["rule_cart"] = batch_cart
+                batch_results.append({
+                    "column": batch_col,
+                    "status": "added" if batch_added > 0 else "exists",
+                    "confidence": batch_best["confidence"].value,
+                    "coverage": batch_best["coverage_pct"],
+                    "n": batch_best["n_periods"],
+                    "sigma": batch_best["n_sigma"],
+                    "added": batch_added,
+                })
+
+            except Exception as e:
+                batch_results.append({
+                    "column": batch_col, "status": "error",
+                    "reason": str(e),
+                })
+
+        batch_progress.empty()
+
+        # Show results summary
+        total_added = sum(r.get("added", 0) for r in batch_results)
+        total_skipped = sum(1 for r in batch_results if r["status"] == "skip")
+        total_errors = sum(1 for r in batch_results if r["status"] == "error")
+
+        if total_added > 0:
+            st.success(
+                f"{total_added} regras adicionadas ao carrinho "
+                f"de {len(batch_numeric_cols)} colunas."
+            )
+
+        # Show details per column
+        with st.expander(
+            f"Detalhes: {len(batch_results)} colunas analisadas",
+            expanded=total_added > 0,
+        ):
+            for br in batch_results:
+                if br["status"] == "added":
+                    st.caption(
+                        f":green[+{br['added']}] **{br['column']}** -- "
+                        f"{br['confidence']}, cobertura {br['coverage']:.1f}%, "
+                        f"N={br['n']}, sigma={br['sigma']}"
+                    )
+                elif br["status"] == "exists":
+                    st.caption(f":blue[=] **{br['column']}** -- ja no carrinho")
+                elif br["status"] == "skip":
+                    st.caption(f":orange[-] **{br['column']}** -- {br['reason']}")
+                elif br["status"] == "error":
+                    st.caption(f":red[!] **{br['column']}** -- erro: {br['reason']}")
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # Cart list (existing behavior)
+    # ------------------------------------------------------------------
+    st.subheader("Regras no Carrinho")
+
     if not cart:
         st.info(
             "Nenhuma regra no carrinho ainda. "
