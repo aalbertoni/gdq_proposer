@@ -158,7 +158,7 @@ class GlueTestService:
             on_status("STARTING", "Disparando Glue job...")
         run_id = self._client.start_job_run(
             job_name=job_name,
-            arguments={"--payload": json_str},
+            arguments={"--objson": json_str},
         )
 
         # Poll

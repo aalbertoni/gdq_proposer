@@ -34,7 +34,7 @@ class GlueClient:
 
     Usage:
         client = GlueClient(config)
-        run_id = client.start_job_run("job-name", {"--payload": json_str})
+        run_id = client.start_job_run("job-name", {"--objson": json_str})
         status = client.get_job_run("job-name", run_id)
     """
 
@@ -67,7 +67,7 @@ class GlueClient:
 
         Args:
             job_name: Nome do Glue job (ex: "glueplataformathundera").
-            arguments: Argumentos do job (chave: "--payload", valor: JSON).
+            arguments: Argumentos do job (chave: "--objson", valor: JSON).
 
         Returns:
             Run ID da execucao.
