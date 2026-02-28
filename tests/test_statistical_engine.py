@@ -4,6 +4,7 @@ Usa as 8 fixtures sintéticas para validar bandas, margens e drift.
 """
 
 import math
+import random
 import pytest
 
 from core.statistical_engine import (
@@ -523,3 +524,33 @@ class TestChangePointDetection:
         result_low = detect_change_points(data["values"], data["dates"], threshold=2.0)
         result_high = detect_change_points(data["values"], data["dates"], threshold=8.0)
         assert result_low["n_change_points"] >= result_high["n_change_points"]
+
+    def test_small_fluctuation_not_detected(self):
+        """Small natural variation should NOT trigger change-point.
+
+        A series with mean ~100 and std ~5 that shifts to ~103 (< 1.5 * within_std)
+        should not be considered a regime change.
+        """
+        rng = random.Random(99)
+        # First half: mean 100, std ~5
+        values = [100.0 + rng.gauss(0, 5) for _ in range(20)]
+        # Second half: mean 103, std ~5 (small shift < 1.5 * 5 = 7.5)
+        values += [103.0 + rng.gauss(0, 5) for _ in range(20)]
+        dates = [f"2026-01-{i+1:02d}" for i in range(40)]
+        result = detect_change_points(values, dates)
+        assert result["has_change_point"] is False
+
+    def test_large_shift_still_detected(self):
+        """Large regime shift (100 -> 200) should still be detected after filter."""
+        data = make_regime_change_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        assert result["has_change_point"] is True
+        # Message should contain the percentage
+        assert "%" in result["message"]
+
+    def test_message_includes_relative_magnitude(self):
+        """When change detected, message should show relative magnitude."""
+        data = make_regime_change_series(n=30)
+        result = detect_change_points(data["values"], data["dates"])
+        if result["has_change_point"]:
+            assert "diferenca de" in result["message"]

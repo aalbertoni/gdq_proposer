@@ -684,7 +684,6 @@ def detect_change_points(
 
     # 8. Keep the LAST valid change point as most relevant
     last_cp = filtered_cps[-1]
-    last_cp_original_index = valid_indices[last_cp]
 
     # 9. Build segments
     segments: list[dict] = []
@@ -702,30 +701,74 @@ def detect_change_points(
             "std": seg_std,
         })
 
-    # 10. Post-change values (from original arrays, using the original index)
+    # 10. Magnitude filter: verify that the last change point represents
+    # a meaningful shift, not just CUSUM drift on noisy data.
+    # Require: |post_mean - pre_mean| > 1.5 * min(pre_std, post_std)
+    # AND > 5% of the overall mean (relative magnitude).
+    pre_seg = segments[-2] if len(segments) >= 2 else segments[0]
+    post_seg = segments[-1]
+    mean_diff = abs(post_seg["mean"] - pre_seg["mean"])
+
+    # Use the smaller within-segment std as reference (more conservative)
+    min_within_std = min(
+        pre_seg["std"] if pre_seg["std"] > 0 else float("inf"),
+        post_seg["std"] if post_seg["std"] > 0 else float("inf"),
+    )
+    if min_within_std == float("inf"):
+        min_within_std = std  # fallback to global
+
+    # Relative magnitude: at least 5% of the absolute mean
+    abs_mean = abs(mean) if mean != 0 else 1.0
+    relative_magnitude = mean_diff / abs_mean
+
+    magnitude_ok = (
+        mean_diff > 1.5 * min_within_std
+        and relative_magnitude > 0.05
+    )
+
+    if not magnitude_ok:
+        # CUSUM triggered but difference is not meaningful
+        single_segment = [{
+            "start": 0,
+            "end": len(valid_values),
+            "mean": mean,
+            "std": std,
+        }]
+        return {
+            **_empty_result,
+            "segments": single_segment,
+            "message": (
+                f"CUSUM detectou variacao acumulada, mas a diferenca entre "
+                f"segmentos ({mean_diff:.2f}) nao e significativa "
+                f"em relacao a variabilidade interna ({min_within_std:.2f}). "
+                f"Nenhuma mudanca de regime confirmada."
+            ),
+        }
+
+    last_cp_original_index = valid_indices[last_cp]
+
+    # 11. Post-change values (from original arrays, using the original index)
     post_change_values = values[last_cp_original_index:]
     post_change_dates: list[str] = []
     if dates:
         post_change_dates = dates[last_cp_original_index:]
 
-    # 11. Build message
+    # 12. Build message
     change_date = None
     if dates and last_cp_original_index < len(dates):
         change_date = dates[last_cp_original_index]
 
-    # Pre-change segment is second-to-last, post-change is last
-    pre_seg = segments[-2] if len(segments) >= 2 else segments[0]
-    post_seg = segments[-1]
-
     if change_date:
         message = (
             f"Mudanca de patamar detectada em {change_date}: "
-            f"media mudou de {pre_seg['mean']:.2f} para {post_seg['mean']:.2f}"
+            f"media mudou de {pre_seg['mean']:.2f} para {post_seg['mean']:.2f} "
+            f"(diferenca de {relative_magnitude:.0%})"
         )
     else:
         message = (
             f"Mudanca de patamar detectada no indice {last_cp_original_index}: "
-            f"media mudou de {pre_seg['mean']:.2f} para {post_seg['mean']:.2f}"
+            f"media mudou de {pre_seg['mean']:.2f} para {post_seg['mean']:.2f} "
+            f"(diferenca de {relative_magnitude:.0%})"
         )
 
     return {
