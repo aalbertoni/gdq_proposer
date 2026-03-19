@@ -102,13 +102,13 @@ class TestResolvePartitionFilter:
         assert "30" in result
 
     def test_without_date_expression_duckdb(self, duckdb_builder):
-        """Sem date_expression, usa coluna diretamente (DuckDB interval)."""
+        """Sem date_expression, usa TRY_CAST no DuckDB (VARCHAR -> DATE)."""
         result = duckdb_builder.resolve_partition_filter(
             partition_column="dt_ref",
             date_expression=None,
             lookback_value=60,
         )
-        assert '"dt_ref" >=' in result
+        assert 'TRY_CAST("dt_ref" AS DATE)' in result
         assert "CURRENT_DATE - INTERVAL '60' DAY" in result
 
     def test_without_date_expression_athena(self, athena_builder):

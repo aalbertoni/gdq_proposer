@@ -110,6 +110,15 @@ class AthenaClient:
         df = client.execute_df("SELECT COUNT(*) FROM tabela")
     """
 
+    # Timeout tiers based on estimated table volume.
+    # Adapts the query timeout so large tables don't fail on the default 120s.
+    _TIMEOUT_TIERS: list[tuple[int, int]] = [
+        (500_000_000, 600),   # > 500M rows: 10 min
+        (100_000_000, 360),   # > 100M rows: 6 min
+        (10_000_000, 240),    # > 10M rows:  4 min
+        (0, 120),             # default:     2 min
+    ]
+
     def __init__(self, config: AppConfig, query_logger: Optional[QueryLogger] = None):
         self.config = config
         self.logger = query_logger or QueryLogger()
@@ -154,6 +163,28 @@ class AthenaClient:
             connect_kwargs["boto3_session"] = session
 
         self._conn = connect(**connect_kwargs)
+
+    def adapt_timeout(self, estimated_rows: int) -> None:
+        """Adapta o timeout de query baseado na volumetria estimada da tabela.
+
+        Tabelas grandes precisam de mais tempo para queries de agregação.
+        O timeout é ajustado para cima (nunca reduzido abaixo do configurado).
+
+        Args:
+            estimated_rows: Número estimado de linhas na tabela.
+        """
+        for threshold, timeout in self._TIMEOUT_TIERS:
+            if estimated_rows >= threshold:
+                new_timeout = max(timeout, self._query_timeout)
+                if new_timeout != self._query_timeout:
+                    logger.info(
+                        "Timeout adaptado: %ds -> %ds (estimativa: %s linhas)",
+                        self._query_timeout,
+                        new_timeout,
+                        f"{estimated_rows:,}",
+                    )
+                    self._query_timeout = new_timeout
+                return
 
     def health_check(self) -> bool:
         """Testa a conexao com uma query trivial.

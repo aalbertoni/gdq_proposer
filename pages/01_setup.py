@@ -633,10 +633,20 @@ if st.button("Validar Eixo Temporal", type="primary"):
     if date_range["n_periods"] == 0:
         st.warning("Nenhum periodo encontrado. Verifique a coluna temporal e o filtro base.")
     else:
+        # Estimar volume e adaptar timeout para tabelas grandes
+        svc = st.session_state["dataset_service"]
+        estimated_rows = svc.estimate_volume_and_adapt_timeout(dataset_config)
+        st.session_state["estimated_rows"] = estimated_rows
+
         st.success(
             f"Range: **{date_range['min_date']}** a **{date_range['max_date']}** "
             f"— **{date_range['n_periods']}** periodos distintos"
         )
+        if estimated_rows > 10_000_000:
+            st.info(
+                f"Tabela grande: ~**{estimated_rows:,}** linhas no lookback. "
+                f"Timeout adaptado automaticamente."
+            )
         st.rerun()
 
 date_range = st.session_state.get("setup_date_range")

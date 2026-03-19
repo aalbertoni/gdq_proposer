@@ -17,7 +17,7 @@ class AthenaConfig:
     s3_output: str = ""                # s3://bucket/athena-results/
     catalog: str = "AwsDataCatalog"
     aws_profile: str = ""              # AWS CLI named profile
-    query_timeout_seconds: int = 120
+    query_timeout_seconds: int = 120   # default, adaptado pela volumetria
     cache_ttl_metadata: int = 3600     # 1h
     cache_ttl_history: int = 900       # 15min
     cache_ttl_profiling: int = 1800    # 30min

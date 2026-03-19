@@ -1,13 +1,16 @@
 -- categorical_domain.sql
 -- Valores distintos e frequencia global de uma coluna categorica.
 -- Usado pelo AnalysisService para ColumnValues, DistinctValuesCount, e filtragem top-K.
--- Parametros: table_ref, col, date_expression, date_lookback_expr, base_filter, limit
+-- Parametros: table_ref, col, date_expression, date_lookback_expr, base_filter, partition_filter, limit
 SELECT
   CAST("{{ col }}" AS VARCHAR) as category_value,
   COUNT(*) as value_count,
   COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () as value_pct
 FROM {{ table_ref }}
 WHERE {{ date_expression }} >= {{ date_lookback_expr }}
+{% if partition_filter %}
+  AND {{ partition_filter }}
+{% endif %}
 {% if base_filter %}
   AND {{ base_filter }}
 {% endif %}

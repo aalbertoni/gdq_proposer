@@ -1,7 +1,7 @@
 -- uniqueness_check.sql
 -- Uniqueness and completeness of key columns per period.
 -- Used by AnalysisService to evaluate IsPrimaryKey rule historically.
--- Parameters: table_ref, key_expr, key_cols, date_expression, date_lookback_expr, base_filter
+-- Parameters: table_ref, key_expr, key_cols, date_expression, date_lookback_expr, base_filter, partition_filter
 SELECT
   {{ date_expression }} as processing_period,
   COUNT(*) as total_rows,
@@ -12,6 +12,9 @@ SELECT
   {%- endfor %}
 FROM {{ table_ref }}
 WHERE {{ date_expression }} >= {{ date_lookback_expr }}
+{% if partition_filter %}
+  AND {{ partition_filter }}
+{% endif %}
 {% if base_filter %}
   AND {{ base_filter }}
 {% endif %}

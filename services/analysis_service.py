@@ -25,6 +25,14 @@ class AnalysisService:
         self.client = client
         self.builder = builder
 
+    def _resolve_partition_filter(self, config: DatasetConfig) -> str:
+        """Resolve filtro de particao para partition pruning nas queries de analise."""
+        return self.builder.resolve_partition_filter(
+            partition_column=config.partition_column,
+            date_expression=config.date_expression,
+            lookback_value=config.lookback_value,
+        )
+
     def get_numeric_history(
         self,
         config: DatasetConfig,
@@ -56,6 +64,8 @@ class AnalysisService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        partition_filter = self._resolve_partition_filter(config)
+
         sql = self.builder.build_numeric_history(
             schema=config.schema,
             table=config.table,
@@ -63,6 +73,7 @@ class AnalysisService:
             date_expression=date_expr,
             lookback_value=config.lookback_value,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
 
         df = self.client.execute_df(
@@ -107,12 +118,15 @@ class AnalysisService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        partition_filter = self._resolve_partition_filter(config)
+
         sql = self.builder.build_row_count_history(
             schema=config.schema,
             table=config.table,
             date_expression=date_expr,
             lookback_value=config.lookback_value,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
 
         df = self.client.execute_df(
@@ -159,6 +173,8 @@ class AnalysisService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        partition_filter = self._resolve_partition_filter(config)
+
         sql = self.builder.build_distinct_count_history(
             schema=config.schema,
             table=config.table,
@@ -166,6 +182,7 @@ class AnalysisService:
             date_expression=date_expr,
             lookback_value=config.lookback_value,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
 
         df = self.client.execute_df(
@@ -228,6 +245,8 @@ class AnalysisService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        partition_filter = self._resolve_partition_filter(config)
+
         sql = self.builder.build_uniqueness_check(
             schema=config.schema,
             table=config.table,
@@ -235,6 +254,7 @@ class AnalysisService:
             date_expression=date_expr,
             lookback_value=config.lookback_value,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
 
         df = self.client.execute_df(
@@ -295,6 +315,8 @@ class AnalysisService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        partition_filter = self._resolve_partition_filter(config)
+
         sql = self.builder.build_categorical_distribution(
             schema=config.schema,
             table=config.table,
@@ -302,6 +324,7 @@ class AnalysisService:
             date_expression=date_expr,
             lookback_value=config.lookback_value,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
 
         df = self.client.execute_df(
@@ -355,6 +378,8 @@ class AnalysisService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        partition_filter = self._resolve_partition_filter(config)
+
         sql = self.builder.build_categorical_domain(
             schema=config.schema,
             table=config.table,
@@ -362,6 +387,7 @@ class AnalysisService:
             date_expression=date_expr,
             lookback_value=config.lookback_value,
             base_filter=base_filter,
+            partition_filter=partition_filter,
             limit=limit,
         )
 

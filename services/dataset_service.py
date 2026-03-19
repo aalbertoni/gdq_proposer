@@ -142,6 +142,54 @@ class DatasetService:
             "n_periods": int(row["n_periods"]) if row["n_periods"] is not None else 0,
         }
 
+    def estimate_volume_and_adapt_timeout(self, config: DatasetConfig) -> int:
+        """Estima volume da tabela no lookback window e adapta o timeout.
+
+        Usa COUNT(*) com partition pruning para ser rapido mesmo em
+        tabelas grandes. Adapta o timeout do AthenaClient automaticamente.
+
+        Args:
+            config: Configuracao da tabela alvo.
+
+        Returns:
+            Numero estimado de linhas no lookback window.
+        """
+        validate_identifier(config.schema)
+        validate_identifier(config.table)
+
+        partition_filter = self.builder.resolve_partition_filter(
+            partition_column=config.partition_column,
+            date_expression=config.date_expression,
+            lookback_value=config.lookback_value,
+        )
+
+        from infra.sql_dialect import adapt_function
+        table_ref = adapt_function(
+            "TABLE_REF", self.builder.dialect,
+            schema=config.schema, table=config.table,
+        )
+
+        where_clause = "WHERE 1=1"
+        if partition_filter:
+            where_clause += f" AND {partition_filter}"
+
+        sql = f"SELECT COUNT(*) as total FROM {table_ref} {where_clause}"
+
+        try:
+            rows = self.client.execute(
+                sql,
+                query_name="estimate_volume",
+                dataset=f"{config.schema}.{config.table}",
+            )
+            estimated = int(rows[0]["total"]) if rows else 0
+        except Exception:
+            estimated = 0
+
+        if estimated > 0:
+            self.client.adapt_timeout(estimated)
+
+        return estimated
+
     def get_volume_by_period(
         self, config: DatasetConfig, limit: int = 50
     ) -> list[dict]:
