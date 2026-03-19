@@ -300,8 +300,24 @@ def check_aws_profile() -> CheckResult:
                 message=f"Profile '{profile}' — credenciais validas.",
             )
         else:
-            stderr = result.stderr.strip()
-            if "expired" in stderr.lower() or "sso" in stderr.lower():
+            stderr = result.stderr.strip().lower()
+            if "ssl" in stderr or "certificate_verify_failed" in stderr or "certificate" in stderr:
+                return CheckResult(
+                    name="AWS Profile",
+                    status=CheckStatus.ERROR,
+                    message=f"Erro de SSL ao conectar com o profile '{profile}'.",
+                    fix_hint=(
+                        "Sua rede corporativa provavelmente intercepta HTTPS com proxy.\n"
+                        "  Solucao: adicione o certificado CA no ~/.aws/config:\n\n"
+                        f"  [profile {profile}]\n"
+                        "  ca_bundle = C:\\caminho\\do\\certificado-ca.pem\n"
+                        "  s3 =\n"
+                        "    addressing_style = path\n\n"
+                        "  Peca o certificado CA ao time de infraestrutura.\n"
+                        "  Consulte: docs/INSTALL_TROUBLESHOOTING.md secao 14"
+                    ),
+                )
+            if "expired" in stderr or "sso" in stderr:
                 return CheckResult(
                     name="AWS Profile",
                     status=CheckStatus.ERROR,
@@ -325,6 +341,113 @@ def check_aws_profile() -> CheckResult:
             status=CheckStatus.WARN,
             message=f"Nao foi possivel verificar credenciais do profile '{profile}'.",
             fix_hint="Verifique se o AWS CLI esta instalado e tente novamente.",
+        )
+
+
+def check_s3_connectivity() -> CheckResult:
+    """Testa acesso S3 para detectar SSL/SignatureDoesNotMatch antes do app subir."""
+    # Determinar profile e s3_output
+    profile = os.environ.get("GDQ_AWS_PROFILE", "")
+    s3_output = os.environ.get("GDQ_ATHENA_S3_OUTPUT", "")
+
+    if not profile and not s3_output:
+        env_file = Path(".env")
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("GDQ_AWS_PROFILE="):
+                    profile = profile or line.split("=", 1)[1].strip()
+                elif line.startswith("GDQ_ATHENA_S3_OUTPUT="):
+                    s3_output = s3_output or line.split("=", 1)[1].strip()
+
+    if not profile or profile.startswith("seu-") or not s3_output or "CONTA" in s3_output:
+        return CheckResult(
+            name="Acesso S3",
+            status=CheckStatus.WARN,
+            message="Profile ou bucket S3 nao configurados — teste de S3 pulado.",
+        )
+
+    # Extrair bucket do s3_output (s3://bucket/path/ -> bucket)
+    bucket = s3_output.replace("s3://", "").split("/")[0]
+
+    try:
+        result = subprocess.run(
+            ["aws", "s3", "ls", f"s3://{bucket}/", "--profile", profile, "--max-items", "1"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode == 0:
+            return CheckResult(
+                name="Acesso S3",
+                status=CheckStatus.OK,
+                message=f"Bucket '{bucket}' acessivel.",
+            )
+
+        stderr = result.stderr.strip().lower()
+
+        if "ssl" in stderr or "certificate" in stderr:
+            return CheckResult(
+                name="Acesso S3",
+                status=CheckStatus.ERROR,
+                message=f"Erro de SSL ao acessar o bucket S3.",
+                fix_hint=(
+                    "Sua rede corporativa intercepta HTTPS e o certificado nao e confiavel.\n\n"
+                    "  Solucao: edite o arquivo ~/.aws/config e adicione ao seu profile:\n\n"
+                    f"  [profile {profile}]\n"
+                    "  ca_bundle = C:\\caminho\\do\\certificado-ca.pem\n"
+                    "  s3 =\n"
+                    "    addressing_style = path\n\n"
+                    "  Peca o certificado CA (.pem) ao time de infraestrutura.\n"
+                    "  Consulte: docs/INSTALL_TROUBLESHOOTING.md secao 14"
+                ),
+            )
+
+        if "signature" in stderr or "signaturedoesnotmatch" in stderr:
+            return CheckResult(
+                name="Acesso S3",
+                status=CheckStatus.ERROR,
+                message=f"Erro SignatureDoesNotMatch ao acessar S3.",
+                fix_hint=(
+                    "O proxy da rede esta alterando headers da requisicao.\n\n"
+                    "  Solucao: edite ~/.aws/config e adicione ao seu profile:\n\n"
+                    f"  [profile {profile}]\n"
+                    "  s3 =\n"
+                    "    addressing_style = path\n\n"
+                    "  Consulte: docs/INSTALL_TROUBLESHOOTING.md secao 15"
+                ),
+            )
+
+        if "access denied" in stderr or "accessdenied" in stderr:
+            return CheckResult(
+                name="Acesso S3",
+                status=CheckStatus.ERROR,
+                message=f"Sem permissao para acessar o bucket '{bucket}'.",
+                fix_hint=(
+                    "Verifique se o profile tem permissao de leitura no bucket.\n"
+                    f"  Bucket: {s3_output}"
+                ),
+            )
+
+        # Outro erro
+        return CheckResult(
+            name="Acesso S3",
+            status=CheckStatus.WARN,
+            message=f"Erro ao acessar bucket: {result.stderr.strip()[:120]}",
+        )
+
+    except FileNotFoundError:
+        return CheckResult(
+            name="Acesso S3",
+            status=CheckStatus.WARN,
+            message="AWS CLI nao disponivel para teste de S3.",
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            name="Acesso S3",
+            status=CheckStatus.WARN,
+            message="Timeout ao testar acesso S3.",
+            fix_hint="Pode indicar problema de rede ou proxy.",
         )
 
 
@@ -425,6 +548,7 @@ def run_all_checks(port: int = 8501) -> list[CheckResult]:
         check_dotenv(),
         check_aws_cli(),
         check_aws_profile(),
+        check_s3_connectivity(),
         check_proxy(),
         check_port_available(port),
     ]
