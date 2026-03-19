@@ -119,15 +119,22 @@ class AthenaClient:
         self._init_connection()
 
     def _init_connection(self):
-        """Inicializa conexao PyAthena."""
+        """Inicializa conexao PyAthena.
+
+        Usa o cursor padrao (DictCursor) em vez de PandasCursor.
+        O PandasCursor le resultados diretamente do S3 (GetObject),
+        o que falha em redes com proxy corporativo SSL/TLS inspection.
+        O cursor padrao usa a API GetQueryResults do Athena, que passa
+        apenas pelo endpoint athena.*.amazonaws.com — sem tocar no S3.
+        """
         from pyathena import connect
-        from pyathena.pandas.cursor import PandasCursor
+        from pyathena.cursor import DictCursor
 
         connect_kwargs = {
             "region_name": self.config.athena.region,
             "work_group": self.config.athena.workgroup,
             "s3_staging_dir": self.config.athena.s3_output,
-            "cursor_class": PandasCursor,
+            "cursor_class": DictCursor,
             "kill_on_interrupt": True,
             "result_reuse_enable": True,
         }
@@ -204,6 +211,10 @@ class AthenaClient:
     def _execute_real_df(self, sql: str) -> tuple[pd.DataFrame, Optional[int], bool]:
         """Execute query on Athena with timeout enforcement.
 
+        Uses DictCursor + pd.DataFrame conversion instead of PandasCursor.
+        DictCursor fetches results via Athena API (GetQueryResults), avoiding
+        direct S3 access that fails with corporate proxy SSL inspection.
+
         Args:
             sql: SQL statement to execute.
 
@@ -217,9 +228,10 @@ class AthenaClient:
 
         def _run():
             cursor.execute(sql)
-            df = cursor.as_pandas()
+            rows = cursor.fetchall()
             bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
             cache_hit = bool(getattr(cursor, "reused_previous_result", False))
+            df = pd.DataFrame(rows) if rows else pd.DataFrame()
             return df, bytes_scanned, cache_hit
 
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -288,8 +300,8 @@ class AthenaClient:
 
             bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
             cache_hit = bool(getattr(cursor, "reused_previous_result", False))
-            columns = [desc[0] for desc in cursor.description]
-            result = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            # DictCursor.fetchall() retorna list[dict] diretamente
+            result = cursor.fetchall()
 
             rows = len(result)
             return result
