@@ -32,6 +32,10 @@ def render_sidebar():
     st.sidebar.caption(f"v{__version__}")
     st.sidebar.divider()
 
+    # Diagnostic link
+    if st.sidebar.button("Diagnostico", key="sidebar_diag", help="Verificar status do ambiente"):
+        st.switch_page("pages/06_diagnostico.py")
+
     if not config:
         return
 
@@ -89,6 +93,8 @@ def main():
             f"Falha na conexao: {connection_error}. "
             "Verifique o ambiente selecionado e as credenciais AWS."
         )
+        if st.button("Abrir Diagnostico", type="primary", key="diag_on_error"):
+            st.switch_page("pages/06_diagnostico.py")
         st.stop()
 
     # --- Metric cards ---
