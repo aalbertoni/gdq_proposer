@@ -4,6 +4,9 @@ GDQ Rule Proposer — Entry point Streamlit.
 Dashboard com overview do projeto, metricas da sessao e navegacao guiada.
 """
 
+import os
+import subprocess
+
 import streamlit as st
 
 from config import load_config
@@ -97,11 +100,63 @@ def main():
 
     if not connection_ok:
         st.error(
-            f"Falha na conexao: {connection_error}. "
-            "Verifique o ambiente selecionado e as credenciais AWS."
+            f"Falha na conexao: {connection_error}"
         )
-        if st.button("Abrir Diagnostico", type="primary", key="diag_on_error"):
-            st.switch_page("pages/06_diagnostico.py")
+
+        # Detectar profile para oferecer login
+        profile = ""
+        try:
+            cfg = load_config()
+            profile = cfg.athena.aws_profile
+        except Exception:
+            profile = os.environ.get("GDQ_AWS_PROFILE", "")
+
+        is_auth_error = any(
+            kw in (connection_error or "").lower()
+            for kw in ["expirad", "credenci", "token", "expired", "invalid", "autenticacao"]
+        )
+
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+
+        with btn_col1:
+            if is_auth_error and profile:
+                if st.button(f"Fazer login AWS (SSO)", type="primary", key="sso_login"):
+                    with st.spinner(f"Executando: aws sso login --profile {profile} ..."):
+                        try:
+                            result = subprocess.run(
+                                ["aws", "sso", "login", "--profile", profile],
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            if result.returncode == 0:
+                                st.session_state.pop("_health_check_done", None)
+                                st.session_state.pop("client", None)
+                                st.success("Login realizado! Recarregando...")
+                                st.rerun()
+                            else:
+                                st.error(
+                                    f"Falha no login. Execute manualmente no terminal:\n"
+                                    f"`aws sso login --profile {profile}`"
+                                )
+                        except subprocess.TimeoutExpired:
+                            st.warning(
+                                "Timeout aguardando login. Execute manualmente no terminal:\n"
+                                f"`aws sso login --profile {profile}`"
+                            )
+                        except FileNotFoundError:
+                            st.error("AWS CLI nao encontrado. Instale primeiro.")
+
+        with btn_col2:
+            if st.button("Tentar reconectar", key="retry_conn"):
+                st.session_state.pop("_health_check_done", None)
+                st.session_state.pop("client", None)
+                st.rerun()
+
+        with btn_col3:
+            if st.button("Abrir Diagnostico", key="diag_on_error"):
+                st.switch_page("pages/06_diagnostico.py")
+
         st.stop()
 
     # --- Metric cards ---
