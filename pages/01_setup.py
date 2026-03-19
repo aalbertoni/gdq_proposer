@@ -218,10 +218,12 @@ dataset_svc, profiling_svc = get_services(client)
 # ===================================================================
 
 preset_dir = Path(app_config.preset_dir)
-preset_files = sorted(preset_dir.glob("*.json")) if preset_dir.exists() else []
+preset_dir.mkdir(exist_ok=True)
+preset_files = sorted(preset_dir.glob("*.json"))
+
+st.subheader("Presets")
 
 if preset_files:
-    st.subheader("Carregar Configuracao Existente")
     preset_names = ["(nova configuracao)"] + [p.stem for p in preset_files]
 
     chosen_preset = st.selectbox(
@@ -282,8 +284,13 @@ if preset_files:
                         st.text(f"  {d['field']:25s}  {str(d['value_a']):30s}  {str(d['value_b'])}")
                 else:
                     st.caption("Presets identicos (mesma configuracao).")
+else:
+    st.info(
+        "Nenhum preset salvo. Configure a tabela abaixo e no passo 7 "
+        "marque **\"Salvar como preset\"** para reutilizar esta configuracao."
+    )
 
-    st.divider()
+st.divider()
 
 
 # ===================================================================
