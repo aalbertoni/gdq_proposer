@@ -49,6 +49,77 @@ def _detect_profiles() -> list[str]:
     return []
 
 
+def _detect_ca_bundle() -> str:
+    """Detecta certificado CA corporativo.
+
+    Prioridade:
+    1. Variaveis de ambiente ja configuradas
+    2. Busca em locais conhecidos no disco
+    """
+    # 1. Verificar env vars existentes (ordem de prioridade botocore)
+    for var in ("AWS_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"):
+        val = os.environ.get(var, "")
+        if val and Path(val).is_file():
+            return val
+
+    # 2. Buscar em locais conhecidos
+    home = Path.home()
+    candidates = []
+
+    # ~/.aws/ — local mais comum para config AWS
+    aws_dir = home / ".aws"
+    if aws_dir.is_dir():
+        for pattern in ("*.pem", "*.crt", "*.cer"):
+            candidates.extend(aws_dir.glob(pattern))
+
+    # Locais corporativos comuns no Windows
+    if sys.platform == "win32":
+        corp_dirs = [
+            Path("C:/certs"),
+            Path("C:/certificados"),
+            home / "certs",
+            home / "certificados",
+            home / "Documents" / "certs",
+        ]
+        # AWS CLI bundled cacert
+        awscli_paths = [
+            Path("C:/Program Files/Amazon/AWSCLIV2/awscli/botocore/cacert.pem"),
+            Path("C:/Program Files (x86)/Amazon/AWSCLIV2/awscli/botocore/cacert.pem"),
+        ]
+        for p in awscli_paths:
+            if p.is_file():
+                candidates.append(p)
+        for d in corp_dirs:
+            if d.is_dir():
+                for pattern in ("*.pem", "*.crt", "*.cer"):
+                    candidates.extend(d.glob(pattern))
+    else:
+        # Linux/Mac
+        unix_paths = [
+            Path("/etc/ssl/certs/ca-certificates.crt"),
+            Path("/etc/pki/tls/certs/ca-bundle.crt"),
+            Path("/etc/ssl/ca-bundle.pem"),
+            home / "certs",
+        ]
+        for p in unix_paths:
+            if p.is_file():
+                candidates.append(p)
+            elif p.is_dir():
+                for pattern in ("*.pem", "*.crt"):
+                    candidates.extend(p.glob(pattern))
+
+    # Remover duplicatas, manter ordem
+    seen = set()
+    unique = []
+    for c in candidates:
+        resolved = str(c.resolve())
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(c)
+
+    return unique
+
+
 def _detect_account_id(profile: str) -> str:
     """Tenta detectar o numero da conta AWS via STS."""
     try:
@@ -181,6 +252,58 @@ def main():
         "*.corp.rc.itau,*.corp.ihf,*.itau.com,*.itau.corp.ihf,localhost"
     )
 
+    # --- Certificado CA (SSL) ---
+    print()
+    print("  --- Certificado CA (SSL) ---")
+    print("  Necessario se a rede corporativa intercepta HTTPS (proxy SSL).")
+    print("  Sem ele, voce pode receber erros SSL CERTIFICATE_VERIFY_FAILED.")
+    print()
+
+    ca_bundle_path = ""
+    detected = _detect_ca_bundle()
+
+    if isinstance(detected, str) and detected:
+        # Encontrou via variavel de ambiente
+        print(f"  Certificado CA detectado via variavel de ambiente:")
+        print(f"    {detected}")
+        print()
+        use_detected = input("  Usar este certificado? (S/n): ").strip().lower()
+        if use_detected not in ("n", "nao", "no"):
+            ca_bundle_path = detected
+        else:
+            ca_bundle_path = _ask("Caminho do certificado CA (.pem ou .crt)")
+    elif isinstance(detected, list) and detected:
+        # Encontrou arquivos no disco
+        print("  Certificados encontrados no seu computador:")
+        for i, p in enumerate(detected[:10], 1):
+            print(f"    {i}. {p}")
+        print(f"    0. Nenhum / informar outro caminho")
+        print(f"    Enter = pular")
+        print()
+        choice = input("  Escolha o numero do certificado: ").strip()
+
+        if choice.isdigit() and 1 <= int(choice) <= len(detected):
+            ca_bundle_path = str(detected[int(choice) - 1].resolve())
+        elif choice == "0":
+            ca_bundle_path = _ask("Caminho do certificado CA (.pem ou .crt)")
+        else:
+            ca_bundle_path = ""
+    else:
+        print("  Nenhum certificado CA detectado automaticamente.")
+        print("  Se voce tiver erros de SSL, peca o certificado CA (.pem)")
+        print("  ao time de infraestrutura e informe o caminho aqui.")
+        print()
+        ca_bundle_path = _ask("Caminho do certificado CA (deixe vazio para pular)")
+
+    if ca_bundle_path:
+        if Path(ca_bundle_path).is_file():
+            print(f"  Certificado CA configurado: {ca_bundle_path}")
+        else:
+            print(f"  AVISO: arquivo '{ca_bundle_path}' nao encontrado.")
+            print("  O caminho sera salvo no .env mesmo assim — corrija depois se necessario.")
+    else:
+        print("  Sem certificado CA configurado (pode ser adicionado depois no .env).")
+
     # --- Thundera (opcional) ---
     print()
     print("  --- Thundera / Glue DQ (opcional) ---")
@@ -222,6 +345,12 @@ https_proxy={proxy_url}
 NO_PROXY={no_proxy_default}
 no_proxy={no_proxy_default}
 
+# === Certificado CA (SSL) ===
+# Caminho do certificado CA corporativo (.pem ou .crt).
+# Necessario se a rede intercepta HTTPS (proxy SSL/TLS inspection).
+# Deixe vazio se nao aplicavel.
+AWS_CA_BUNDLE={ca_bundle_path}
+
 # === Thundera / Glue DQ Test (opcional) ===
 # Preencha se sua equipe usa o pipeline Thundera para testes de qualidade.
 GDQ_GLUE_JOB_NAME=glueplataformathundera
@@ -245,6 +374,7 @@ GDQ_COMUNIDADE={comunidade}
     print(f"    Workgroup: {workgroup}")
     print(f"    S3 Output: {s3_output}")
     print(f"    Proxy:     {proxy_url}")
+    print(f"    CA Bundle: {ca_bundle_path or '(nao configurado)'}")
     print(f"    RACF:      {racf}")
     print()
     if "SENHA" in proxy_url:

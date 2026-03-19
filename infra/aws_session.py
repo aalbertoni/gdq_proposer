@@ -25,8 +25,38 @@ _S3_CONFIG = Config(
 )
 
 
+def _resolve_ca_bundle() -> str:
+    """Detecta e configura o certificado CA corporativo.
+
+    Prioridade:
+    1. AWS_CA_BUNDLE ja configurado (via .env ou env var)
+    2. REQUESTS_CA_BUNDLE existente
+    3. CURL_CA_BUNDLE existente
+    4. SSL_CERT_FILE existente
+
+    Returns:
+        Caminho do certificado CA ou string vazia.
+    """
+    # Verificar se ja esta configurado
+    for var in ("AWS_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"):
+        val = os.environ.get(var, "").strip()
+        if val and os.path.isfile(val):
+            # Propagar para AWS_CA_BUNDLE se veio de outra var
+            if var != "AWS_CA_BUNDLE":
+                os.environ.setdefault("AWS_CA_BUNDLE", val)
+                logger.info(
+                    "CA bundle detected from %s=%s, propagated to AWS_CA_BUNDLE",
+                    var, val,
+                )
+            else:
+                logger.debug("CA bundle configured: AWS_CA_BUNDLE=%s", val)
+            return val
+
+    return ""
+
+
 def create_session(profile_name: str) -> boto3.Session:
-    """Cria sessao boto3 com S3 path-style e logging de debug.
+    """Cria sessao boto3 com S3 path-style, CA bundle e logging de debug.
 
     Args:
         profile_name: Nome do AWS CLI profile (SSO ou access key).
@@ -41,6 +71,9 @@ def create_session(profile_name: str) -> boto3.Session:
     # pelo PyAthena) use path-style, evitando SignatureDoesNotMatch.
     os.environ.setdefault("AWS_S3_ADDRESSING_STYLE", "path")
 
+    # Detectar e propagar CA bundle para botocore
+    ca_bundle = _resolve_ca_bundle()
+
     session = boto3.Session(profile_name=profile_name)
 
     # Registrar evento para debug de SignatureDoesNotMatch
@@ -48,9 +81,10 @@ def create_session(profile_name: str) -> boto3.Session:
     session.events.register("needs-retry.s3.*", _log_s3_retry)
 
     logger.debug(
-        "boto3 session created: profile=%s, region=%s, s3_addressing=path",
+        "boto3 session created: profile=%s, region=%s, s3_addressing=path, ca_bundle=%s",
         profile_name,
         session.region_name,
+        ca_bundle or "(not set)",
     )
 
     return session

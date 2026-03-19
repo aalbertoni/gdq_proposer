@@ -460,6 +460,52 @@ def check_s3_connectivity() -> CheckResult:
         )
 
 
+def check_ca_bundle() -> CheckResult:
+    """Verifica se o certificado CA corporativo esta configurado e acessivel."""
+    # Verificar env vars em ordem de prioridade
+    for var in ("AWS_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"):
+        val = os.environ.get(var, "").strip()
+        if val:
+            if Path(val).is_file():
+                return CheckResult(
+                    name="Certificado CA",
+                    status=CheckStatus.OK,
+                    message=f"CA bundle configurado via {var}: {Path(val).name}",
+                )
+            else:
+                return CheckResult(
+                    name="Certificado CA",
+                    status=CheckStatus.ERROR,
+                    message=f"Arquivo nao encontrado: {val} ({var})",
+                    fix_hint=(
+                        f"O caminho configurado em {var} nao existe.\n"
+                        f"  Corrija o caminho no .env ou remova a variavel.\n"
+                        f"  Caminho atual: {val}"
+                    ),
+                )
+
+    # Nenhuma env var configurada — verificar se proxy esta ativo (indica necessidade)
+    has_proxy = any(os.environ.get(v) for v in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"))
+    if has_proxy:
+        return CheckResult(
+            name="Certificado CA",
+            status=CheckStatus.WARN,
+            message="Proxy configurado mas sem certificado CA.",
+            fix_hint=(
+                "Com proxy corporativo, o certificado CA geralmente e necessario.\n"
+                "  Configure AWS_CA_BUNDLE no .env com o caminho do certificado .pem/.crt\n"
+                "  Peca o certificado ao time de infraestrutura.\n"
+                "  Ou execute: python setup_local.py (detecta automaticamente)"
+            ),
+        )
+
+    return CheckResult(
+        name="Certificado CA",
+        status=CheckStatus.OK,
+        message="Sem proxy — certificado CA nao necessario.",
+    )
+
+
 def check_proxy() -> CheckResult:
     """Detecta proxy corporativo que pode bloquear pip ou AWS CLI."""
     proxy_vars = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]
@@ -586,6 +632,7 @@ def run_all_checks(port: int = 8501) -> list[CheckResult]:
         check_aws_cli(),
         check_aws_profile(),
         check_s3_connectivity(),
+        check_ca_bundle(),
         check_proxy(),
         check_port_available(port),
     ]
@@ -598,7 +645,7 @@ def has_errors(results: list[CheckResult]) -> bool:
 
 
 # Checks que impedem o app de funcionar — nao permitem "continuar mesmo assim"
-BLOCKING_CHECK_NAMES = {"AWS Profile", "Acesso S3", "Arquivo .env", "AWS CLI", "Dependencias", "Proxy"}
+BLOCKING_CHECK_NAMES = {"AWS Profile", "Acesso S3", "Arquivo .env", "AWS CLI", "Dependencias", "Proxy", "Certificado CA"}
 
 
 def get_blocking_errors(results: list[CheckResult]) -> list[CheckResult]:
