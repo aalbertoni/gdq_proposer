@@ -12,8 +12,8 @@ from pathlib import Path
 
 @dataclass
 class AthenaConfig:
-    region: str = "us-east-1"
-    workgroup: str = "primary"
+    region: str = "sa-east-1"
+    workgroup: str = "analytics-workgroup-v3"
     s3_output: str = ""                # s3://bucket/athena-results/
     catalog: str = "AwsDataCatalog"
     aws_profile: str = ""              # AWS CLI named profile
@@ -74,8 +74,8 @@ def load_config() -> AppConfig:
         os.environ["AWS_PROFILE"] = aws_profile
 
     athena = AthenaConfig(
-        region=os.getenv("GDQ_ATHENA_REGION", "us-east-1"),
-        workgroup=os.getenv("GDQ_ATHENA_WORKGROUP", "primary"),
+        region=os.getenv("GDQ_ATHENA_REGION", "sa-east-1"),
+        workgroup=os.getenv("GDQ_ATHENA_WORKGROUP", "analytics-workgroup-v3"),
         s3_output=os.getenv("GDQ_ATHENA_S3_OUTPUT", ""),
         aws_profile=aws_profile,
     )

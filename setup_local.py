@@ -8,6 +8,7 @@ Uso:
     python setup_local.py
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -46,6 +47,23 @@ def _detect_profiles() -> list[str]:
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     return []
+
+
+def _detect_account_id(profile: str) -> str:
+    """Tenta detectar o numero da conta AWS via STS."""
+    try:
+        result = subprocess.run(
+            ["aws", "sts", "get-caller-identity", "--profile", profile],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            return data.get("Account", "")
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        pass
+    return ""
 
 
 def main():
@@ -94,16 +112,45 @@ def main():
 
     print(f"  Profile selecionado: {aws_profile}\n")
 
+    # --- RACF ---
+    print("  --- Identificacao ---")
+    print()
+    racf = _ask("Seu RACF (ex: a12345)", required=True)
+    print()
+
+    # --- Detectar conta AWS ---
+    print("  Detectando numero da conta AWS...")
+    account_id = _detect_account_id(aws_profile)
+
+    if account_id:
+        print(f"  Conta detectada: {account_id}\n")
+    else:
+        print("  Nao foi possivel detectar automaticamente.")
+        print("  (Pode ser necessario fazer login: aws sso login --profile " + aws_profile + ")\n")
+        account_id = _ask("Numero da conta AWS (12 digitos)", required=True)
+
     # --- Athena ---
     print("  --- Configuracao do Athena ---")
     print()
 
-    region = _ask("Regiao AWS", default="us-east-1")
-    workgroup = _ask("Workgroup do Athena", default="primary")
-    s3_output = _ask(
-        "Bucket S3 para resultados (ex: s3://meu-bucket/athena-results/)",
-        required=True,
-    )
+    region = _ask("Regiao AWS", default="sa-east-1")
+    workgroup = _ask("Workgroup do Athena", default="analytics-workgroup-v3")
+
+    # Montar S3 output automaticamente
+    s3_default = f"s3://itau-self-wkp-{region}-{account_id}/{racf}/query_results/"
+    print()
+    print(f"  O bucket S3 de resultados do Athena sera:")
+    print(f"    {s3_default}")
+    print()
+    use_default = input("  Usar este caminho? (S/n): ").strip().lower()
+
+    if use_default in ("n", "nao", "no"):
+        s3_output = _ask(
+            "Bucket S3 para resultados",
+            required=True,
+        )
+    else:
+        s3_output = s3_default
 
     # Garantir que s3_output termina com /
     if s3_output and not s3_output.endswith("/"):
@@ -115,7 +162,6 @@ def main():
     print("  Preencha se sua equipe usa o pipeline Thundera.")
     print("  Deixe em branco para pular.\n")
 
-    racf = _ask("Seu RACF")
     squad = _ask("Nome da squad")
     comunidade = _ask("Nome da comunidade")
 
@@ -133,11 +179,11 @@ GDQ_AWS_PROFILE={aws_profile}
 # Regiao onde o Athena esta configurado.
 GDQ_ATHENA_REGION={region}
 
-# Workgroup do Athena (geralmente "primary").
+# Workgroup do Athena.
 GDQ_ATHENA_WORKGROUP={workgroup}
 
 # Bucket S3 onde o Athena salva resultados das queries.
-# Formato: s3://nome-do-bucket/pasta/
+# Formato: s3://itau-self-wkp-{{regiao}}-{{conta}}/{{racf}}/query_results/
 GDQ_ATHENA_S3_OUTPUT={s3_output}
 
 # === Thundera / Glue DQ Test (opcional) ===
@@ -156,6 +202,13 @@ GDQ_COMUNIDADE={comunidade}
     print(f"  Arquivo .env criado com sucesso!")
     print(f"  Local: {ENV_FILE}")
     print("  =============================================")
+    print()
+    print("  Configuracao salva:")
+    print(f"    Profile:   {aws_profile}")
+    print(f"    Regiao:    {region}")
+    print(f"    Workgroup: {workgroup}")
+    print(f"    S3 Output: {s3_output}")
+    print(f"    RACF:      {racf}")
     print()
     print("  Proximo passo: execute o app com:")
     print("    python launcher.py")

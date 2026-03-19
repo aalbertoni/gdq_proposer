@@ -179,7 +179,7 @@ def check_dotenv() -> CheckResult:
     missing = []
     for var, desc in required.items():
         val = env_vars.get(var, "") or os.environ.get(var, "")
-        if not val or val.startswith("seu-"):
+        if not val or val.startswith("seu-") or "CONTA" in val or "RACF" in val:
             missing.append(f"  {var} — {desc}")
 
     if missing:
