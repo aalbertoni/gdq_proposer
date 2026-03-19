@@ -17,7 +17,11 @@ from config import load_config
 from core.models.baseline import BaselineStrategy
 from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, SemanticType, get_rule_label
 from core.models.rule_selection import RuleSelection
-from core.rule_explainer import explain_rule, explain_rule_detail
+from core.backtest_analysis import analyze_backtest, summarize_backtest_analysis
+from core.gdq_capability import capability_badge, capability_warning, is_experimental
+from core.rule_explainer import explain_rule, explain_rule_detail, explain_regime_context, explain_trade_offs
+from core.rule_scoring import evaluate_proposal
+from core.series_regime import classify_series
 from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from services.analysis_service import AnalysisService
@@ -229,12 +233,52 @@ def _render_backtest_metrics(proposal):
         if bt.outlier_periods:
             st.caption(f"Periodos outlier: {', '.join(bt.outlier_periods[:5])}")
 
+    # Backtest analysis insights (streaks, tail risk)
+    if bt and bt.point_results:
+        analysis = analyze_backtest(bt)
+        summary = summarize_backtest_analysis(analysis)
+        if summary:
+            with st.expander("Analise do backtest", expanded=False):
+                st.markdown(summary)
+
     if proposal.warnings:
         for w in proposal.warnings:
             st.caption(f"  {w}")
 
 
-def _render_add_to_cart(proposal, label, stable_key, show_syntax=True):
+def _render_regime_panel(profile):
+    """Renderiza painel compacto do regime detectado."""
+    if profile is None or (profile.regime.value == "stable" and not profile.secondary_regimes):
+        return
+
+    regime_badges = {
+        "stable": ":green[estavel]",
+        "volatile": ":orange[volatil]",
+        "trending": ":orange[tendencia]",
+        "seasonal": ":blue[sazonal]",
+        "structural_break": ":red[mudanca de regime]",
+        "zero_inflated": ":orange[zero-inflated]",
+        "asymmetric": ":orange[assimetrica]",
+        "sparse": ":red[esparsa]",
+    }
+    badge = regime_badges.get(profile.regime.value, profile.regime.value)
+    secondary = ""
+    if profile.secondary_regimes:
+        sec_labels = [regime_badges.get(r.value, r.value) for r in profile.secondary_regimes]
+        secondary = " + " + " + ".join(sec_labels)
+
+    st.caption(f"Regime da serie: {badge}{secondary}")
+
+
+def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=None):
+    # Experimental badge
+    badge = capability_badge(proposal.rule_type)
+    if badge:
+        st.caption(badge)
+        warning_text = capability_warning(proposal.rule_type)
+        if warning_text:
+            st.warning(warning_text)
+
     if show_syntax:
         with st.expander("Sintaxe GDQ e detalhes", expanded=False):
             st.code(proposal.gdq_syntax_preview)
@@ -242,6 +286,19 @@ def _render_add_to_cart(proposal, label, stable_key, show_syntax=True):
             detail = explain_rule_detail(proposal)
             if detail.strip():
                 st.markdown(detail)
+
+            # Regime context and trade-offs
+            if profile is not None:
+                regime_ctx = explain_regime_context(proposal, profile)
+                if regime_ctx:
+                    st.markdown("---")
+                    st.markdown(regime_ctx)
+
+                ev = evaluate_proposal(proposal, profile=profile)
+                trade_off_text = explain_trade_offs(proposal, ev)
+                if trade_off_text:
+                    st.markdown("---")
+                    st.markdown(trade_off_text)
 
     existing_ids = {s.proposal_id for s in st.session_state["rule_cart"]}
     if proposal.id in existing_ids:
@@ -1047,6 +1104,17 @@ with tab_numericas:
         if history_df.empty:
             st.warning(f"Nenhum dado historico encontrado para `{selected_col}`.")
         else:
+            # Classify series regime once per column
+            _mean_vals = history_df["mean"].tolist() if "mean" in history_df.columns else []
+            _mean_dates = history_df["period"].astype(str).tolist() if "period" in history_df.columns else []
+            _series_profile_key = f"series_profile_{selected_col}_{effective_lookback}"
+            if _series_profile_key not in st.session_state and _mean_vals:
+                st.session_state[_series_profile_key] = classify_series(_mean_vals, _mean_dates)
+            series_profile = st.session_state.get(_series_profile_key)
+
+            # Show regime badge
+            _render_regime_panel(series_profile)
+
             # ---- Mean ----
             st.subheader(f"Mean -- {selected_col}")
 
@@ -1110,6 +1178,7 @@ with tab_numericas:
                 _render_add_to_cart(
                     proposal, "Mean",
                     f"mean_{selected_col}",
+                    profile=series_profile,
                 )
 
             st.divider()
@@ -1165,6 +1234,7 @@ with tab_numericas:
                 _render_add_to_cart(
                     proposal, "StdDev",
                     f"stddev_{selected_col}",
+                    profile=series_profile,
                 )
 
             st.divider()
@@ -1232,6 +1302,7 @@ with tab_numericas:
                         _render_add_to_cart(
                             pct_prop, f"Percentil {pct_label}",
                             f"pct_{selected_col}_{pct_prop.metric_name}",
+                            profile=series_profile,
                         )
 
             st.divider()
@@ -1541,6 +1612,17 @@ with tab_categoricas:
                 mode_label = mode_labels.get(cat_freq_mode, cat_freq_mode)
                 st.subheader(f"Frequencia por Valor ({mode_label})")
 
+                # Show experimental badge for dynamic/hybrid frequency modes
+                if cat_freq_mode in ("dynamic", "hybrid"):
+                    _exp_rt = (
+                        RuleType.CATEGORY_FREQUENCY_DYNAMIC
+                        if cat_freq_mode == "dynamic"
+                        else RuleType.CATEGORY_FREQUENCY_HYBRID
+                    )
+                    _exp_badge = capability_badge(_exp_rt)
+                    if _exp_badge:
+                        st.caption(_exp_badge)
+
                 st.caption(
                     f"Top {len(freq_proposals)} valores por frequencia. "
                     f"Cada valor tem grafico individual e pode ter modo diferente."
@@ -1774,6 +1856,15 @@ with tab_tabela:
     if rc_history_df.empty:
         st.warning("Nenhum dado de volume encontrado.")
     else:
+        # Classify row count series
+        _rc_vals = rc_history_df["row_count"].tolist() if "row_count" in rc_history_df.columns else []
+        _rc_dates = rc_history_df["period"].astype(str).tolist() if "period" in rc_history_df.columns else []
+        _rc_profile_key = f"series_profile_rowcount_{effective_lookback}"
+        if _rc_profile_key not in st.session_state and _rc_vals:
+            st.session_state[_rc_profile_key] = classify_series(_rc_vals, _rc_dates)
+        rc_series_profile = st.session_state.get(_rc_profile_key)
+        _render_regime_panel(rc_series_profile)
+
         rc_baseline = BaselineStrategy(
             method=BaselineMethod.LAST_N_PERIODS,
             n_periods=rc_n,
@@ -1809,7 +1900,7 @@ with tab_tabela:
 
             if "autotune_rowcount" not in st.session_state:
                 _render_backtest_metrics(rc_proposal)
-            _render_add_to_cart(rc_proposal, "RowCount", "rowcount")
+            _render_add_to_cart(rc_proposal, "RowCount", "rowcount", profile=rc_series_profile)
         else:
             st.warning(
                 "Dados insuficientes para gerar regra RowCount. "
@@ -2255,7 +2346,8 @@ with tab_resumo:
             coverage_str = f"{p.backtest.coverage_pct:.1f}%" if p.backtest else "N/A"
 
             res_c1, res_c2, res_c3 = st.columns([4, 1.5, 1.5])
-            res_c1.markdown(f"**{label}** -- `{target}`")
+            exp_badge = capability_badge(p.rule_type)
+            res_c1.markdown(f"**{label}** {exp_badge} -- `{target}`")
             res_c2.markdown(badge)
             res_c3.caption(f"Cobertura: {coverage_str}")
 

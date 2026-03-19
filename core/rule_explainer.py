@@ -3,10 +3,16 @@ Gerador de explicacoes em linguagem natural para regras GDQ.
 
 Converte RuleProposal em texto legivel para analistas/engenheiros de dados
 que nao precisam conhecer a sintaxe GDQ para entender o que a regra faz.
+
+Inclui explicacoes enriquecidas com contexto de regime e trade-offs.
 """
 
-from core.models.enums import ConfidenceLevel, RuleType
+from typing import Optional
+
+from core.models.enums import ConfidenceLevel, RuleType, SeriesRegime
+from core.models.rule_evaluation import RuleEvaluation
 from core.models.rule_proposal import RuleProposal
+from core.models.series_profile import SeriesProfile
 
 
 def explain_rule(proposal: RuleProposal) -> str:
@@ -362,6 +368,186 @@ def _explain_backtest(p: RuleProposal) -> str:
         lines.append(f"- **Outliers:** {n_outliers} periodo(s) com valores atipicos")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Explicacoes enriquecidas com regime
+# ---------------------------------------------------------------------------
+
+def explain_regime_context(
+    proposal: RuleProposal,
+    profile: SeriesProfile,
+) -> str:
+    """Gera texto sobre como o regime da serie afeta esta regra.
+
+    Args:
+        proposal: Proposta de regra.
+        profile: Perfil de regime da serie.
+
+    Returns:
+        Texto em pt-BR com contexto de regime, ou string vazia se STABLE.
+    """
+    if profile.regime == SeriesRegime.STABLE and not profile.secondary_regimes:
+        return ""
+
+    parts: list[str] = []
+    parts.append(f"**Regime detectado:** {profile.regime_summary}")
+
+    regime = profile.regime
+    rt = proposal.rule_type
+
+    # Contexto especifico por regime + tipo de regra
+    if regime == SeriesRegime.STRUCTURAL_BREAK:
+        date_str = f" em {profile.change_point_date}" if profile.change_point_date else ""
+        parts.append(
+            f"A serie apresenta **mudanca de patamar**{date_str}. "
+            f"O historico antes da mudanca pode nao representar o padrao atual. "
+        )
+        if rt in (RuleType.MEAN_DUAL_GUARD, RuleType.STDDEV_DUAL_GUARD):
+            parts.append(
+                "**Recomendacao:** reduza N para usar apenas dados pos-mudanca, "
+                "ou aumente o sigma para acomodar a transicao."
+            )
+
+    elif regime == SeriesRegime.TRENDING:
+        parts.append(
+            f"A serie apresenta **tendencia** (slope={profile.drift_slope:.4f}). "
+            f"A media historica pode estar defasada em relacao ao valor atual."
+        )
+        if rt in (RuleType.MEAN_DUAL_GUARD, RuleType.STDDEV_DUAL_GUARD):
+            parts.append(
+                "**Recomendacao:** use N menor (10-15) para que a baseline "
+                "acompanhe a tendencia, ou aumente a margem."
+            )
+
+    elif regime == SeriesRegime.SEASONAL:
+        parts.append(
+            f"A serie apresenta **sazonalidade** "
+            f"(forca={profile.seasonality_strength:.2f}). "
+            f"Valores variam ciclicamente ao longo da semana/mes."
+        )
+        if rt in (RuleType.MEAN_DUAL_GUARD, RuleType.ROW_COUNT_DUAL_GUARD):
+            parts.append(
+                "**Recomendacao:** use N multiplo de 7 para suavizar "
+                "o efeito do dia da semana (ex: N=14, 21, 28)."
+            )
+
+    elif regime == SeriesRegime.VOLATILE:
+        parts.append(
+            f"A serie e **volatil** (CV={profile.cv:.2f}). "
+            f"Variacao alta e natural, nao necessariamente anomala."
+        )
+        if rt in (RuleType.MEAN_DUAL_GUARD, RuleType.STDDEV_DUAL_GUARD):
+            parts.append(
+                "**Recomendacao:** aumente sigma (3+) ou margem para "
+                "evitar falsos positivos. Considere se esta regra "
+                "agrega valor para uma serie naturalmente dispersa."
+            )
+
+    elif regime == SeriesRegime.ZERO_INFLATED:
+        parts.append(
+            f"A serie tem **muitos zeros** ({profile.zero_pct:.0f}%). "
+            f"A media e distorcida pela concentracao em zero."
+        )
+        if rt == RuleType.MEAN_DUAL_GUARD:
+            parts.append(
+                "**Recomendacao:** regra de Mean pode ser inadequada. "
+                "Considere Completeness ou uma regra CustomSql que "
+                "filtre os zeros antes de calcular."
+            )
+
+    elif regime == SeriesRegime.ASYMMETRIC:
+        parts.append(
+            f"A distribuicao e **assimetrica** (skewness={profile.skewness:.2f}). "
+            f"Bandas simetricas podem gerar alertas em apenas um lado."
+        )
+        if rt == RuleType.MEAN_DUAL_GUARD:
+            parts.append(
+                "**Recomendacao:** bandas simetricas (sigma) podem ser "
+                "demasiado restritivas em um lado e frouxas no outro. "
+                "Considere a margem % como guarda complementar."
+            )
+
+    elif regime == SeriesRegime.SPARSE:
+        parts.append(
+            f"A serie tem **muitos valores nulos** ({profile.null_pct:.0f}%). "
+            f"Poucas observacoes validas reduzem a confiabilidade."
+        )
+        parts.append(
+            "**Recomendacao:** resultados podem ser imprecisos. "
+            "Monitore com cautela e valide com mais dados."
+        )
+
+    # Secondary regimes
+    for sec in profile.secondary_regimes:
+        parts.append(f"- Regime secundario: **{sec.value}** (impacto menor)")
+
+    return "\n".join(parts)
+
+
+def explain_trade_offs(
+    proposal: RuleProposal,
+    evaluation: RuleEvaluation,
+) -> str:
+    """Gera texto sobre trade-offs e riscos da regra.
+
+    Args:
+        proposal: Proposta de regra.
+        evaluation: Avaliacao enriquecida com 7 dimensoes.
+
+    Returns:
+        Texto em pt-BR com analise de trade-offs.
+    """
+    parts: list[str] = []
+
+    # Regime fit assessment
+    if evaluation.regime_fit < 0.5:
+        parts.append(
+            f"**Adequacao ao regime:** Baixa ({evaluation.regime_fit:.0%}). "
+            f"Este tipo de regra pode nao ser o mais indicado para o "
+            f"comportamento observado na serie."
+        )
+    elif evaluation.regime_fit < 0.8:
+        parts.append(
+            f"**Adequacao ao regime:** Moderada ({evaluation.regime_fit:.0%}). "
+            f"A regra pode funcionar, mas parametros precisam de ajuste cuidadoso."
+        )
+
+    # FP risk
+    if evaluation.fp_risk > 0.30:
+        parts.append(
+            f"**Risco de falsos positivos:** Alto ({evaluation.fp_risk:.0%}). "
+            f"A regra pode gerar alertas frequentes para variacao normal."
+        )
+    elif evaluation.fp_risk > 0.15:
+        parts.append(
+            f"**Risco de falsos positivos:** Moderado ({evaluation.fp_risk:.0%}). "
+            f"Alguns alertas podem ser espurios."
+        )
+
+    # Robustness
+    if evaluation.robustness < 0.6:
+        parts.append(
+            f"**Confiabilidade dos dados:** Baixa ({evaluation.robustness:.0%}). "
+            f"Pouco historico ou muitos nulos reduzem a confianca na avaliacao."
+        )
+
+    # Coverage vs. band width trade-off
+    if evaluation.coverage > 0.95 and evaluation.sensitivity > 0.50:
+        parts.append(
+            "**Trade-off:** cobertura alta, mas a banda e larga. "
+            "A regra cobre quase tudo, incluindo possíveis anomalias."
+        )
+    elif evaluation.coverage < 0.80 and evaluation.sensitivity < 0.15:
+        parts.append(
+            "**Trade-off:** banda estreita, mas cobertura baixa. "
+            "A regra pode ser muito restritiva para esta serie."
+        )
+
+    if not parts:
+        return ""
+
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------

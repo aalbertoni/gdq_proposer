@@ -6,9 +6,17 @@ from core.models.enums import (
     BaselineMethod,
     ConfidenceLevel,
     RuleType,
+    SeriesRegime,
 )
+from core.models.rule_evaluation import RuleEvaluation
 from core.models.rule_proposal import BacktestSummary, RuleProposal
-from core.rule_explainer import explain_rule, explain_rule_detail
+from core.models.series_profile import SeriesProfile
+from core.rule_explainer import (
+    explain_rule,
+    explain_rule_detail,
+    explain_regime_context,
+    explain_trade_offs,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -215,3 +223,164 @@ class TestExplainRuleDetail:
         )
         text = explain_rule_detail(p)
         assert "revisar parametros" in text
+
+
+# ===========================================================================
+# explain_regime_context
+# ===========================================================================
+
+class TestExplainRegimeContext:
+
+    def test_stable_returns_empty(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(regime=SeriesRegime.STABLE)
+        assert explain_regime_context(p, profile) == ""
+
+    def test_structural_break_mentions_date(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(
+            regime=SeriesRegime.STRUCTURAL_BREAK,
+            has_structural_break=True,
+            change_point_date="2026-02-15",
+        )
+        text = explain_regime_context(p, profile)
+        assert "2026-02-15" in text
+        assert "mudanca" in text.lower()
+
+    def test_trending_recommends_small_n(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(
+            regime=SeriesRegime.TRENDING,
+            has_trend=True, drift_slope=0.05,
+        )
+        text = explain_regime_context(p, profile)
+        assert "tendencia" in text.lower()
+        assert "N menor" in text
+
+    def test_seasonal_recommends_multiple_7(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(
+            regime=SeriesRegime.SEASONAL,
+            is_seasonal=True, seasonality_strength=0.25,
+        )
+        text = explain_regime_context(p, profile)
+        assert "sazonalidade" in text.lower()
+        assert "7" in text
+
+    def test_volatile_warns_about_fp(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(
+            regime=SeriesRegime.VOLATILE,
+            is_volatile=True, cv=0.55,
+        )
+        text = explain_regime_context(p, profile)
+        assert "volatil" in text.lower()
+
+    def test_zero_inflated_suggests_completeness(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(
+            regime=SeriesRegime.ZERO_INFLATED,
+            is_zero_inflated=True, zero_pct=45.0,
+        )
+        text = explain_regime_context(p, profile)
+        assert "zeros" in text.lower()
+        assert "completeness" in text.lower()
+
+    def test_asymmetric_mentions_skewness(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(
+            regime=SeriesRegime.ASYMMETRIC,
+            is_asymmetric=True, skewness=2.5,
+        )
+        text = explain_regime_context(p, profile)
+        assert "assimetrica" in text.lower()
+
+    def test_sparse_warns_caution(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(
+            regime=SeriesRegime.SPARSE,
+            is_sparse=True, null_pct=60.0,
+        )
+        text = explain_regime_context(p, profile)
+        assert "nulos" in text.lower()
+
+    def test_secondary_regimes_listed(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        profile = SeriesProfile(
+            regime=SeriesRegime.TRENDING,
+            secondary_regimes=(SeriesRegime.VOLATILE,),
+            has_trend=True, is_volatile=True,
+        )
+        text = explain_regime_context(p, profile)
+        assert "volatile" in text.lower()
+
+    def test_completeness_rule_no_crash(self):
+        """Non-numeric rules should still get context."""
+        p = _make_proposal(RuleType.COMPLETENESS)
+        profile = SeriesProfile(
+            regime=SeriesRegime.SPARSE,
+            is_sparse=True, null_pct=50.0,
+        )
+        text = explain_regime_context(p, profile)
+        assert len(text) > 0
+
+
+# ===========================================================================
+# explain_trade_offs
+# ===========================================================================
+
+class TestExplainTradeOffs:
+
+    def test_good_evaluation_minimal_text(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        ev = RuleEvaluation(
+            coverage=0.95, stability=0.9,
+            interpretability=1.0, cost_efficiency=1.0,
+            regime_fit=1.0, fp_risk=0.05, robustness=0.95,
+            sensitivity=0.15,
+        )
+        text = explain_trade_offs(p, ev)
+        # Good eval should produce minimal or empty text
+        assert "alto" not in text.lower() or len(text) < 200
+
+    def test_low_regime_fit_flagged(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        ev = RuleEvaluation(
+            coverage=0.90, stability=0.8,
+            interpretability=1.0, cost_efficiency=1.0,
+            regime_fit=0.3, fp_risk=0.1, robustness=0.9,
+        )
+        text = explain_trade_offs(p, ev)
+        assert "adequacao" in text.lower()
+        assert "baixa" in text.lower()
+
+    def test_high_fp_risk_flagged(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        ev = RuleEvaluation(
+            coverage=0.90, stability=0.8,
+            interpretability=1.0, cost_efficiency=1.0,
+            regime_fit=0.9, fp_risk=0.40, robustness=0.9,
+        )
+        text = explain_trade_offs(p, ev)
+        assert "falsos positivos" in text.lower()
+
+    def test_low_robustness_flagged(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        ev = RuleEvaluation(
+            coverage=0.70, stability=0.5,
+            interpretability=1.0, cost_efficiency=1.0,
+            regime_fit=0.8, fp_risk=0.1, robustness=0.4,
+        )
+        text = explain_trade_offs(p, ev)
+        assert "confiabilidade" in text.lower()
+
+    def test_wide_band_trade_off(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        ev = RuleEvaluation(
+            coverage=0.98, stability=0.9,
+            interpretability=1.0, cost_efficiency=1.0,
+            regime_fit=0.9, fp_risk=0.1, robustness=0.9,
+            sensitivity=0.60,  # wide band
+        )
+        text = explain_trade_offs(p, ev)
+        assert "banda" in text.lower() or "larga" in text.lower()
