@@ -40,15 +40,18 @@ def _friendly_error_message(e: Exception, profile: str = "") -> str:
     # SignatureDoesNotMatch
     if "signaturedoesnotmatch" in error_msg or "signature" in error_msg and "match" in error_msg:
         return (
-            "Erro SignatureDoesNotMatch ao acessar S3. Causas comuns:\n\n"
-            "1. Proxy corporativo alterando headers da requisicao\n"
-            "   -> Adicione no ~/.aws/config, dentro do seu profile:\n"
-            "   s3 =\n"
-            "     addressing_style = path\n\n"
+            "Erro SignatureDoesNotMatch ao acessar S3.\n\n"
+            "O app ja usa S3 path-style (addressing_style=path) para mitigar "
+            "problemas com proxy corporativo. Se o erro persiste, verifique:\n\n"
+            "1. Certificado CA do proxy corporativo:\n"
+            "   -> Adicione no ~/.aws/config:\n"
+            f"   [profile {profile}]\n"
+            "   ca_bundle = C:\\caminho\\do\\certificado-ca.pem\n\n"
             "2. Relogio do computador desincronizado\n"
             "   -> Sincronize a hora do sistema\n\n"
-            "3. Credenciais refreshed durante a requisicao\n"
+            "3. Credenciais expiradas\n"
             f"   -> Execute: aws sso login --profile {profile}\n\n"
+            "4. Proxy alterando headers — verifique HTTP_PROXY/HTTPS_PROXY no .env\n\n"
             "Consulte: docs/INSTALL_TROUBLESHOOTING.md secao 'SignatureDoesNotMatch'"
         )
 
@@ -130,9 +133,8 @@ class AthenaClient:
         }
 
         if self.config.athena.aws_profile:
-            import boto3
-            os.environ.setdefault("AWS_PROFILE", self.config.athena.aws_profile)
-            session = boto3.Session(profile_name=self.config.athena.aws_profile)
+            from infra.aws_session import create_session
+            session = create_session(self.config.athena.aws_profile)
             connect_kwargs["boto3_session"] = session
 
         self._conn = connect(**connect_kwargs)
@@ -150,9 +152,18 @@ class AthenaClient:
             self.execute("SELECT 1 AS health", query_name="health_check")
             return True
         except Exception as e:
-            raise ConnectionError(
-                _friendly_error_message(e, self.config.athena.aws_profile)
-            ) from e
+            friendly = _friendly_error_message(e, self.config.athena.aws_profile)
+            logger.error(
+                "Health check failed: %s: %s | profile=%s | region=%s | "
+                "s3_output=%s | s3_addressing=%s",
+                type(e).__name__,
+                e,
+                self.config.athena.aws_profile,
+                self.config.athena.region,
+                self.config.athena.s3_output,
+                os.environ.get("AWS_S3_ADDRESSING_STYLE", "(not set)"),
+            )
+            raise ConnectionError(friendly) from e
 
     def execute_df(
         self,

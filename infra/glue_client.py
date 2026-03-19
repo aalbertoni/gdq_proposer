@@ -46,7 +46,8 @@ class GlueClient:
         import boto3
         region = self.config.glue_test.region or self.config.athena.region
         if self.config.athena.aws_profile:
-            session = boto3.Session(profile_name=self.config.athena.aws_profile)
+            from infra.aws_session import create_session
+            session = create_session(self.config.athena.aws_profile)
             self._client = session.client("glue", region_name=region)
         else:
             self._client = boto3.client("glue", region_name=region)

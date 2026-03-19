@@ -237,17 +237,50 @@ active_proxies = {v: os.environ[v] for v in proxy_vars if os.environ.get(v)}
 
 if active_proxies:
     st.markdown(f"**Proxy detectado:** {_status_icon(True, warn=True)}")
+
+    def _mask_proxy_url(url: str) -> str:
+        """Mascara senha no proxy URL."""
+        if "@" in url:
+            prefix, host = url.split("@", 1)
+            scheme = prefix.split("//")[0] + "//" if "//" in prefix else ""
+            return f"{scheme}***@{host}"
+        return url
+
     for var, val in active_proxies.items():
-        st.markdown(f"- `{var}` = `{val}`")
+        st.markdown(f"- `{var}` = `{_mask_proxy_url(val)}`")
     no_proxy = os.environ.get("NO_PROXY", os.environ.get("no_proxy", ""))
     if no_proxy:
         st.markdown(f"- `NO_PROXY` = `{no_proxy}`")
+
+    # Verificar placeholder SENHA
+    any_url = list(active_proxies.values())[0]
+    if "SENHA" in any_url:
+        st.error(
+            "O proxy esta configurado com a senha placeholder (SENHA). "
+            "Edite o .env e substitua SENHA pela sua senha de rede."
+        )
+
     st.caption(
         "Se pip ou AWS CLI falharem por timeout/SSL, "
         "pode ser necessario configurar o certificado do proxy."
     )
 else:
-    st.markdown(f"**Proxy:** nenhum detectado — {_status_icon(True)}")
+    st.markdown(f"**Proxy:** nenhum detectado")
+    st.warning(
+        "Na rede corporativa Itau, o proxy e necessario. "
+        "Configure HTTP_PROXY/HTTPS_PROXY no .env ou execute `python setup_local.py`."
+    )
+
+# S3 addressing style
+s3_style = os.environ.get("AWS_S3_ADDRESSING_STYLE", "")
+st.markdown(f"**S3 addressing_style:** `{s3_style or 'virtual (default)'}`")
+if s3_style == "path":
+    st.caption("Path-style ativo — mitiga SignatureDoesNotMatch em proxies corporativos.")
+else:
+    st.caption(
+        "O app configura path-style automaticamente ao conectar. "
+        "Se ver erros SignatureDoesNotMatch, verifique os logs."
+    )
 
 
 # --- Conexao Athena ---
