@@ -63,10 +63,18 @@ st.markdown(f"**Plataforma:** {sys.platform}")
 st.header("2. Ambiente Virtual")
 
 venv = os.environ.get("VIRTUAL_ENV", "")
-venv_ok = bool(venv)
+# Detectar se o Python em execucao esta dentro de um venv
+# (o launcher executa .venv/Scripts/python.exe sem activate)
+_exe = Path(sys.executable).resolve()
+_venv_dir = Path(".venv").resolve()
+venv_via_launcher = not venv and _venv_dir.is_dir() and str(_exe).startswith(str(_venv_dir))
+venv_ok = bool(venv) or venv_via_launcher
+
 st.markdown(f"**Status:** {_status_icon(venv_ok, warn=True)}")
-if venv_ok:
+if venv:
     st.markdown(f"**Caminho:** `{venv}`")
+elif venv_via_launcher:
+    st.markdown(f"**Caminho:** `{_venv_dir}` (via launcher)")
 else:
     st.warning(
         "Nenhum ambiente virtual ativo. O app pode estar rodando "
