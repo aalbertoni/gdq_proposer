@@ -461,11 +461,39 @@ def check_proxy() -> CheckResult:
     if not active:
         return CheckResult(
             name="Proxy",
-            status=CheckStatus.OK,
-            message="Nenhum proxy detectado.",
+            status=CheckStatus.WARN,
+            message="Nenhum proxy configurado.",
+            fix_hint=(
+                "Na rede corporativa Itau, o proxy e necessario para conexoes externas.\n"
+                "  Configure no .env:\n"
+                "  HTTP_PROXY=http://RACF:SENHA@proxynew.itau:8080\n"
+                "  HTTPS_PROXY=http://RACF:SENHA@proxynew.itau:8080\n"
+                "  Ou execute: python setup_local.py"
+            ),
         )
 
-    proxy_list = ", ".join(f"{k}={v}" for k, v in active.items())
+    # Mascarar senha no log (mostrar apenas host:porta)
+    def _mask_proxy(url: str) -> str:
+        if "@" in url:
+            return url.split("@", 1)[1]
+        return url
+
+    proxy_list = ", ".join(f"{k}={_mask_proxy(v)}" for k, v in active.items())
+
+    # Verificar se o proxy ainda tem placeholder SENHA
+    any_url = list(active.values())[0]
+    if "SENHA" in any_url:
+        return CheckResult(
+            name="Proxy",
+            status=CheckStatus.ERROR,
+            message="Proxy configurado com senha placeholder (SENHA).",
+            fix_hint=(
+                "Edite o .env e substitua SENHA pela sua senha de rede:\n"
+                "  HTTP_PROXY=http://seuracf:suasenha@proxynew.itau:8080\n"
+                "  Se a senha tiver caracteres especiais, use URL encoding:\n"
+                "  @ = %40, # = %23, ! = %21"
+            ),
+        )
 
     # Verificar se pip consegue conectar (teste rapido)
     try:
@@ -561,7 +589,7 @@ def has_errors(results: list[CheckResult]) -> bool:
 
 
 # Checks que impedem o app de funcionar — nao permitem "continuar mesmo assim"
-BLOCKING_CHECK_NAMES = {"AWS Profile", "Acesso S3", "Arquivo .env", "AWS CLI", "Dependencias"}
+BLOCKING_CHECK_NAMES = {"AWS Profile", "Acesso S3", "Arquivo .env", "AWS CLI", "Dependencias", "Proxy"}
 
 
 def get_blocking_errors(results: list[CheckResult]) -> list[CheckResult]:

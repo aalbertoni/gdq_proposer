@@ -73,6 +73,29 @@ def _is_running_in_venv() -> bool:
 # Etapas do launcher
 # ---------------------------------------------------------------------------
 
+def _load_env_file() -> dict[str, str]:
+    """Carrega variaveis do .env e retorna dict. Aplica no os.environ."""
+    env_file = PROJECT_DIR / ".env"
+    loaded = {}
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, value = line.split("=", 1)
+                key, value = key.strip(), value.strip()
+                loaded[key] = value
+                os.environ.setdefault(key, value)
+
+    # Garantir AWS_PROFILE
+    aws_profile = loaded.get("GDQ_AWS_PROFILE") or os.environ.get("GDQ_AWS_PROFILE", "")
+    if aws_profile:
+        os.environ.setdefault("AWS_PROFILE", aws_profile)
+
+    return loaded
+
+
 def ensure_venv() -> bool:
     """Cria o ambiente virtual se nao existir. Retorna True se OK."""
     venv_python = _get_venv_python()
@@ -230,22 +253,10 @@ def run_app(port: int = 8501, debug: bool = False) -> None:
     """Inicia o app Streamlit."""
     venv_python = _get_venv_python()
 
-    # Carregar .env no ambiente
+    # .env ja foi carregado em os.environ por _load_env_file() no main()
     env = os.environ.copy()
-    env_file = PROJECT_DIR / ".env"
-    if env_file.exists():
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                key, value = line.split("=", 1)
-                env.setdefault(key.strip(), value.strip())
 
-    # Garantir AWS_PROFILE
     aws_profile = env.get("GDQ_AWS_PROFILE", "")
-    if aws_profile:
-        env.setdefault("AWS_PROFILE", aws_profile)
 
     if debug:
         env["GDQ_LOG_LEVEL"] = "DEBUG"
@@ -324,6 +335,10 @@ def main():
     _print_header("Verificando configuracao (.env)...")
     if not ensure_dotenv():
         sys.exit(1)
+
+    # Carregar .env no ambiente (proxy, AWS profile, etc.)
+    # Isso garante que o preflight e o app herdem as variaveis.
+    _load_env_file()
 
     # Etapa 4: Preflight checks
     if not args.skip_checks:

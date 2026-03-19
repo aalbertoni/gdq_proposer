@@ -156,6 +156,31 @@ def main():
     if s3_output and not s3_output.endswith("/"):
         s3_output += "/"
 
+    # --- Proxy corporativo ---
+    print()
+    print("  --- Proxy Corporativo ---")
+    print("  Necessario para conexoes AWS na rede Itau.")
+    print("  Formato: http://RACF:SENHA@proxynew.itau:8080")
+    print()
+    print("  ATENCAO: se sua senha tiver caracteres especiais (@, #, !),")
+    print("  use encoding URL. Ex: @ = %40, # = %23, ! = %21")
+    print()
+
+    proxy_default = f"http://{racf}:SENHA@proxynew.itau:8080"
+    proxy_url = _ask("URL do proxy", default=proxy_default)
+
+    # Se o usuario deixou SENHA no default, avisar
+    if "SENHA" in proxy_url:
+        print()
+        print("  IMPORTANTE: substitua SENHA pela sua senha de rede no .env")
+        print("  antes de executar o app.")
+
+    no_proxy_default = (
+        "127.0.0.1,10.0.0.0/8,192.168.0.0/16,"
+        ".aws.clud.ihf,.cloudera.site,.localhost,.cloud.ihf,"
+        "*.corp.rc.itau,*.corp.ihf,*.itau.com,*.itau.corp.ihf,localhost"
+    )
+
     # --- Thundera (opcional) ---
     print()
     print("  --- Thundera / Glue DQ (opcional) ---")
@@ -186,6 +211,17 @@ GDQ_ATHENA_WORKGROUP={workgroup}
 # Formato: s3://itau-self-wkp-{{regiao}}-{{conta}}/{{racf}}/query_results/
 GDQ_ATHENA_S3_OUTPUT={s3_output}
 
+# === Proxy corporativo ===
+# Necessario para conexoes AWS na rede Itau.
+# ATENCAO: substitua SENHA pela sua senha de rede.
+# Se a senha tiver caracteres especiais, use URL encoding (@ = %40, # = %23, ! = %21).
+HTTP_PROXY={proxy_url}
+HTTPS_PROXY={proxy_url}
+http_proxy={proxy_url}
+https_proxy={proxy_url}
+NO_PROXY={no_proxy_default}
+no_proxy={no_proxy_default}
+
 # === Thundera / Glue DQ Test (opcional) ===
 # Preencha se sua equipe usa o pipeline Thundera para testes de qualidade.
 GDQ_GLUE_JOB_NAME=glueplataformathundera
@@ -208,8 +244,12 @@ GDQ_COMUNIDADE={comunidade}
     print(f"    Regiao:    {region}")
     print(f"    Workgroup: {workgroup}")
     print(f"    S3 Output: {s3_output}")
+    print(f"    Proxy:     {proxy_url}")
     print(f"    RACF:      {racf}")
     print()
+    if "SENHA" in proxy_url:
+        print("  IMPORTANTE: edite o .env e substitua SENHA pela sua senha de rede!")
+        print()
     print("  Proximo passo: execute o app com:")
     print("    python launcher.py")
     print()
