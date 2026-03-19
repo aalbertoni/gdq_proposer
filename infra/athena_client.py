@@ -121,23 +121,32 @@ class AthenaClient:
     def _init_connection(self):
         """Inicializa conexao PyAthena.
 
-        Usa o cursor padrao (DictCursor) em vez de PandasCursor.
-        O PandasCursor le resultados diretamente do S3 (GetObject),
-        o que falha em redes com proxy corporativo SSL/TLS inspection.
-        O cursor padrao usa a API GetQueryResults do Athena, que passa
-        apenas pelo endpoint athena.*.amazonaws.com — sem tocar no S3.
+        Usa DictCursor que busca resultados via API GetQueryResults,
+        sem acessar S3 diretamente. Isso evita erros de SSL/Signature
+        causados por proxy corporativo interceptando acesso ao S3.
+
+        Se workgroup estiver configurado, passa s3_staging_dir="" para
+        desabilitar qualquer referencia ao S3 no PyAthena — o Athena
+        usa o output location do workgroup server-side.
         """
         from pyathena import connect
         from pyathena.cursor import DictCursor
 
         connect_kwargs = {
             "region_name": self.config.athena.region,
-            "work_group": self.config.athena.workgroup,
-            "s3_staging_dir": self.config.athena.s3_output,
             "cursor_class": DictCursor,
             "kill_on_interrupt": True,
             "result_reuse_enable": True,
         }
+
+        # Se workgroup configurado, nao precisamos de s3_staging_dir.
+        # Passar "" desabilita o fallback para S3 no PyAthena, eliminando
+        # qualquer criacao de client S3 que falha com proxy corporativo.
+        if self.config.athena.workgroup:
+            connect_kwargs["work_group"] = self.config.athena.workgroup
+            connect_kwargs["s3_staging_dir"] = ""
+        elif self.config.athena.s3_output:
+            connect_kwargs["s3_staging_dir"] = self.config.athena.s3_output
 
         if self.config.athena.aws_profile:
             from infra.aws_session import create_session
