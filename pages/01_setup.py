@@ -138,6 +138,9 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
     client_id = _get_client_id()
     try:
         exists = _cached_validate_table(client_id, schema, table)
+    except ConnectionError as e:
+        st.error(str(e))
+        return False
     except ValueError:
         exists = False
 
@@ -310,6 +313,9 @@ if st.button("Validar Tabela", disabled=not table, type="primary"):
     with st.spinner("Verificando tabela..."):
         try:
             exists = _cached_validate_table(client_id, schema, table)
+        except ConnectionError as e:
+            st.error(str(e))
+            st.stop()
         except ValueError as e:
             st.error(
                 f"Nome invalido: {e}. "

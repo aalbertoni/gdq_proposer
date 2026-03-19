@@ -61,15 +61,22 @@ def main():
         layout="wide",
     )
 
-    # Init client
+    # Init client + health check real
     try:
         client = get_client()
+        # Testar conexao real (apenas uma vez por sessao)
+        if not st.session_state.get("_health_check_done"):
+            client.health_check()
+            st.session_state["_health_check_done"] = True
         connection_ok = True
         connection_error = None
     except Exception as e:
         connection_ok = False
         connection_error = str(e)
         client = None
+        # Limpar estado para re-testar na proxima tentativa
+        st.session_state.pop("_health_check_done", None)
+        st.session_state.pop("client", None)
 
     render_sidebar()
 

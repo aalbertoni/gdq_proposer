@@ -259,24 +259,15 @@ if st.button("Testar conexao com Athena", type="primary"):
             config = load_config()
             from infra.athena_client import AthenaClient
             client = AthenaClient(config)
-            # Tentar uma query simples
-            result = client.execute("SELECT 1 AS test")
+            client.health_check()
             st.markdown(f"**Conexao:** {_status_icon(True)}")
             st.success("Conexao com Athena funcionando.")
+        except ConnectionError as e:
+            st.markdown(f"**Conexao:** {_status_icon(False)}")
+            st.error(str(e))
         except Exception as e:
             st.markdown(f"**Conexao:** {_status_icon(False)}")
-            error_msg = str(e)
-            st.error(f"Falha na conexao: {error_msg}")
-
-            # Dicas baseadas no erro
-            if "InvalidIdentityToken" in error_msg or "ExpiredToken" in error_msg:
-                st.info(f"Execute: `aws sso login --profile {profile}`")
-            elif "AccessDenied" in error_msg:
-                st.info("Verifique se o profile tem permissao para acessar o Athena.")
-            elif "bucket" in error_msg.lower():
-                st.info("Verifique GDQ_ATHENA_S3_OUTPUT no .env.")
-            elif "WorkGroup" in error_msg:
-                st.info("Verifique GDQ_ATHENA_WORKGROUP no .env.")
+            st.error(f"Falha na conexao: {type(e).__name__}: {e}")
 else:
     st.caption("Clique para testar a conexao ao vivo.")
 

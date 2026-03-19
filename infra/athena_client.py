@@ -55,6 +55,46 @@ class AthenaClient:
 
         self._conn = connect(**connect_kwargs)
 
+    def health_check(self) -> bool:
+        """Testa a conexao com uma query trivial.
+
+        Returns:
+            True se a conexao esta funcional.
+
+        Raises:
+            Exception com mensagem amigavel se a conexao falhar.
+        """
+        try:
+            self.execute("SELECT 1 AS health", query_name="health_check")
+            return True
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "expired" in error_msg or "invalid" in error_msg or "token" in error_msg:
+                profile = self.config.athena.aws_profile
+                raise ConnectionError(
+                    f"Credenciais AWS expiradas ou invalidas. "
+                    f"Execute no terminal: aws sso login --profile {profile}"
+                ) from e
+            elif "access denied" in error_msg or "not authorized" in error_msg:
+                raise ConnectionError(
+                    "Sem permissao para acessar o Athena. "
+                    "Verifique as permissoes do seu profile AWS."
+                ) from e
+            elif "s3" in error_msg and ("bucket" in error_msg or "output" in error_msg):
+                raise ConnectionError(
+                    "Bucket S3 de output nao encontrado ou sem acesso. "
+                    "Verifique GDQ_ATHENA_S3_OUTPUT no .env"
+                ) from e
+            elif "workgroup" in error_msg:
+                raise ConnectionError(
+                    "Workgroup do Athena nao encontrado. "
+                    "Verifique GDQ_ATHENA_WORKGROUP no .env"
+                ) from e
+            else:
+                raise ConnectionError(
+                    f"Falha ao conectar no Athena: {type(e).__name__}: {e}"
+                ) from e
+
     def execute_df(
         self,
         sql: str,
@@ -202,7 +242,14 @@ class AthenaClient:
             ))
 
     def table_exists(self, schema: str, table: str) -> bool:
-        """Verifica se a tabela existe."""
+        """Verifica se a tabela existe.
+
+        Returns:
+            True se a tabela existe e e acessivel.
+
+        Raises:
+            ConnectionError: Se o erro for de autenticacao/permissao (nao de tabela).
+        """
         try:
             self.execute(
                 f'SELECT 1 FROM "{schema}"."{table}" LIMIT 1',
@@ -210,7 +257,21 @@ class AthenaClient:
                 dataset=f"{schema}.{table}",
             )
             return True
-        except Exception:
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Erros de autenticacao/permissao devem ser propagados, nao mascarados
+            auth_keywords = [
+                "expired", "invalid", "token", "access denied",
+                "not authorized", "credentials", "security token",
+                "unrecognizedclient",
+            ]
+            if any(kw in error_msg for kw in auth_keywords):
+                profile = self.config.athena.aws_profile
+                raise ConnectionError(
+                    f"Erro de autenticacao AWS ao acessar '{schema}.{table}'. "
+                    f"Suas credenciais podem estar expiradas. "
+                    f"Execute: aws sso login --profile {profile}"
+                ) from e
             return False
 
     def get_columns(self, schema: str, table: str) -> list[dict]:
