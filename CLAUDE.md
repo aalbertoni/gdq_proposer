@@ -158,6 +158,9 @@ pyarrow>=14.0         # leitura de parquet nos testes
 | `RuleSelection` | `core/models/rule_selection.py` | Regra no carrinho |
 | `BacktestSummary` | `core/models/rule_proposal.py` | Resultado do backtest |
 | `RuleScore` | `core/rule_scoring.py` | Avaliacao composta da regra |
+| `RuleEvaluation` | `core/models/rule_evaluation.py` | Avaliacao enriquecida com regime (7 dimensoes) |
+| `ComparisonResult` | `core/proposal_comparator.py` | Resultado de comparacao entre 2 propostas |
+| `BacktestAnalysis` | `core/backtest_analysis.py` | Streaks, violation rate, tail risk do backtest |
 | `SemanticType` | `core/models/enums.py` | Tipos de coluna |
 | `RuleType` | `core/models/enums.py` | Tipos de regra |
 | `ThunderaPayload` | `core/models/glue_test.py` | Payload JSON para Glue job Thundera |
@@ -263,6 +266,34 @@ Detalhes completos em `docs/adr/ADR-005-grid-search-scoring.md`.
 **BacktestSummary.point_results:** Lista de `{index, value, passed}` por ponto avaliado.
 Usado pelo auto-tune para cruzar com mascara de outliers.
 
+## Score Composto Enriquecido (score_proposal / evaluate_proposal)
+
+Scoring de regras com 6 dimensoes ponderadas + penalidade de FP risk.
+Modulo: `core/rule_scoring.py`, modelo enriquecido: `core/models/rule_evaluation.py`.
+
+**Pesos:**
+
+| Dimensao | Peso | Fonte |
+|----------|------|-------|
+| coverage | 0.30 | Backtest coverage_pct / 100 |
+| stability | 0.20 | Backtest stability_score |
+| interpretability | 0.10 | Hardcoded por RuleType |
+| cost_efficiency | 0.10 | Hardcoded por RuleType (built-in=1.0, CustomSql=0.7) |
+| regime_fit | 0.15 | Adequacao regra vs regime da serie |
+| robustness | 0.15 | Qualidade dos dados (n_valid, null%, outliers) |
+| fp_risk | -0.10 * risk | Penalidade: CV alto, assimetria, FPs no backtest |
+
+**regime_fit**: Lookup (regime, rule_type) com overrides especificos.
+Ex: Mean em STRUCTURAL_BREAK = 0.3, Completeness em SPARSE = 0.9.
+Regimes secundarios aplicam 30% do impacto como penalidade adicional.
+
+**evaluate_proposal()**: Retorna `RuleEvaluation` com todas 7 dimensoes + `regime_warnings` contextuais.
+**score_proposal()**: Backward-compatible, aceita `profile` opcional.
+
+**UI integration:** `classify_series()` chamado uma vez por coluna no 02_explore.py (cacheado em session_state).
+Profile passado para `_render_add_to_cart(profile=)` que exibe `explain_regime_context()` e `explain_trade_offs()` dentro do expander de sintaxe.
+Regime badge exibido no topo de cada coluna numerica e no tab Tabela.
+
 ---
 
 ## Regime Estatistico (SeriesProfile)
@@ -283,6 +314,35 @@ Modulo: `core/series_regime.py`, modelo: `core/models/series_profile.py`.
 
 O regime principal e o mais impactante (prioridade: structural_break > trending > seasonal > ...).
 Regimes secundarios sao detectados mas nao dominam a classificacao.
+
+## Backtest Enriquecido (BacktestAnalysis)
+
+Analise aprofundada dos resultados de backtest para detectar padroes de falha.
+Modulo: `core/backtest_analysis.py`.
+
+| Metrica | Descricao | Alerta |
+|---------|-----------|--------|
+| max_fail_streak | Maior sequencia de falhas consecutivas | >= 3 → sinal de mudanca de regime |
+| violation_rate | Taxa de violacao geral (falhas / total) | Referencia historica |
+| recent_violation_rate | Taxa nos ultimos 7 periodos | > 1.5x historica → degradacao recente |
+| tail_risk | Taxa de falha nos ultimos 20% dos dados | > 30% → risco de cauda |
+
+**UI:** Expander "Analise do backtest" no painel de metricas da pagina Explore.
+`summarize_backtest_analysis()` gera texto em pt-BR com insights automaticos.
+
+## Explicabilidade (rule_explainer)
+
+Funcoes de explicacao em linguagem natural em `core/rule_explainer.py`:
+
+| Funcao | Entrada | Saida |
+|--------|---------|-------|
+| `explain_rule(proposal)` | RuleProposal | Frase curta (1 linha) |
+| `explain_rule_detail(proposal)` | RuleProposal | Markdown com parametros e evidencia |
+| `explain_regime_context(proposal, profile)` | RuleProposal + SeriesProfile | Texto sobre impacto do regime na regra |
+| `explain_trade_offs(proposal, evaluation)` | RuleProposal + RuleEvaluation | Texto sobre regime_fit, FP risk, robustez |
+
+**UI:** `explain_regime_context` e `explain_trade_offs` exibidos dentro do expander de sintaxe
+quando ha SeriesProfile disponivel. Vazio para regime STABLE.
 
 ## GDQ Capability Matrix
 
