@@ -19,6 +19,8 @@ Guia pratico para resolver os problemas mais comuns ao rodar o app localmente.
 11. [O app nao abriu no navegador](#11-o-app-nao-abriu-no-navegador)
 12. [Nao sei qual comando rodar](#12-nao-sei-qual-comando-rodar)
 13. [Proxy corporativo bloqueando pip ou AWS](#13-proxy-corporativo-bloqueando-pip-ou-aws)
+14. [Erro de SSL ao conectar na AWS](#14-erro-de-ssl-ao-conectar-na-aws)
+15. [SignatureDoesNotMatch ao acessar S3](#15-signaturedoesnotmatch-ao-acessar-s3)
 
 ---
 
@@ -509,6 +511,136 @@ export AWS_CA_BUNDLE=/caminho/do/certificado.pem
 ```bash
 pip install --upgrade pip
 aws sts get-caller-identity --profile seu-profile
+```
+
+---
+
+## 14. Erro de SSL ao conectar na AWS
+
+**Sintoma:**
+```
+SSLError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed
+```
+ou
+```
+botocore.exceptions.SSLError
+```
+ou
+```
+EndpointConnectionError: Could not connect to the endpoint URL
+```
+
+**Causa:** Redes corporativas geralmente usam um proxy que intercepta o trafego HTTPS e re-assina com um certificado interno. O boto3/AWS CLI nao confia nesse certificado por padrao.
+
+**Como corrigir:**
+
+**Passo 1 — Obter o certificado CA da sua rede:**
+Pergunte ao time de infraestrutura qual e o certificado CA corporativo. Geralmente e um arquivo `.pem` ou `.crt`.
+
+No Windows, voce pode exportar pelo "Gerenciar certificados do computador" (certlm.msc).
+
+**Passo 2 — Configurar no AWS CLI:**
+
+Edite o arquivo `~/.aws/config` (ou `C:\Users\SEU_USUARIO\.aws\config` no Windows):
+
+```ini
+[profile seu-profile]
+region = sa-east-1
+ca_bundle = C:\caminho\do\certificado-ca.pem
+```
+
+**Passo 3 — Se o erro for especifico do S3 (GetObject, PutObject):**
+
+Adicione tambem a configuracao de path-style para S3:
+
+```ini
+[profile seu-profile]
+region = sa-east-1
+ca_bundle = C:\caminho\do\certificado-ca.pem
+s3 =
+  addressing_style = path
+```
+
+> **Por que `addressing_style = path`?**
+> Por padrao, o boto3 usa URLs no formato `bucket.s3.amazonaws.com` (virtual-hosted).
+> Alguns proxies corporativos nao lidam bem com o wildcard SSL desse formato.
+> O `path` muda para `s3.amazonaws.com/bucket`, que funciona melhor com proxies.
+
+**Passo 4 — Alternativa: variavel de ambiente:**
+
+Se nao quiser editar o `~/.aws/config`:
+```bash
+# Windows (PowerShell):
+$env:AWS_CA_BUNDLE = "C:\caminho\do\certificado-ca.pem"
+
+# Linux/Mac:
+export AWS_CA_BUNDLE=/caminho/do/certificado-ca.pem
+```
+
+**Validacao:**
+```bash
+aws sts get-caller-identity --profile seu-profile
+aws s3 ls s3://seu-bucket/ --profile seu-profile
+```
+
+Se ambos funcionarem sem erro, o app tambem vai funcionar.
+
+---
+
+## 15. SignatureDoesNotMatch ao acessar S3
+
+**Sintoma:**
+```
+botocore.exceptions.ClientError: An error occurred (SignatureDoesNotMatch)
+when calling the GetObject operation
+```
+
+**Causa:** O Athena salva resultados de queries no S3 e o PyAthena faz `GetObject` para ler esses resultados. O erro `SignatureDoesNotMatch` significa que a assinatura da requisicao nao confere com o que o S3 espera. Causas comuns:
+
+1. **Proxy corporativo** alterando headers HTTP da requisicao
+2. **Relogio do computador** desincronizado (a assinatura AWS tem validade de poucos minutos)
+3. **Formato de URL S3** incompativel com o proxy (virtual-hosted vs path)
+
+**Como corrigir:**
+
+**Causa mais provavel: proxy + formato S3.**
+
+Edite `~/.aws/config` e adicione ao seu profile:
+
+```ini
+[profile seu-profile]
+s3 =
+  addressing_style = path
+```
+
+Isso forca o boto3 a usar `s3.sa-east-1.amazonaws.com/bucket/key` ao inves de `bucket.s3.sa-east-1.amazonaws.com/key`, evitando problemas de wildcard SSL com proxies.
+
+**Se nao resolver — verificar relogio:**
+
+Windows:
+```
+w32tm /resync
+```
+
+Linux:
+```bash
+sudo ntpdate -u pool.ntp.org
+```
+
+**Se ainda nao resolver — verificar credenciais:**
+
+As vezes as credenciais foram refreshed no meio da operacao. Faca login novamente:
+```bash
+aws sso login --profile seu-profile
+```
+
+**Validacao:**
+```bash
+# Testar se o S3 funciona com o profile
+aws s3 ls s3://itau-self-wkp-sa-east-1-SUA_CONTA/SEU_RACF/query_results/ --profile seu-profile
+
+# Testar o app
+python preflight_check.py
 ```
 
 ---

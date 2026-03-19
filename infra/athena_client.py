@@ -17,6 +17,88 @@ from infra.sql_dialect import SQLDialect
 logger = logging.getLogger(__name__)
 
 
+def _friendly_error_message(e: Exception, profile: str = "") -> str:
+    """Converte excecoes AWS/boto em mensagens amigaveis com instrucoes de fix."""
+    error_msg = str(e).lower()
+    error_type = type(e).__name__.lower()
+
+    # SSL / certificado
+    if "ssl" in error_msg or "certificate" in error_msg or "ssl" in error_type:
+        return (
+            "Erro de SSL ao conectar na AWS. Isso geralmente ocorre em redes corporativas "
+            "com proxy que intercepta HTTPS.\n\n"
+            "Solucoes:\n"
+            "1. Configure o certificado CA no AWS CLI:\n"
+            "   Edite ~/.aws/config e adicione no seu profile:\n"
+            "   ca_bundle = /caminho/do/certificado.pem\n\n"
+            "2. Se o erro for especifico do S3, adicione tambem:\n"
+            "   s3 =\n"
+            "     addressing_style = path\n\n"
+            "Consulte: docs/INSTALL_TROUBLESHOOTING.md secao 'Erro de SSL'"
+        )
+
+    # SignatureDoesNotMatch
+    if "signaturedoesnotmatch" in error_msg or "signature" in error_msg and "match" in error_msg:
+        return (
+            "Erro SignatureDoesNotMatch ao acessar S3. Causas comuns:\n\n"
+            "1. Proxy corporativo alterando headers da requisicao\n"
+            "   -> Adicione no ~/.aws/config, dentro do seu profile:\n"
+            "   s3 =\n"
+            "     addressing_style = path\n\n"
+            "2. Relogio do computador desincronizado\n"
+            "   -> Sincronize a hora do sistema\n\n"
+            "3. Credenciais refreshed durante a requisicao\n"
+            f"   -> Execute: aws sso login --profile {profile}\n\n"
+            "Consulte: docs/INSTALL_TROUBLESHOOTING.md secao 'SignatureDoesNotMatch'"
+        )
+
+    # Credenciais expiradas
+    if "expired" in error_msg or "token" in error_msg and "invalid" in error_msg:
+        return (
+            f"Credenciais AWS expiradas ou invalidas. "
+            f"Execute no terminal: aws sso login --profile {profile}"
+        )
+
+    # UnrecognizedClient (credenciais invalidas de outro tipo)
+    if "unrecognizedclient" in error_msg or "invalid" in error_msg and "credential" in error_msg:
+        return (
+            f"Credenciais AWS nao reconhecidas. "
+            f"Verifique se o profile '{profile}' esta configurado corretamente.\n"
+            f"Execute: aws configure list --profile {profile}"
+        )
+
+    # Access denied
+    if "access denied" in error_msg or "not authorized" in error_msg or "accessdenied" in error_msg:
+        return (
+            "Sem permissao para acessar o Athena. "
+            "Verifique as permissoes do seu profile AWS."
+        )
+
+    # S3 bucket
+    if "nosuchbucket" in error_msg or ("s3" in error_msg and "bucket" in error_msg):
+        return (
+            "Bucket S3 de output nao encontrado ou sem acesso. "
+            "Verifique GDQ_ATHENA_S3_OUTPUT no .env"
+        )
+
+    # Workgroup
+    if "workgroup" in error_msg:
+        return (
+            "Workgroup do Athena nao encontrado. "
+            "Verifique GDQ_ATHENA_WORKGROUP no .env"
+        )
+
+    # Connection refused / timeout de rede
+    if "connect" in error_msg and ("timeout" in error_msg or "refused" in error_msg):
+        return (
+            "Timeout ou conexao recusada ao acessar a AWS. "
+            "Verifique sua conexao de rede e configuracao de proxy."
+        )
+
+    # Fallback generico
+    return f"Falha ao conectar no Athena: {type(e).__name__}: {e}"
+
+
 class AthenaClient:
     """Client para queries no Amazon Athena.
 
@@ -68,32 +150,9 @@ class AthenaClient:
             self.execute("SELECT 1 AS health", query_name="health_check")
             return True
         except Exception as e:
-            error_msg = str(e).lower()
-            if "expired" in error_msg or "invalid" in error_msg or "token" in error_msg:
-                profile = self.config.athena.aws_profile
-                raise ConnectionError(
-                    f"Credenciais AWS expiradas ou invalidas. "
-                    f"Execute no terminal: aws sso login --profile {profile}"
-                ) from e
-            elif "access denied" in error_msg or "not authorized" in error_msg:
-                raise ConnectionError(
-                    "Sem permissao para acessar o Athena. "
-                    "Verifique as permissoes do seu profile AWS."
-                ) from e
-            elif "s3" in error_msg and ("bucket" in error_msg or "output" in error_msg):
-                raise ConnectionError(
-                    "Bucket S3 de output nao encontrado ou sem acesso. "
-                    "Verifique GDQ_ATHENA_S3_OUTPUT no .env"
-                ) from e
-            elif "workgroup" in error_msg:
-                raise ConnectionError(
-                    "Workgroup do Athena nao encontrado. "
-                    "Verifique GDQ_ATHENA_WORKGROUP no .env"
-                ) from e
-            else:
-                raise ConnectionError(
-                    f"Falha ao conectar no Athena: {type(e).__name__}: {e}"
-                ) from e
+            raise ConnectionError(
+                _friendly_error_message(e, self.config.athena.aws_profile)
+            ) from e
 
     def execute_df(
         self,
@@ -248,7 +307,7 @@ class AthenaClient:
             True se a tabela existe e e acessivel.
 
         Raises:
-            ConnectionError: Se o erro for de autenticacao/permissao (nao de tabela).
+            ConnectionError: Se o erro for de infra (auth, SSL, proxy) e nao de tabela.
         """
         try:
             self.execute(
@@ -259,18 +318,17 @@ class AthenaClient:
             return True
         except Exception as e:
             error_msg = str(e).lower()
-            # Erros de autenticacao/permissao devem ser propagados, nao mascarados
-            auth_keywords = [
+            # Erros de infra devem ser propagados, nao mascarados como "tabela nao encontrada"
+            infra_keywords = [
                 "expired", "invalid", "token", "access denied",
                 "not authorized", "credentials", "security token",
-                "unrecognizedclient",
+                "unrecognizedclient", "ssl", "certificate",
+                "signaturedoesnotmatch", "signature",
+                "timeout", "refused", "nosuchbucket",
             ]
-            if any(kw in error_msg for kw in auth_keywords):
-                profile = self.config.athena.aws_profile
+            if any(kw in error_msg for kw in infra_keywords):
                 raise ConnectionError(
-                    f"Erro de autenticacao AWS ao acessar '{schema}.{table}'. "
-                    f"Suas credenciais podem estar expiradas. "
-                    f"Execute: aws sso login --profile {profile}"
+                    _friendly_error_message(e, self.config.athena.aws_profile)
                 ) from e
             return False
 
