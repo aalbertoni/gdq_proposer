@@ -374,6 +374,10 @@ class AthenaClient:
     ) -> tuple[list[dict], list[str]]:
         """Retorna colunas e nomes das colunas de particao.
 
+        Usa information_schema.columns (SQL padrao) em vez de DESCRIBE,
+        pois DESCRIBE retorna metadados em formato que varia conforme
+        o tipo de cursor (PandasCursor vs DictCursor).
+
         Args:
             schema: Nome do schema/database.
             table: Nome da tabela.
@@ -383,44 +387,37 @@ class AthenaClient:
             - columns: [{"name": str, "type": str}, ...]
             - partition_columns: ["dt_ref", ...] (vazia se nao particionada)
         """
-        df = self.execute_df(
-            f"DESCRIBE {schema}.{table}",
-            query_name="describe_table",
+        # information_schema retorna colunas com nomes padrao e funciona
+        # independente do cursor. extra_info contem 'partition key' para
+        # colunas de particao no Athena.
+        rows = self.execute(
+            f"""
+            SELECT column_name, data_type, extra_info
+            FROM information_schema.columns
+            WHERE table_schema = '{schema}'
+              AND table_name = '{table}'
+            ORDER BY ordinal_position
+            """,
+            query_name="get_columns",
             dataset=f"{schema}.{table}",
         )
+
         columns = []
         partition_columns = []
-        in_partition_section = False
 
-        for _, row in df.iterrows():
-            col_name = row.get("col_name")
-            data_type = row.get("data_type")
-            if not isinstance(col_name, str):
+        for row in rows:
+            col_name = row.get("column_name", "")
+            data_type = row.get("data_type", "")
+            extra_info = row.get("extra_info", "") or ""
+
+            if not isinstance(col_name, str) or not col_name.strip():
                 continue
             col_name = col_name.strip()
+            data_type = str(data_type).strip() if data_type else "string"
 
-            # Detect partition section header
-            if col_name == "# Partition Information":
-                in_partition_section = True
-                continue
-            # Skip comment rows
-            if col_name.startswith("#") or not col_name:
-                continue
-            if not isinstance(data_type, str):
-                continue
-            data_type = data_type.strip()
-            if not data_type:
-                continue
+            columns.append({"name": col_name, "type": data_type})
 
-            if in_partition_section:
+            if "partition" in extra_info.lower():
                 partition_columns.append(col_name)
-            else:
-                columns.append({"name": col_name, "type": data_type})
-
-        # Add partition cols to column list if not already present
-        col_names = {c["name"] for c in columns}
-        for pc in partition_columns:
-            if pc not in col_names:
-                columns.append({"name": pc, "type": "string"})
 
         return columns, partition_columns
