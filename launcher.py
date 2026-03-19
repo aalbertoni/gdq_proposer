@@ -195,22 +195,35 @@ def ensure_dotenv() -> bool:
         return False
 
 
-def run_preflight(port: int = 8501) -> bool:
-    """Executa checagens de ambiente. Retorna True se nao ha erros bloqueantes."""
+def run_preflight(port: int = 8501) -> str:
+    """Executa checagens de ambiente.
+
+    Returns:
+        "ok" — nenhum erro
+        "blocking" — erros bloqueantes (SSL, credenciais, S3, .env, deps)
+        "warn" — apenas erros nao-bloqueantes ou warnings
+    """
     venv_python = _get_venv_python()
 
     # Rodar preflight no contexto do venv para checar deps corretamente
+    # Exit codes: 0 = ok, 1 = non-blocking errors only, 2 = blocking errors
     result = subprocess.run(
         [str(venv_python), "-c", (
             "import sys; sys.path.insert(0, '.'); "
-            "from preflight_check import run_all_checks, has_errors, print_results; "
+            "from preflight_check import run_all_checks, get_blocking_errors, get_non_blocking_errors, print_results; "
             f"r = run_all_checks(port={port}); print_results(r); "
-            "sys.exit(1 if has_errors(r) else 0)"
+            "blocking = get_blocking_errors(r); "
+            "non_blocking = get_non_blocking_errors(r); "
+            "sys.exit(2 if blocking else (1 if non_blocking else 0))"
         )],
         cwd=str(PROJECT_DIR),
     )
 
-    return result.returncode == 0
+    if result.returncode == 2:
+        return "blocking"
+    elif result.returncode == 1:
+        return "warn"
+    return "ok"
 
 
 def run_app(port: int = 8501, debug: bool = False) -> None:
@@ -315,16 +328,27 @@ def main():
     # Etapa 4: Preflight checks
     if not args.skip_checks:
         _print_header("Executando verificacao de ambiente...")
-        preflight_ok = run_preflight(port=args.port)
+        preflight_result = run_preflight(port=args.port)
 
         if args.check_only:
-            sys.exit(0 if preflight_ok else 1)
+            sys.exit(0 if preflight_result == "ok" else 1)
 
-        if not preflight_ok:
-            print("  Deseja continuar mesmo assim? (s/N): ", end="")
+        if preflight_result == "blocking":
+            print()
+            _print_error(
+                "Erros bloqueantes detectados (credenciais, SSL, S3 ou configuracao)."
+            )
+            print("     O app nao pode funcionar corretamente com esses erros.")
+            print("     Corrija os problemas acima e tente novamente.")
+            print("     Consulte: docs/INSTALL_TROUBLESHOOTING.md\n")
+            sys.exit(1)
+
+        elif preflight_result == "warn":
+            print("  Avisos detectados, mas nenhum bloqueante.")
+            print("  Deseja continuar mesmo assim? (S/n): ", end="")
             answer = input().strip().lower()
-            if answer not in ("s", "sim", "y", "yes"):
-                print("  Abortado. Corrija os erros e tente novamente.\n")
+            if answer in ("n", "nao", "no"):
+                print("  Abortado. Corrija os avisos e tente novamente.\n")
                 sys.exit(1)
     elif args.check_only:
         print("\n  --check-only e --skip-checks nao podem ser usados juntos.\n")

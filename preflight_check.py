@@ -560,6 +560,32 @@ def has_errors(results: list[CheckResult]) -> bool:
     return any(r.status == CheckStatus.ERROR for r in results)
 
 
+# Checks que impedem o app de funcionar — nao permitem "continuar mesmo assim"
+BLOCKING_CHECK_NAMES = {"AWS Profile", "Acesso S3", "Arquivo .env", "AWS CLI", "Dependencias"}
+
+
+def get_blocking_errors(results: list[CheckResult]) -> list[CheckResult]:
+    """Retorna apenas erros de checks bloqueantes (SSL, credenciais, S3, .env, deps).
+
+    Esses erros impedem o app de funcionar corretamente e nao devem ser ignorados.
+    """
+    return [
+        r for r in results
+        if r.status == CheckStatus.ERROR and r.name in BLOCKING_CHECK_NAMES
+    ]
+
+
+def get_non_blocking_errors(results: list[CheckResult]) -> list[CheckResult]:
+    """Retorna erros de checks nao-bloqueantes (porta, venv, etc).
+
+    Esses erros podem ser ignorados pelo usuario se souber o que esta fazendo.
+    """
+    return [
+        r for r in results
+        if r.status == CheckStatus.ERROR and r.name not in BLOCKING_CHECK_NAMES
+    ]
+
+
 def print_results(results: list[CheckResult]) -> None:
     """Imprime resultados formatados no terminal."""
     icons = {
