@@ -329,8 +329,186 @@ else:
         st.markdown(f"**Status:** {_status_icon(True)} nao necessario (sem proxy)")
 
 
+# --- Diagnostico SSL detalhado ---
+st.header("9. Diagnostico SSL")
+st.caption(
+    "Informacoes detalhadas sobre a configuracao SSL deste computador. "
+    "Use para comparar entre maquinas que funcionam e as que dao erro."
+)
+
+import ssl
+import socket
+import platform
+from datetime import datetime, timezone
+
+# 9a. OpenSSL e paths default
+_ssl_col1, _ssl_col2 = st.columns(2)
+with _ssl_col1:
+    st.markdown(f"**OpenSSL:** `{ssl.OPENSSL_VERSION}`")
+    st.markdown(f"**Python SSL module:** `{ssl.OPENSSL_VERSION_NUMBER}`")
+with _ssl_col2:
+    _verify_paths = ssl.get_default_verify_paths()
+    st.markdown(f"**cafile:** `{_verify_paths.cafile or '(nenhum)'}`")
+    st.markdown(f"**capath:** `{_verify_paths.capath or '(nenhum)'}`")
+
+with st.expander("Paths de verificacao SSL completos"):
+    st.markdown(f"- `openssl_cafile_env`: `{_verify_paths.openssl_cafile_env}`")
+    st.markdown(f"- `openssl_cafile`: `{_verify_paths.openssl_cafile}`")
+    st.markdown(f"- `openssl_capath_env`: `{_verify_paths.openssl_capath_env}`")
+    st.markdown(f"- `openssl_capath`: `{_verify_paths.openssl_capath}`")
+    # Verificar se os paths existem
+    for label, path in [("cafile", _verify_paths.cafile), ("capath", _verify_paths.capath)]:
+        if path:
+            exists = Path(path).exists()
+            st.markdown(f"- `{label}` existe: {'sim' if exists else ':red[NAO]'}")
+
+# 9b. Teste de conexao SSL contra endpoints AWS
+st.subheader("Teste de conexao SSL")
+
+_region = "sa-east-1"
+try:
+    _cfg = load_config()
+    _region = _cfg.athena.region or "sa-east-1"
+except Exception:
+    pass
+
+_endpoints = {
+    "S3": f"s3.{_region}.amazonaws.com",
+    "STS": f"sts.{_region}.amazonaws.com",
+    "Athena": f"athena.{_region}.amazonaws.com",
+}
+
+if st.button("Testar conexoes SSL", key="test_ssl"):
+    for svc_name, hostname in _endpoints.items():
+        try:
+            # Resolver DNS
+            ip = socket.gethostbyname(hostname)
+
+            # Conectar via SSL
+            ctx = ssl.create_default_context()
+            # Se CA bundle configurado, usar
+            _ca_path = os.environ.get("AWS_CA_BUNDLE", "")
+            if _ca_path and Path(_ca_path).is_file():
+                ctx.load_verify_locations(_ca_path)
+
+            with socket.create_connection((hostname, 443), timeout=10) as sock:
+                with ctx.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert()
+                    cipher = ssock.cipher()
+                    version = ssock.version()
+
+                    # Extrair info do certificado
+                    subject = dict(x[0] for x in cert.get("subject", []))
+                    issuer = dict(x[0] for x in cert.get("issuer", []))
+                    not_after = cert.get("notAfter", "")
+                    san = [entry[1] for entry in cert.get("subjectAltName", [])]
+
+                    st.markdown(f"**{svc_name}** (`{hostname}`) — {_status_icon(True)}")
+                    with st.expander(f"Detalhes {svc_name}: {hostname}"):
+                        st.markdown(f"- **IP resolvido:** `{ip}`")
+                        st.markdown(f"- **TLS:** `{version}` | Cipher: `{cipher[0] if cipher else '?'}`")
+                        st.markdown(f"- **Certificado CN:** `{subject.get('commonName', '?')}`")
+                        st.markdown(f"- **Emitido por:** `{issuer.get('organizationName', '?')}` / `{issuer.get('commonName', '?')}`")
+                        st.markdown(f"- **Valido ate:** `{not_after}`")
+                        if san:
+                            st.markdown(f"- **SANs:** `{', '.join(san[:5])}`{'...' if len(san) > 5 else ''}")
+
+                        # Detectar proxy SSL interception
+                        _aws_issuers = {"Amazon", "Amazon Web Services", "Starfield", "DigiCert"}
+                        _issuer_org = issuer.get("organizationName", "")
+                        if not any(known in _issuer_org for known in _aws_issuers):
+                            st.warning(
+                                f"O certificado foi emitido por **{_issuer_org}**, "
+                                f"nao pela AWS. Isso indica que um **proxy corporativo** "
+                                f"esta interceptando a conexao HTTPS (TLS inspection). "
+                                f"Voce precisa do certificado CA deste proxy."
+                            )
+
+        except ssl.SSLCertVerificationError as e:
+            st.markdown(f"**{svc_name}** (`{hostname}`) — {_status_icon(False)}")
+            st.error(f"SSL CERTIFICATE_VERIFY_FAILED: `{e}`")
+            st.caption(
+                "O certificado apresentado pelo servidor nao e confiavel. "
+                "Isso acontece quando o proxy corporativo intercepta HTTPS "
+                "e apresenta seu proprio certificado. Configure AWS_CA_BUNDLE "
+                "no .env com o certificado CA do proxy."
+            )
+            # Tentar conectar sem verificacao para pegar info do cert do proxy
+            try:
+                ctx_noverify = ssl.create_default_context()
+                ctx_noverify.check_hostname = False
+                ctx_noverify.verify_mode = ssl.CERT_NONE
+                with socket.create_connection((hostname, 443), timeout=10) as sock2:
+                    with ctx_noverify.wrap_socket(sock2, server_hostname=hostname) as ssock2:
+                        cert2 = ssock2.getpeercert(binary_form=True)
+                        # Decodificar parcialmente
+                        import hashlib
+                        fingerprint = hashlib.sha256(cert2).hexdigest()
+                        st.caption(f"Fingerprint SHA256 do certificado interceptado: `{fingerprint[:32]}...`")
+                        # Tentar pegar issuer via getpeercert(False) com CERT_NONE nao retorna parsed
+                        st.caption(
+                            "Para resolver: exporte o certificado CA do proxy "
+                            "(peca ao time de infra) e configure AWS_CA_BUNDLE no .env."
+                        )
+            except Exception:
+                pass
+
+        except socket.gaierror:
+            st.markdown(f"**{svc_name}** (`{hostname}`) — {_status_icon(False)}")
+            st.error(f"DNS falhou: nao foi possivel resolver `{hostname}`")
+        except socket.timeout:
+            st.markdown(f"**{svc_name}** (`{hostname}`) — {_status_icon(False, warn=True)}")
+            st.warning(f"Timeout ao conectar em `{hostname}:443`")
+        except ConnectionRefusedError:
+            st.markdown(f"**{svc_name}** (`{hostname}`) — {_status_icon(False)}")
+            st.error(f"Conexao recusada em `{hostname}:443`")
+        except Exception as e:
+            st.markdown(f"**{svc_name}** (`{hostname}`) — {_status_icon(False)}")
+            st.error(f"{type(e).__name__}: `{e}`")
+else:
+    st.caption(
+        "Clique para testar conexao SSL direta contra endpoints AWS (S3, STS, Athena). "
+        "Detecta proxy SSL interception, certificados nao-confiados e problemas de DNS."
+    )
+
+# 9c. Verificar ~/.aws/config do profile
+st.subheader("Configuracao AWS CLI do profile")
+_profile_to_check = ""
+try:
+    _cfg2 = load_config()
+    _profile_to_check = _cfg2.athena.aws_profile
+except Exception:
+    _profile_to_check = os.environ.get("GDQ_AWS_PROFILE", "")
+
+if _profile_to_check:
+    _aws_config_path = Path.home() / ".aws" / "config"
+    if _aws_config_path.is_file():
+        _config_text = _aws_config_path.read_text()
+        # Procurar secao do profile
+        import re
+        _section_pattern = rf"\[profile\s+{re.escape(_profile_to_check)}\](.*?)(?=\[|\Z)"
+        _match = re.search(_section_pattern, _config_text, re.DOTALL)
+        if _match:
+            _section = _match.group(1).strip()
+            _has_ca = "ca_bundle" in _section
+            _has_s3_path = "addressing_style" in _section and "path" in _section
+
+            st.markdown(f"**Profile `{_profile_to_check}` em ~/.aws/config:**")
+            st.markdown(f"- `ca_bundle`: {'configurado' if _has_ca else ':orange[nao configurado]'}")
+            st.markdown(f"- `s3 addressing_style = path`: {'configurado' if _has_s3_path else ':orange[nao configurado] (o app ja forca via codigo)'}")
+
+            with st.expander(f"Conteudo do profile [{_profile_to_check}]"):
+                st.code(_section, language="ini")
+        else:
+            st.info(f"Profile `{_profile_to_check}` nao encontrado em ~/.aws/config (pode estar em ~/.aws/credentials ou ser SSO)")
+    else:
+        st.warning("Arquivo ~/.aws/config nao encontrado.")
+else:
+    st.caption("Nenhum profile configurado para inspecionar.")
+
+
 # --- Conexao Athena ---
-st.header("9. Conexao Athena")
+st.header("10. Conexao Athena")
 
 if st.button("Testar conexao com Athena", type="primary"):
     with st.spinner("Testando conexao..."):
@@ -349,6 +527,45 @@ if st.button("Testar conexao com Athena", type="primary"):
             st.error(f"Falha na conexao: {type(e).__name__}: {e}")
 else:
     st.caption("Clique para testar a conexao ao vivo.")
+
+
+# --- Fingerprint do ambiente (para comparacao entre usuarios) ---
+st.divider()
+st.header("Fingerprint do Ambiente")
+st.caption(
+    "Copie este bloco e envie para comparar com outro usuario que "
+    "consegue conectar. As diferencas ajudam a identificar o problema."
+)
+
+_fingerprint_lines = [
+    f"Data: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+    f"OS: {platform.platform()}",
+    f"Python: {sys.version.split()[0]}",
+    f"Executavel: {sys.executable}",
+    f"OpenSSL: {ssl.OPENSSL_VERSION}",
+    f"SSL cafile: {_verify_paths.cafile or '(nenhum)'}",
+    f"SSL capath: {_verify_paths.capath or '(nenhum)'}",
+    f"AWS_CA_BUNDLE: {os.environ.get('AWS_CA_BUNDLE', '(nao configurado)')}",
+    f"REQUESTS_CA_BUNDLE: {os.environ.get('REQUESTS_CA_BUNDLE', '(nao configurado)')}",
+    f"SSL_CERT_FILE: {os.environ.get('SSL_CERT_FILE', '(nao configurado)')}",
+    f"AWS_PROFILE: {os.environ.get('AWS_PROFILE', '(nao configurado)')}",
+    f"AWS_S3_ADDRESSING_STYLE: {os.environ.get('AWS_S3_ADDRESSING_STYLE', '(nao configurado)')}",
+    f"HTTP_PROXY: {'configurado' if os.environ.get('HTTP_PROXY') else '(nao)'}",
+    f"HTTPS_PROXY: {'configurado' if os.environ.get('HTTPS_PROXY') else '(nao)'}",
+    f"NO_PROXY: {'configurado' if os.environ.get('NO_PROXY') else '(nao)'}",
+]
+
+# Adicionar info do profile AWS config
+if _profile_to_check and _aws_config_path.is_file():
+    _config_text2 = _aws_config_path.read_text()
+    _match2 = re.search(rf"\[profile\s+{re.escape(_profile_to_check)}\](.*?)(?=\[|\Z)", _config_text2, re.DOTALL)
+    if _match2:
+        _section2 = _match2.group(1).strip()
+        _fingerprint_lines.append(f"aws/config ca_bundle: {'sim' if 'ca_bundle' in _section2 else 'nao'}")
+        _fingerprint_lines.append(f"aws/config s3 path: {'sim' if 'addressing_style' in _section2 and 'path' in _section2 else 'nao'}")
+
+_fingerprint = "\n".join(_fingerprint_lines)
+st.code(_fingerprint, language="text")
 
 
 # --- Resumo ---
