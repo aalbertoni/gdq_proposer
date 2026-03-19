@@ -291,8 +291,46 @@ else:
     )
 
 
+# --- Certificado CA ---
+st.header("8. Certificado CA (SSL)")
+
+_ca_vars = ["AWS_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"]
+_ca_found = None
+for _var in _ca_vars:
+    _val = os.environ.get(_var, "").strip()
+    if _val:
+        _ca_found = (_var, _val)
+        break
+
+if _ca_found:
+    _var, _val = _ca_found
+    _file_exists = Path(_val).is_file()
+    st.markdown(f"**Configurado via:** `{_var}`")
+    st.markdown(f"**Caminho:** `{_val}`")
+    if _file_exists:
+        _size = Path(_val).stat().st_size
+        st.markdown(f"**Arquivo:** {_status_icon(True)} encontrado ({_size:,} bytes)")
+    else:
+        st.markdown(f"**Arquivo:** {_status_icon(False)} NAO encontrado")
+        st.error(
+            f"O arquivo `{_val}` nao existe. "
+            "Corrija o caminho no .env ou execute `python setup_local.py`."
+        )
+else:
+    has_proxy = bool(active_proxies)
+    if has_proxy:
+        st.markdown(f"**Status:** {_status_icon(False, warn=True)} nao configurado")
+        st.warning(
+            "Proxy ativo sem certificado CA. Se ocorrerem erros "
+            "SSL CERTIFICATE_VERIFY_FAILED, configure `AWS_CA_BUNDLE` no .env "
+            "com o caminho do certificado .pem/.crt do proxy corporativo."
+        )
+    else:
+        st.markdown(f"**Status:** {_status_icon(True)} nao necessario (sem proxy)")
+
+
 # --- Conexao Athena ---
-st.header("8. Conexao Athena")
+st.header("9. Conexao Athena")
 
 if st.button("Testar conexao com Athena", type="primary"):
     with st.spinner("Testando conexao..."):
