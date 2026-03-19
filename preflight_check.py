@@ -74,8 +74,17 @@ def check_venv_active() -> CheckResult:
             message=f"venv ativo: {Path(venv).name}",
         )
 
-    # Verifica se .venv existe mas nao esta ativo
-    venv_dir = Path(".venv")
+    # Detectar se o Python em execucao esta dentro de um venv
+    # (o launcher executa .venv/Scripts/python.exe diretamente, sem activate)
+    exe = Path(sys.executable).resolve()
+    venv_dir = Path(".venv").resolve()
+    if venv_dir.is_dir() and str(exe).startswith(str(venv_dir)):
+        return CheckResult(
+            name="Ambiente virtual",
+            status=CheckStatus.OK,
+            message=f"venv em uso: {venv_dir.name} (via launcher)",
+        )
+
     if venv_dir.is_dir():
         if sys.platform == "win32":
             activate = ".venv\\Scripts\\activate"
