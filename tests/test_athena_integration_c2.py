@@ -29,11 +29,7 @@ import time
 import pandas as pd
 import pytest
 
-# Force dev environment for Athena real
-os.environ["GDQ_ENV"] = "dev"
-os.environ["AWS_PROFILE"] = "gdq-test"
-
-from config import load_config, AthenaMode
+from config import load_config
 from core.models.baseline import BaselineStrategy
 from core.models.column_profile import ColumnProfile
 from core.models.dataset_config import DatasetConfig
@@ -90,9 +86,9 @@ def make_config(lookback: int = LOOKBACK) -> DatasetConfig:
 
 @pytest.fixture(scope="module")
 def app_config():
+    if not os.environ.get("AWS_PROFILE"):
+        pytest.skip("Athena integration requires AWS_PROFILE")
     config = load_config()
-    if config.athena.mode != AthenaMode.REAL:
-        pytest.skip("Athena integration requires GDQ_ENV=dev (not mock)")
     return config
 
 
@@ -729,26 +725,32 @@ class TestExport:
 
 class TestMockComparison:
 
+    def _make_mock_client(self):
+        """Create a DuckDBTestClient and load mock data if available."""
+        from pathlib import Path
+        from tests.conftest import DuckDBTestClient
+
+        mock_dir = Path(__file__).parent.parent / "mock_data"
+        parquet = mock_dir / "tb_operacoes_credito.parquet"
+        if not parquet.exists():
+            return None, "tb_operacoes_credito"
+
+        client = DuckDBTestClient()
+        client.load_table("mock_db", "tb_operacoes_credito", str(parquet))
+        return client, "tb_operacoes_credito"
+
     def test_mock_numeric_history_comparable(self):
         """Compare Athena numeric history with DuckDB mock for the same query pattern."""
-        # Load mock config
-        import copy
-        os.environ["GDQ_ENV"] = "local"
-        from config import load_config as load_mock_config
-        mock_config = load_mock_config()
-        os.environ["GDQ_ENV"] = "dev"
+        mock_client, table_name = self._make_mock_client()
+        if mock_client is None:
+            pytest.skip("Mock parquet not available")
 
-        if mock_config.athena.mode != AthenaMode.MOCK:
-            pytest.skip("Mock mode not available")
-
-        mock_client = AthenaClient(mock_config)
         mock_builder = QueryBuilder(dialect=mock_client.dialect)
         mock_analysis = AnalysisService(mock_client, mock_builder)
 
-        # Use mock table
         mock_dataset = DatasetConfig(
             schema="mock_db",
-            table="tb_operacoes_incremental",
+            table=table_name,
             partition_method=PartitionMethod.INCREMENTAL,
             partition_column=DATE_COL,
             date_column=DATE_COL,
@@ -756,10 +758,26 @@ class TestMockComparison:
             lookback_value=60,
         )
 
+        # Find a numeric column in mock
         try:
-            mock_history = mock_analysis.get_numeric_history(mock_dataset, "vlr_saldo")
+            mock_cols = mock_client.get_columns("mock_db", table_name)
+        except Exception:
+            print("\n  Mock table not available, skipping")
+            return
+
+        numeric_types = {"integer", "bigint", "float", "double", "decimal", "int"}
+        num_cols = [
+            c["name"] for c in mock_cols
+            if c["type"].lower().split("(")[0] in numeric_types
+            and c["name"] != DATE_COL
+        ]
+        if not num_cols:
+            print("\n  No numeric columns in mock, skipping")
+            return
+
+        try:
+            mock_history = mock_analysis.get_numeric_history(mock_dataset, num_cols[0])
         except Exception as e:
-            # Mock table might not have this column
             print(f"\n  Mock comparison skipped: {e}")
             return
 
@@ -782,21 +800,16 @@ class TestMockComparison:
 
     def test_mock_categorical_distribution_comparable(self):
         """Verify DuckDB mock returns same structure as Athena."""
-        os.environ["GDQ_ENV"] = "local"
-        from config import load_config as load_mock_config
-        mock_config = load_mock_config()
-        os.environ["GDQ_ENV"] = "dev"
+        mock_client, table_name = self._make_mock_client()
+        if mock_client is None:
+            pytest.skip("Mock parquet not available")
 
-        if mock_config.athena.mode != AthenaMode.MOCK:
-            pytest.skip("Mock mode not available")
-
-        mock_client = AthenaClient(mock_config)
         mock_builder = QueryBuilder(dialect=mock_client.dialect)
         mock_analysis = AnalysisService(mock_client, mock_builder)
 
         mock_dataset = DatasetConfig(
             schema="mock_db",
-            table="tb_operacoes_incremental",
+            table=table_name,
             partition_method=PartitionMethod.INCREMENTAL,
             partition_column=DATE_COL,
             date_column=DATE_COL,
@@ -806,7 +819,7 @@ class TestMockComparison:
 
         # Find a string column in mock
         try:
-            mock_cols = mock_client.get_columns("mock_db", "tb_operacoes_incremental")
+            mock_cols = mock_client.get_columns("mock_db", table_name)
         except Exception:
             print("\n  Mock table not available, skipping")
             return

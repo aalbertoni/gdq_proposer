@@ -16,9 +16,6 @@ from __future__ import annotations
 import os
 import sys
 
-# Force dev mode so load_config reads .env.dev and uses AthenaMode.REAL
-os.environ["GDQ_ENV"] = "dev"
-
 # Add project root to path so imports work when running from scripts/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -86,18 +83,11 @@ def main() -> None:
     config = load_config()
 
     print("=== GDQ Rule Proposer - AWS Connection Test ===\n")
-    print(f"  Environment: {config.environment.value}")
-    print(f"  Athena mode: {config.athena.mode.value}")
     print(f"  Region:      {config.athena.region}")
     print(f"  Workgroup:   {config.athena.workgroup}")
     print(f"  S3 output:   {config.athena.s3_output}")
     print(f"  AWS profile: {config.athena.aws_profile or '(none - IAM role)'}")
     print()
-
-    if config.athena.mode.value != "real":
-        print("ERROR: Expected REAL mode but got MOCK.")
-        print("  Check that .env.dev exists with GDQ_ENV=dev")
-        sys.exit(1)
 
     try:
         client = AthenaClient(config)

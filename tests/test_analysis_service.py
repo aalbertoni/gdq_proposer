@@ -1,6 +1,6 @@
 """Testes para services/analysis_service.py.
 
-Usa DuckDB (MockAthenaBackend) para validar query numeric_history
+Usa DuckDB (DuckDBTestClient) para validar query numeric_history
 end-to-end: SQL → DataFrame normalizado com percentis expandidos.
 """
 
@@ -10,8 +10,6 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from config import AppConfig, AthenaConfig, AthenaMode
-from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from infra.sql_dialect import SQLDialect
 from services.analysis_service import AnalysisService
@@ -25,10 +23,10 @@ from core.models.enums import PartitionMethod
 
 @pytest.fixture
 def mock_client(tmp_path):
-    """Cria AthenaClient com tabela numérica para teste de histórico."""
-    config = AppConfig(
-        athena=AthenaConfig(mode=AthenaMode.MOCK, mock_data_dir=str(tmp_path))
-    )
+    """Cria DuckDBTestClient com tabela numérica para teste de histórico."""
+    from tests.conftest import DuckDBTestClient
+
+    client = DuckDBTestClient()
 
     # Gerar dados com 30 dias de datas recentes
     today = date.today()
@@ -45,9 +43,7 @@ def mock_client(tmp_path):
     df = pd.DataFrame(rows)
     parquet_path = tmp_path / "tb_numeric.parquet"
     df.to_parquet(parquet_path)
-
-    client = AthenaClient(config)
-    client._backend.load_table("mock_db", "tb_numeric", str(parquet_path))
+    client.load_table("mock_db", "tb_numeric", str(parquet_path))
     return client
 
 

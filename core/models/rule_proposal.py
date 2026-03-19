@@ -24,6 +24,7 @@ class BacktestSummary:
     has_drift: bool  # tendencia detectada
     outlier_periods: list[str] = field(default_factory=list)  # datas dos outliers
     weighted_coverage_pct: float = 0.0  # Coverage with recency bias (recent periods weighted more)
+    point_results: list[dict] = field(default_factory=list)  # Per-point {index, value, passed}
 
 
 @dataclass

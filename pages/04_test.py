@@ -360,15 +360,6 @@ st.caption(
     "no perfil AWS ativo."
 )
 
-from config import AthenaMode
-is_mock = app_config.athena.mode == AthenaMode.MOCK
-
-if is_mock:
-    st.info(
-        "Modo mock ativo (DuckDB). O teste sera simulado localmente "
-        "e retornara um resultado ficticio de sucesso."
-    )
-
 # Validation
 validation_errors = []
 if not nome_glue_job.strip():

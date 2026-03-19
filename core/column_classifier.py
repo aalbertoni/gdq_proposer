@@ -35,6 +35,12 @@ ATHENA_NUMERIC_TYPES = {
     "float", "double", "decimal", "real",
 }
 
+# Tipos inteiros — usados no guardrail de identificador (colunas double/decimal
+# com alta cardinalidade sao normais, nao sao IDs)
+ATHENA_INTEGER_TYPES = {
+    "tinyint", "smallint", "int", "integer", "bigint",
+}
+
 ATHENA_DATE_TYPES = {"date", "timestamp", "timestamp with time zone"}
 
 # Tipos string/binários que passam para heurística de conteúdo
@@ -143,13 +149,16 @@ def suggest_reclassification(
         )
 
     # Guardrail 2: cardinalidade muito alta → sugerir identificador
+    # Apenas para tipos inteiros — colunas double/decimal/float com alta
+    # cardinalidade sao normais (ex: valores monetarios, saldos)
     if (
-        distinct_count >= NUMERIC_HIGH_CARD_MIN_DISTINCT
+        base_type in ATHENA_INTEGER_TYPES
+        and distinct_count >= NUMERIC_HIGH_CARD_MIN_DISTINCT
         and distinct_ratio >= NUMERIC_HIGH_CARD_MIN_RATIO
     ):
         return (
             SemanticType.IDENTIFIER,
-            f"Coluna numerica com {distinct_count} valores distintos "
+            f"Coluna inteira com {distinct_count} valores distintos "
             f"({distinct_ratio:.0%} de unicidade). "
             f"Considere tratar como identificador (ex: ID, CPF, CNPJ).",
         )

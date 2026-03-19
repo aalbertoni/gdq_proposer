@@ -14,7 +14,6 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from config import AppConfig, AthenaConfig, AthenaMode
 from core.models.baseline import BaselineStrategy
 from core.models.column_profile import ColumnProfile
 from core.models.dataset_config import DatasetConfig
@@ -24,7 +23,6 @@ from core.models.enums import (
     PartitionMethod,
     SemanticType,
 )
-from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from infra.sql_dialect import SQLDialect, adapt_function
 from services.profiling_service import ProfilingService
@@ -254,13 +252,10 @@ class TestBatchProfiling:
 
     @pytest.fixture
     def mock_client(self, tmp_path):
-        """Cria AthenaClient em modo mock com tabela de teste diversificada."""
-        config = AppConfig(
-            athena=AthenaConfig(
-                mode=AthenaMode.MOCK,
-                mock_data_dir=str(tmp_path),
-            )
-        )
+        """Cria DuckDBTestClient com tabela de teste diversificada."""
+        from tests.conftest import DuckDBTestClient
+
+        client = DuckDBTestClient()
 
         n = 5000
         today = date.today()
@@ -278,9 +273,7 @@ class TestBatchProfiling:
 
         parquet_path = tmp_path / "tb_batch_test.parquet"
         df.to_parquet(parquet_path)
-
-        client = AthenaClient(config)
-        client._backend.load_table("mock_db", "tb_batch_test", str(parquet_path))
+        client.load_table("mock_db", "tb_batch_test", str(parquet_path))
         return client
 
     @pytest.fixture

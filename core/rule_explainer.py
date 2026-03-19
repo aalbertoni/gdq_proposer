@@ -59,23 +59,23 @@ def explain_rule_detail(proposal: RuleProposal) -> str:
     Returns:
         Texto em pt-BR com explicacao + parametros + evidencia.
     """
-    parts = [explain_rule(proposal)]
+    parts = []
 
     # Parametros
     params = _explain_params(proposal)
     if params:
-        parts.append("")
         parts.append("**Parametros:**")
         parts.append(params)
 
     # Evidencia do backtest
     evidence = _explain_backtest(proposal)
     if evidence:
-        parts.append("")
+        if parts:
+            parts.append("")
         parts.append("**Evidencia:**")
         parts.append(evidence)
 
-    return "\n".join(parts)
+    return "\n".join(parts) if parts else ""
 
 
 # ---------------------------------------------------------------------------

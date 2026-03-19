@@ -1,6 +1,5 @@
 """
-Client unificado que funciona com DuckDB (local) ou Athena real (dev/prod).
-A interface é idêntica — só muda o backend.
+Client para Amazon Athena via PyAthena.
 """
 
 import logging
@@ -11,8 +10,7 @@ from typing import Optional
 
 import pandas as pd
 
-from config import AppConfig, AthenaMode
-from infra.mock_athena import MockAthenaBackend
+from config import AppConfig
 from infra.query_logger import QueryLogger, QueryLogEntry
 from infra.sql_dialect import SQLDialect
 
@@ -20,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class AthenaClient:
-    """Client unificado para queries.
+    """Client para queries no Amazon Athena.
 
     Uso:
         client = AthenaClient(config)
@@ -30,34 +28,13 @@ class AthenaClient:
     def __init__(self, config: AppConfig, query_logger: Optional[QueryLogger] = None):
         self.config = config
         self.logger = query_logger or QueryLogger()
-        self._backend: Optional[MockAthenaBackend] = None
-        self._conn = None  # pyathena connection (modo real)
+        self.dialect = SQLDialect.ATHENA
+        self._conn = None
         self._query_timeout: int = config.athena.query_timeout_seconds
+        self._init_connection()
 
-        if config.athena.mode == AthenaMode.MOCK:
-            self.dialect = SQLDialect.DUCKDB
-            self._init_mock()
-        else:
-            self.dialect = SQLDialect.ATHENA
-            self._init_real()
-
-    def _init_mock(self):
-        """Inicializa backend DuckDB com dados mock."""
-        self._backend = MockAthenaBackend()
-        mock_dir = self.config.athena.mock_data_dir
-        if not os.path.isdir(mock_dir):
-            return
-        for f in os.listdir(mock_dir):
-            if f.endswith((".parquet", ".csv")):
-                table_name = f.rsplit(".", 1)[0]
-                self._backend.load_table(
-                    schema="mock_db",
-                    table=table_name,
-                    data_path=os.path.join(mock_dir, f),
-                )
-
-    def _init_real(self):
-        """Inicializa conexão PyAthena."""
+    def _init_connection(self):
+        """Inicializa conexao PyAthena."""
         from pyathena import connect
         from pyathena.pandas.cursor import PandasCursor
 
@@ -89,15 +66,11 @@ class AthenaClient:
         start = time.time()
         rows = 0
         exception_type = None
-        bytes_scanned: Optional[int] = 0 if self.config.athena.mode == AthenaMode.MOCK else None
+        bytes_scanned: Optional[int] = None
         cache_hit = False
 
         try:
-            if self.config.athena.mode == AthenaMode.MOCK:
-                df = self._backend.execute_df(sql)
-            else:
-                df, bytes_scanned, cache_hit = self._execute_real_df(sql)
-
+            df, bytes_scanned, cache_hit = self._execute_real_df(sql)
             rows = len(df)
             return df
 
@@ -119,19 +92,13 @@ class AthenaClient:
             ))
 
     def _execute_real_df(self, sql: str) -> tuple[pd.DataFrame, Optional[int], bool]:
-        """Execute query on real Athena with timeout enforcement.
-
-        Uses a thread pool to run the query and enforces the configured
-        ``query_timeout_seconds``.  On timeout, attempts to cancel the
-        running Athena query to avoid unnecessary cost.
+        """Execute query on Athena with timeout enforcement.
 
         Args:
             sql: SQL statement to execute.
 
         Returns:
-            Tuple of (DataFrame, bytes_scanned, cache_hit) where:
-            - bytes_scanned: Number of bytes scanned by Athena (None if unavailable).
-            - cache_hit: True if Athena reused a previous result (result_reuse_enable).
+            Tuple of (DataFrame, bytes_scanned, cache_hit).
 
         Raises:
             TimeoutError: If the query exceeds ``query_timeout_seconds``.
@@ -150,7 +117,6 @@ class AthenaClient:
             try:
                 return future.result(timeout=self._query_timeout)
             except FuturesTimeoutError:
-                # Attempt to cancel the Athena query to save cost
                 try:
                     cursor.cancel()
                     logger.warning(
@@ -177,7 +143,7 @@ class AthenaClient:
 
         Args:
             sql: SQL statement to execute.
-            query_name: Identificador da query para logging (ex: "table_exists").
+            query_name: Identificador da query para logging.
             dataset: schema.table para logging.
             column: Coluna analisada (vazio para queries de tabela).
 
@@ -187,36 +153,33 @@ class AthenaClient:
         start = time.time()
         rows = 0
         exception_type = None
-        bytes_scanned: Optional[int] = 0 if self.config.athena.mode == AthenaMode.MOCK else None
+        bytes_scanned: Optional[int] = None
         cache_hit = False
 
         try:
-            if self.config.athena.mode == AthenaMode.MOCK:
-                result = self._backend.execute(sql)
-            else:
-                cursor = self._conn.cursor()
+            cursor = self._conn.cursor()
 
-                def _run():
-                    cursor.execute(sql)
-                    return cursor
+            def _run():
+                cursor.execute(sql)
+                return cursor
 
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(_run)
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_run)
+                try:
+                    cursor = future.result(timeout=self._query_timeout)
+                except FuturesTimeoutError:
                     try:
-                        cursor = future.result(timeout=self._query_timeout)
-                    except FuturesTimeoutError:
-                        try:
-                            cursor.cancel()
-                        except Exception:
-                            pass
-                        raise TimeoutError(
-                            f"Query exceeded timeout of {self._query_timeout}s."
-                        )
+                        cursor.cancel()
+                    except Exception:
+                        pass
+                    raise TimeoutError(
+                        f"Query exceeded timeout of {self._query_timeout}s."
+                    )
 
-                bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
-                cache_hit = bool(getattr(cursor, "reused_previous_result", False))
-                columns = [desc[0] for desc in cursor.description]
-                result = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
+            cache_hit = bool(getattr(cursor, "reused_previous_result", False))
+            columns = [desc[0] for desc in cursor.description]
+            result = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
             rows = len(result)
             return result
@@ -240,18 +203,15 @@ class AthenaClient:
 
     def table_exists(self, schema: str, table: str) -> bool:
         """Verifica se a tabela existe."""
-        if self.config.athena.mode == AthenaMode.MOCK:
-            return self._backend.table_exists(table)
-        else:
-            try:
-                self.execute(
-                    f'SELECT 1 FROM "{schema}"."{table}" LIMIT 1',
-                    query_name="table_exists",
-                    dataset=f"{schema}.{table}",
-                )
-                return True
-            except Exception:
-                return False
+        try:
+            self.execute(
+                f'SELECT 1 FROM "{schema}"."{table}" LIMIT 1',
+                query_name="table_exists",
+                dataset=f"{schema}.{table}",
+            )
+            return True
+        except Exception:
+            return False
 
     def get_columns(self, schema: str, table: str) -> list[dict]:
         """Retorna colunas e tipos (sem metadados de particao)."""
@@ -272,9 +232,6 @@ class AthenaClient:
             - columns: [{"name": str, "type": str}, ...]
             - partition_columns: ["dt_ref", ...] (vazia se nao particionada)
         """
-        if self.config.athena.mode == AthenaMode.MOCK:
-            return self._backend.get_columns(table), []
-
         df = self.execute_df(
             f"DESCRIBE {schema}.{table}",
             query_name="describe_table",

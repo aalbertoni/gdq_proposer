@@ -34,8 +34,8 @@ st.markdown(
 )
 
 st.markdown(
-    "A ferramenta consulta dados agregados via **Amazon Athena** (ou via DuckDB "
-    "em modo local), calcula estatisticas sobre o comportamento historico das "
+    "A ferramenta consulta dados agregados via **Amazon Athena**, "
+    "calcula estatisticas sobre o comportamento historico das "
     "colunas e da tabela, e gera regras prontas para copiar e colar no GDQ."
 )
 
@@ -72,8 +72,8 @@ st.markdown(
 
 st.subheader("Etapa 1 — Home")
 st.markdown(
-    "A pagina inicial mostra o **status da conexao** (modo local ou Athena real), "
-    "as **tabelas disponiveis** no backend ativo e um preview das colunas. "
+    "A pagina inicial mostra o **status da conexao** com o Athena, "
+    "as **tabelas disponiveis** e um preview das colunas. "
     "Use essa pagina para verificar que o ambiente esta funcionando antes "
     "de comecar."
 )
@@ -368,8 +368,6 @@ with st.expander("Selecao da tabela"):
         "e o **nome da tabela**. Exemplos:\n"
         "- Schema: `gdq_test_db`, `datalake_raw`, `datalake_trusted`\n"
         "- Tabela: `tb_operacoes_credito`, `tb_clientes_pf`\n\n"
-        "Em modo local (mock/DuckDB), o schema e fixo (`mock_db`) e as tabelas "
-        "disponiveis sao as que tem dados sinteticos na pasta `mock_data/`.\n\n"
         "Clique em **Validar Tabela** para confirmar que a tabela existe "
         "e carregar a lista de colunas."
     )
@@ -400,8 +398,7 @@ with st.expander("Formato de data para colunas string"):
         "- `dd/MM/yyyy` (ex: 15/01/2024) -- formato brasileiro\n"
         "- `yyyy-MM-dd HH:mm:ss` -- para strings com hora\n"
         "- **Customizado** -- permite digitar uma expressao SQL manualmente\n\n"
-        "A expressao e gerada automaticamente para o backend ativo "
-        "(Athena ou DuckDB) e sera adaptada ao trocar de ambiente."
+        "A expressao SQL e gerada automaticamente para o Athena."
     )
 
 with st.expander("Lookback e granularidade"):
@@ -915,28 +912,6 @@ with st.expander("Drift detectado — devo ignorar a regra?"):
         "Se o drift e inesperado, investigue a causa antes de criar regras."
     )
 
-with st.expander("Posso usar a ferramenta sem Athena (modo local)?"):
-    st.markdown(
-        "Sim. O modo local usa **DuckDB** como backend e carrega dados "
-        "sinteticos da pasta `mock_data/`. E util para:\n\n"
-        "- Aprender a usar a ferramenta sem precisar de acesso AWS\n"
-        "- Testar configuracoes antes de rodar contra dados reais\n"
-        "- Desenvolvimento e debug\n\n"
-        "As regras geradas em modo local sao sintaticamente validas, "
-        "mas os limites (thresholds) refletem os dados sinteticos, "
-        "nao os dados de producao."
-    )
-
-with st.expander("Como trocar entre modo local e Athena real?"):
-    st.markdown(
-        "Use o seletor **Ambiente** na barra lateral (sidebar):\n\n"
-        "- **Local (Mock/DuckDB):** usa dados sinteticos locais\n"
-        "- **Dev (Athena real):** conecta ao Athena com o perfil AWS configurado\n"
-        "- **Prod (Athena + IAM):** conecta ao Athena com IAM role\n\n"
-        "Ao trocar de ambiente, a sessao e reiniciada. Voce precisara "
-        "refazer o Setup."
-    )
-
 with st.expander("Minha coluna de data e do tipo string. O que fazer?"):
     st.markdown(
         "No passo 2 do Setup, ao selecionar uma coluna de tipo string "
@@ -944,9 +919,8 @@ with st.expander("Minha coluna de data e do tipo string. O que fazer?"):
         "de formato. Escolha o formato que corresponde aos valores da coluna "
         "(ex: `yyyy-MM-dd` para `2024-01-15`).\n\n"
         "Se nenhum formato padrao servir, selecione \"Customizado\" e "
-        "digite a expressao SQL manualmente. Exemplos:\n\n"
-        "- `DATE_PARSE(\"dt_ref\", '%Y%m%d')` (para Athena)\n"
-        "- `STRPTIME(\"dt_ref\", '%Y%m%d')::DATE` (para DuckDB)\n\n"
+        "digite a expressao SQL manualmente. Exemplo:\n\n"
+        "- `DATE_PARSE(\"dt_ref\", '%Y%m%d')`\n\n"
         "A expressao sera usada em todas as queries para converter "
         "a coluna string em data."
     )
@@ -1060,7 +1034,6 @@ glossary = [
     ("DistinctValuesCount", "Regra GDQ que verifica o numero de valores distintos de uma coluna. Pode ser exata (= N) ou range (between X and Y)."),
     ("Drift", "Tendencia de crescimento ou queda nos dados ao longo do tempo. Pode tornar as bandas desalinhadas. Solucao: reduzir N ou aumentar margem."),
     ("Dual guard", "Mecanismo que combina banda sigma OR banda margem. A regra passa se o valor estiver dentro de qualquer uma das duas bandas."),
-    ("DuckDB", "Banco de dados local usado em modo mock para simular o Athena durante desenvolvimento. Carrega dados sinteticos de mock_data/."),
     ("Estabilidade", "Metrica de 0 a 1 que indica quao pouco a banda muda ao variar parametros. 1.0 = muito estavel. Abaixo de 0.5 pode indicar instabilidade."),
     ("Falso positivo", "Estimativa (~) de periodos normais que seriam reprovados pela regra. Criterio: viola a regra mas esta dentro de 4 sigma da media global. Ideal: 0."),
     ("Floor", "Limite inferior absoluto (%) usado no modo hibrido. A frequencia nunca pode ficar abaixo deste valor, independente do dual guard."),

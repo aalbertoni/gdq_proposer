@@ -15,7 +15,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from config import load_config, AthenaMode, Environment
+from config import load_config
 from core.models.dataset_config import DatasetConfig
 from core.models.enums import (
     GrainType,
@@ -197,26 +197,8 @@ st.caption(
 
 
 # ===================================================================
-# Configuracao de ambiente (.env)
+# Inicializacao
 # ===================================================================
-
-_current_config = load_config()
-
-# Info de conexao (read-only — ambiente definido no launch via run.py --env)
-with st.expander("Conexao", expanded=False):
-    _env_labels = {"local": "Local", "dev": "Dev", "prod": "Producao"}
-    _mode_label = _current_config.athena.mode.value.upper()
-    st.caption(
-        f"**Ambiente:** {_env_labels.get(_current_config.environment.value, _current_config.environment.value)} · "
-        f"**Modo:** {_mode_label} · "
-        f"**Regiao:** {_current_config.athena.region} · "
-        f"**Workgroup:** {_current_config.athena.workgroup}"
-    )
-    st.caption(
-        "Para alterar o ambiente, reinicie com: "
-        "`python run.py [--env local|dev|prod] [--mock]`"
-    )
-
 
 try:
     client = get_client()
@@ -225,7 +207,6 @@ except Exception as e:
     st.stop()
 
 app_config = st.session_state["config"]
-is_mock = app_config.athena.mode == AthenaMode.MOCK
 dataset_svc, profiling_svc = get_services(client)
 
 
@@ -310,27 +291,12 @@ st.header("1. Tabela")
 
 col1, col2 = st.columns(2)
 with col1:
-    if is_mock:
-        schema = st.text_input(
-            "Schema:",
-            value="mock_db",
-            disabled=True,
-            help="Em modo local, o schema e fixo (mock_db) e usa dados sinteticos via DuckDB.",
-        )
-    else:
-        _is_prod_env = _current_config.environment == Environment.PROD
-        _schema_default = "" if _is_prod_env else "gdq_test_db"
-        _schema_help = (
-            "Nome do banco no Glue Catalog."
-            if _is_prod_env
-            else "Nome do banco no Glue Catalog. Ex: gdq_test_db, datalake_raw."
-        )
-        schema = st.text_input(
-            "Schema (Glue database):",
-            value=_schema_default,
-            placeholder="ex: datalake_trusted",
-            help=_schema_help,
-        )
+    schema = st.text_input(
+        "Schema (Glue database):",
+        value="gdq_test_db",
+        placeholder="ex: datalake_trusted",
+        help="Nome do banco no Glue Catalog. Ex: gdq_test_db, datalake_raw.",
+    )
 
 with col2:
     table = st.text_input(
@@ -494,37 +460,28 @@ needs_date_expression = selected_col_base_type in (_STRING_TYPES | _INTEGER_TYPE
 is_integer_temporal = selected_col_base_type in _INTEGER_TYPES
 
 if needs_date_expression:
-    from infra.sql_dialect import SQLDialect
-
-    current_dialect = client.dialect
-
-    # Dialect-aware SQL expressions: (label, athena_expr, duckdb_expr)
+    # SQL expressions: (label, athena_expr)
     # Patterns depend on whether the column is string or integer type
     if is_integer_temporal:
         _DATE_PATTERNS = [
             (
                 "yyyyMMdd como inteiro (ex: 20240115)",
                 'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m%d\')',
-                'STRPTIME(CAST("{col}" AS VARCHAR), \'%Y%m%d\')::DATE',
             ),
             (
                 "yyyyMM como inteiro (ex: 202401)",
                 'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m\')',
-                'STRPTIME(CAST("{col}" AS VARCHAR), \'%Y%m\')::DATE',
             ),
             (
                 "Epoch segundos (ex: 1705276800)",
                 'CAST(FROM_UNIXTIME("{col}") AS DATE)',
-                'CAST(EPOCH_MS("{col}" * 1000) AS DATE)',
             ),
             (
                 "Epoch milissegundos (ex: 1705276800000)",
                 'CAST(FROM_UNIXTIME("{col}" / 1000) AS DATE)',
-                'CAST(EPOCH_MS("{col}") AS DATE)',
             ),
             (
                 "Customizado (digitar manualmente)",
-                "",
                 "",
             ),
         ]
@@ -533,31 +490,25 @@ if needs_date_expression:
             (
                 "yyyy-MM-dd (ex: 2024-01-15)",
                 'CAST("{col}" AS DATE)',
-                'CAST("{col}" AS DATE)',
             ),
             (
                 "yyyyMMdd (ex: 20240115)",
                 'DATE_PARSE("{col}", \'%Y%m%d\')',
-                'STRPTIME("{col}", \'%Y%m%d\')::DATE',
             ),
             (
                 "yyyyMM (ex: 202401)",
                 'DATE_PARSE("{col}", \'%Y%m\')',
-                'STRPTIME("{col}", \'%Y%m\')::DATE',
             ),
             (
                 "dd/MM/yyyy (ex: 15/01/2024)",
                 'DATE_PARSE("{col}", \'%d/%m/%Y\')',
-                'STRPTIME("{col}", \'%d/%m/%Y\')::DATE',
             ),
             (
                 "yyyy-MM-dd HH:mm:ss (ex: 2024-01-15 10:30:00)",
                 'CAST("{col}" AS TIMESTAMP)',
-                'CAST("{col}" AS TIMESTAMP)',
             ),
             (
                 "Customizado (digitar manualmente)",
-                "",
                 "",
             ),
         ]
@@ -584,17 +535,11 @@ if needs_date_expression:
             help="Informe a expressao SQL que converte a coluna string para date/timestamp.",
         )
     else:
-        _, athena_expr, duckdb_expr = _DATE_PATTERNS[chosen_idx]
-        if current_dialect == SQLDialect.DUCKDB:
-            date_expression = duckdb_expr.format(col=date_col)
-        else:
-            date_expression = athena_expr.format(col=date_col)
+        _, athena_expr = _DATE_PATTERNS[chosen_idx]
+        date_expression = athena_expr.format(col=date_col)
 
         st.code(date_expression, language="sql")
-        st.caption(
-            f"Expressao gerada para o backend **{current_dialect.value}**. "
-            f"Sera adaptada automaticamente ao trocar de ambiente."
-        )
+        st.caption("Expressao SQL gerada automaticamente para o Athena.")
 
     if not date_expression.strip():
         st.error(
@@ -742,7 +687,7 @@ for col_info in columns:
 n_profiling = len(profiling_cols_selected)
 
 # Cost guardrail
-if not is_mock and n_profiling > 20:
+if n_profiling > 20:
     st.info(
         f"O profiling executara queries para **{n_profiling} colunas** "
         f"contra o Athena. Desmarque colunas desnecessarias para reduzir custo.",

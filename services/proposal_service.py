@@ -59,14 +59,13 @@ class AutoTuneResult(TypedDict, total=False):
     coverage_pct, weighted_coverage_pct, false_positives, stability, score_total.
 
     Campos de breakdown do score (sempre presentes quando score_total > 0):
-    coverage_norm, fp_penalty, stability_bonus, width_penalty, drift_bonus,
-    n_penalty, recency_bonus. Estes sao os componentes individuais que somam
-    score_total.
+    normal_coverage, outlier_penalty, fp_penalty, stability_bonus, width_penalty,
+    drift_bonus, n_penalty, sigma_preference, margin_preference, recency_bonus.
+
+    Outlier-aware scoring: o auto-tune detecta outliers via IQR (2.5x) e
+    maximiza cobertura de pontos normais enquanto penaliza cobrir outliers.
 
     Campos adicionados apos avaliacao: confidence, viable, recommendation.
-
-    Campos opcionais de comparacao (presentes quando current_* fornecido):
-    band_width_ratio.
     """
 
     n_periods: int
@@ -79,14 +78,19 @@ class AutoTuneResult(TypedDict, total=False):
     stability: float
     score_total: float
     # Score breakdown components
-    coverage_norm: float
+    normal_coverage: float
+    outlier_penalty: float
     fp_penalty: float
     stability_bonus: float
     width_penalty: float
     drift_bonus: float
     n_penalty: float
+    sigma_preference: float
+    margin_preference: float
     recency_bonus: float
     band_width_ratio: float
+    outliers_detected: int
+    outliers_covered: int
     confidence: "ConfidenceLevel"
     viable: bool
     recommendation: str
@@ -1099,6 +1103,23 @@ class ProposalService:
         )
         post_change_len = len(change_result["post_change_values"]) if has_change_point else 0
 
+        # Detectar outliers via IQR para scoring inteligente
+        valid_values = [v for v in values if v is not None and not (isinstance(v, float) and v != v)]
+        outlier_indices = set()
+        if len(valid_values) >= 4:
+            sorted_vals = sorted(valid_values)
+            q1_idx = len(sorted_vals) // 4
+            q3_idx = 3 * len(sorted_vals) // 4
+            q1 = sorted_vals[q1_idx]
+            q3 = sorted_vals[q3_idx]
+            iqr = q3 - q1
+            fence_lower = q1 - 2.5 * iqr
+            fence_upper = q3 + 2.5 * iqr
+            for idx, v in enumerate(values):
+                if v is not None and not (isinstance(v, float) and v != v):
+                    if v < fence_lower or v > fence_upper:
+                        outlier_indices.add(idx)
+
         best = None
         best_score = -1.0
 
@@ -1127,12 +1148,44 @@ class ProposalService:
                         if bt.total_periods == 0:
                             continue
 
-                        # Score composto melhorado
-                        coverage_norm = bt.coverage_pct / 100.0
+                        # Outlier-aware coverage: separate normal vs outlier points
+                        normal_pass = 0
+                        normal_total = 0
+                        outlier_pass = 0
+                        outlier_total = 0
+                        for pr in bt.point_results:
+                            if pr["index"] in outlier_indices:
+                                outlier_total += 1
+                                if pr["passed"]:
+                                    outlier_pass += 1
+                            else:
+                                normal_total += 1
+                                if pr["passed"]:
+                                    normal_pass += 1
+
+                        # Primary metric: coverage of non-outlier points
+                        normal_coverage = (
+                            normal_pass / normal_total if normal_total > 0
+                            else bt.coverage_pct / 100.0
+                        )
+
+                        # Penalty for covering outliers (band too wide)
+                        outlier_penalty = (
+                            (outlier_pass / outlier_total) * 0.15
+                            if outlier_total > 0 else 0.0
+                        )
+
                         fp_penalty = bt.false_positive_proxy * 0.05
                         stability_bonus = bt.stability_score * 0.10
-                        width_penalty = max(0, (bt.band_width_ratio - 0.3)) * 0.15
+
+                        # Quadratic width penalty — stronger than before
+                        width_penalty = max(0, (bt.band_width_ratio - 0.20)) ** 2 * 0.5
+
                         n_penalty = 0.05 if n < 15 else 0.0
+
+                        # Prefer tighter parameters when coverage is equal
+                        sigma_preference = sigma * 0.02
+                        margin_preference = margin * 0.10
 
                         # Bonus for N multiple of 7 when seasonality detected
                         seasonality_bonus = (
@@ -1152,12 +1205,15 @@ class ProposalService:
                             recency_bonus = 0.0
 
                         combo_score = (
-                            coverage_norm
+                            normal_coverage
+                            - outlier_penalty
                             - fp_penalty
                             + stability_bonus
                             - width_penalty
                             + drift_bonus
                             - n_penalty
+                            - sigma_preference
+                            - margin_preference
                             + seasonality_bonus
                             + change_point_bonus
                             + recency_bonus
@@ -1176,14 +1232,19 @@ class ProposalService:
                                 "stability": bt.stability_score,
                                 "score_total": round(combo_score, 4),
                                 # Score breakdown components
-                                "coverage_norm": round(coverage_norm, 4),
+                                "normal_coverage": round(normal_coverage, 4),
+                                "outlier_penalty": round(outlier_penalty, 4),
                                 "fp_penalty": round(fp_penalty, 4),
                                 "stability_bonus": round(stability_bonus, 4),
                                 "width_penalty": round(width_penalty, 4),
                                 "drift_bonus": round(drift_bonus, 4),
                                 "n_penalty": round(n_penalty, 4),
+                                "sigma_preference": round(sigma_preference, 4),
+                                "margin_preference": round(margin_preference, 4),
                                 "recency_bonus": round(recency_bonus, 4),
                                 "band_width_ratio": round(bt.band_width_ratio, 4),
+                                "outliers_detected": len(outlier_indices),
+                                "outliers_covered": outlier_pass,
                             }
 
         if best is None:
@@ -1193,11 +1254,14 @@ class ProposalService:
                 "coverage_pct": 0.0, "weighted_coverage_pct": 0.0,
                 "false_positives": 0,
                 "stability": 0.0, "score_total": 0.0,
-                "coverage_norm": 0.0, "fp_penalty": 0.0,
+                "normal_coverage": 0.0, "outlier_penalty": 0.0,
+                "fp_penalty": 0.0,
                 "stability_bonus": 0.0, "width_penalty": 0.0,
                 "drift_bonus": 0.0, "n_penalty": 0.0,
+                "sigma_preference": 0.0, "margin_preference": 0.0,
                 "recency_bonus": 0.0,
                 "band_width_ratio": 0.0,
+                "outliers_detected": 0, "outliers_covered": 0,
                 "confidence": ConfidenceLevel.LOW,
                 "viable": False,
                 "recommendation": "Dados insuficientes para avaliar — nao recomendado.",
@@ -1205,6 +1269,8 @@ class ProposalService:
 
         coverage = best["coverage_pct"]
         fp = best["false_positives"]
+        n_outliers = best.get("outliers_detected", 0)
+        n_outliers_covered = best.get("outliers_covered", 0)
 
         if coverage >= 90.0 and fp == 0:
             confidence = ConfidenceLevel.HIGH
@@ -1229,6 +1295,14 @@ class ProposalService:
                 f"Nao recomendado: a melhor combinacao atinge apenas {coverage:.1f}% de cobertura"
                 f" com {fp} falso(s) positivo(s). "
                 f"Esta metrica pode ser instavel demais para uma regra automatica."
+            )
+
+        # Append outlier info if detected
+        if n_outliers > 0:
+            excluded = n_outliers - n_outliers_covered
+            recommendation += (
+                f" {n_outliers} outlier(s) detectado(s) via IQR"
+                f" ({excluded} excluido(s) da banda)."
             )
 
         # Append seasonality warning if detected

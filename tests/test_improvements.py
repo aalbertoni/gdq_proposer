@@ -71,6 +71,27 @@ class TestSuggestReclassification:
         assert suggested == SemanticType.IDENTIFIER
         assert "identificador" in msg.lower()
 
+    def test_double_high_card_no_identifier_suggestion(self):
+        """Double/decimal with high cardinality → NOT identifier (monetary values)."""
+        for dtype in ("double", "decimal", "float", "real"):
+            suggested, msg = suggest_reclassification(
+                athena_type=dtype,
+                distinct_count=50000,
+                total_count=100000,
+                non_null_count=100000,
+            )
+            assert suggested is None, f"{dtype} should not be suggested as identifier"
+
+    def test_decimal_parametrized_no_identifier(self):
+        """decimal(18,2) with high cardinality → NOT identifier."""
+        suggested, msg = suggest_reclassification(
+            athena_type="decimal(18,2)",
+            distinct_count=80000,
+            total_count=100000,
+            non_null_count=100000,
+        )
+        assert suggested is None
+
     def test_high_distinct_low_ratio_no_suggestion(self):
         """High distinct but low ratio → no suggestion (valid numeric)."""
         suggested, msg = suggest_reclassification(

@@ -13,7 +13,7 @@ Definido conforme docs/technical_spec_v1.md secao 12.
 import streamlit as st
 import plotly.graph_objects as go
 
-from config import load_config, AthenaMode, Environment
+from config import load_config
 from core.models.baseline import BaselineStrategy
 from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, SemanticType, get_rule_label
 from core.models.rule_selection import RuleSelection
@@ -235,13 +235,13 @@ def _render_backtest_metrics(proposal):
 
 
 def _render_add_to_cart(proposal, label, stable_key, show_syntax=True):
-    # Explicacao em linguagem natural
-    st.info(explain_rule(proposal))
-
     if show_syntax:
         with st.expander("Sintaxe GDQ e detalhes", expanded=False):
             st.code(proposal.gdq_syntax_preview)
-            st.markdown(explain_rule_detail(proposal))
+            st.info(explain_rule(proposal))
+            detail = explain_rule_detail(proposal)
+            if detail.strip():
+                st.markdown(detail)
 
     existing_ids = {s.proposal_id for s in st.session_state["rule_cart"]}
     if proposal.id in existing_ids:
@@ -610,12 +610,15 @@ def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeri
             )
 
             breakdown_items = [
-                ("Cobertura normalizada", result.get("coverage_norm", 0), "+", "coverage / 100"),
+                ("Cobertura normal", result.get("normal_coverage", 0), "+", "pontos normais cobertos / total normais"),
+                ("Penalidade outliers", result.get("outlier_penalty", 0), "-", "outliers cobertos * 0.15"),
                 ("Penalidade FP", result.get("fp_penalty", 0), "-", "FP * 0.05"),
                 ("Bonus estabilidade", result.get("stability_bonus", 0), "+", "stability * 0.10"),
-                ("Penalidade largura", result.get("width_penalty", 0), "-", "max(0, width_ratio - 0.3) * 0.15"),
+                ("Penalidade largura", result.get("width_penalty", 0), "-", "(width_ratio - 0.20)^2 * 0.5"),
                 ("Bonus/penalidade drift", result.get("drift_bonus", 0), "+/-", "+0.05 sem drift, -0.05 com drift"),
                 ("Penalidade N curto", result.get("n_penalty", 0), "-", "0.05 se N < 15"),
+                ("Preferencia sigma", result.get("sigma_preference", 0), "-", "sigma * 0.02"),
+                ("Preferencia margem", result.get("margin_preference", 0), "-", "margem * 0.10"),
                 ("Bonus recencia", result.get("recency_bonus", 0), "+", "(weighted_cov - flat_cov)/100 * 0.10"),
             ]
 
@@ -639,8 +642,15 @@ def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeri
             if bwr > 0:
                 st.caption(
                     f"Largura relativa da banda: {bwr:.4f} "
-                    f"({'estreita' if bwr < 0.3 else 'moderada' if bwr < 1.0 else 'larga'}). "
-                    f"Penalidade aplicada quando > 0.30."
+                    f"({'estreita' if bwr < 0.2 else 'moderada' if bwr < 0.5 else 'larga'}). "
+                    f"Penalidade quadratica quando > 0.20."
+                )
+            n_outliers = result.get("outliers_detected", 0)
+            if n_outliers > 0:
+                n_covered = result.get("outliers_covered", 0)
+                st.caption(
+                    f"Outliers detectados (IQR 2.5x): {n_outliers}, "
+                    f"excluidos da banda: {n_outliers - n_covered}."
                 )
 
             # Weighted coverage insight
@@ -919,8 +929,6 @@ with st.sidebar:
                 _bytes_label = f"{_bytes / 1024:.0f} KB"
             st.caption(f"Dados escaneados: {_bytes_label}")
             st.caption(f"Custo estimado: ${_summary['estimated_cost_usd']:.4f}")
-        elif client.dialect.value == "duckdb":
-            st.caption("Modo mock (DuckDB) — sem custo Athena")
 
         if _summary["errors"] > 0:
             st.caption(f":red[Erros: {_summary['errors']}]")
@@ -1096,7 +1104,9 @@ with tab_numericas:
                         f"mean_{selected_col}", metric_kind="numeric",
                     )
 
-                _render_backtest_metrics(proposal)
+                # Metricas do backtest (ocultar se auto-tune ja exibe metricas)
+                if f"autotune_mean_{selected_col}" not in st.session_state:
+                    _render_backtest_metrics(proposal)
                 _render_add_to_cart(
                     proposal, "Mean",
                     f"mean_{selected_col}",
@@ -1150,7 +1160,8 @@ with tab_numericas:
                         f"stddev_{selected_col}", metric_kind="numeric",
                     )
 
-                _render_backtest_metrics(proposal)
+                if f"autotune_stddev_{selected_col}" not in st.session_state:
+                    _render_backtest_metrics(proposal)
                 _render_add_to_cart(
                     proposal, "StdDev",
                     f"stddev_{selected_col}",
@@ -1796,7 +1807,8 @@ with tab_tabela:
                     "rowcount", metric_kind="numeric",
                 )
 
-            _render_backtest_metrics(rc_proposal)
+            if "autotune_rowcount" not in st.session_state:
+                _render_backtest_metrics(rc_proposal)
             _render_add_to_cart(rc_proposal, "RowCount", "rowcount")
         else:
             st.warning(

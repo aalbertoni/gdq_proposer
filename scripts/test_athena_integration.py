@@ -14,8 +14,6 @@ Run with: GDQ_ENV=dev python scripts/test_athena_integration.py
 import os
 import sys
 
-# Set environment before imports
-os.environ["GDQ_ENV"] = "dev"
 os.environ.setdefault("GDQ_AWS_PROFILE", "gdq-test")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,8 +33,6 @@ from core.models.rule_selection import RuleSelection
 
 def main():
     config = load_config()
-    print(f"Environment: {config.environment.value}")
-    print(f"Athena mode: {config.athena.mode.value}")
     print(f"Region: {config.athena.region}")
     print(f"Workgroup: {config.athena.workgroup}")
     print()

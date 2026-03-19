@@ -389,15 +389,12 @@ class ExportService:
             lines.append(explain_rule(p))
             lines.append("")
 
-            # Evidencia (backtest detail)
+            # Evidencia (backtest detail — parametros + evidencia)
             detail = explain_rule_detail(p)
-            # Extrair a parte de parametros e evidencia (apos a primeira linha)
-            detail_parts = detail.split("\n")
-            # Pular a primeira linha (que é a mesma do explain_rule)
-            extra = [l for l in detail_parts[1:] if l.strip()]
-            if extra:
-                for l in extra:
-                    lines.append(l)
+            if detail.strip():
+                for l in detail.split("\n"):
+                    if l.strip():
+                        lines.append(l)
                 lines.append("")
 
             # Sintaxe GDQ

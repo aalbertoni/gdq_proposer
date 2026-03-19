@@ -2,13 +2,9 @@
 
 Wrapper para operacoes de Glue job (start, status, cancel)
 usado na integracao com o Thundera para teste de regras GDQ.
-
-Reutiliza o mesmo AWS profile/session do AthenaClient.
-Suporta modo mock para desenvolvimento local.
 """
 
 import logging
-import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -29,9 +25,6 @@ class GlueJobNotFoundError(GlueTestError):
 class GlueClient:
     """Wrapper boto3 para execucao de Glue jobs.
 
-    Reutiliza o AWS profile do AthenaClient para consistencia.
-    Em modo mock (DuckDB), retorna respostas simuladas.
-
     Usage:
         client = GlueClient(config)
         run_id = client.start_job_run("job-name", {"--objson": json_str})
@@ -44,13 +37,9 @@ class GlueClient:
         Args:
             config: AppConfig com configuracoes AWS e GlueTestConfig.
         """
-        from config import AthenaMode
         self.config = config
         self._client = None
-        self._mock = config.athena.mode == AthenaMode.MOCK
-
-        if not self._mock:
-            self._init_client()
+        self._init_client()
 
     def _init_client(self):
         """Inicializa boto3 client para Glue."""
@@ -77,12 +66,6 @@ class GlueClient:
             GlueJobNotFoundError: Se o job nao existe.
             GlueTestError: Para outros erros.
         """
-        if self._mock:
-            import uuid
-            mock_id = f"jr_mock_{uuid.uuid4().hex[:8]}"
-            logger.info("Mock: Glue job '%s' started with run_id=%s", job_name, mock_id)
-            return mock_id
-
         try:
             response = self._client.start_job_run(
                 JobName=job_name,
@@ -117,15 +100,6 @@ class GlueClient:
             Dict com: JobRunState, StartedOn, CompletedOn,
             ExecutionTime, ErrorMessage.
         """
-        if self._mock:
-            return {
-                "JobRunState": "SUCCEEDED",
-                "StartedOn": "2026-02-27T10:00:00",
-                "CompletedOn": "2026-02-27T10:02:00",
-                "ExecutionTime": 120,
-                "ErrorMessage": "",
-            }
-
         try:
             response = self._client.get_job_run(
                 JobName=job_name,
@@ -152,10 +126,6 @@ class GlueClient:
         Returns:
             True se cancelado com sucesso.
         """
-        if self._mock:
-            logger.info("Mock: Glue job cancelled: %s", run_id)
-            return True
-
         try:
             self._client.batch_stop_job_run(
                 JobName=job_name,

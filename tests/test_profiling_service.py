@@ -1,14 +1,12 @@
 """Testes para services/profiling_service.py.
 
-Usa DuckDB (MockAthenaBackend) com dados sintéticos em memória.
+Usa DuckDB (DuckDBTestClient) com dados sintéticos em memória.
 Valida classificação end-to-end: query → classify → ColumnProfile.
 """
 
 import pytest
 import pandas as pd
 
-from config import AppConfig, AthenaConfig, AthenaMode
-from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from infra.sql_dialect import SQLDialect
 from services.profiling_service import ProfilingService
@@ -22,17 +20,13 @@ from core.models.enums import PartitionMethod, SemanticType
 
 @pytest.fixture
 def mock_client(tmp_path):
-    """Cria AthenaClient em modo mock com tabela de teste diversificada."""
-    config = AppConfig(
-        athena=AthenaConfig(
-            mode=AthenaMode.MOCK,
-            mock_data_dir=str(tmp_path),
-        )
-    )
+    """Cria DuckDBTestClient com tabela de teste diversificada."""
+    from tests.conftest import DuckDBTestClient
+    from datetime import date, timedelta
+
+    client = DuckDBTestClient()
 
     n = 10000
-    # Gerar datas recentes para que o lookback funcione com CURRENT_DATE
-    from datetime import date, timedelta
     today = date.today()
     df = pd.DataFrame({
         # Coluna temporal (string date, usada como eixo)
@@ -54,9 +48,7 @@ def mock_client(tmp_path):
 
     parquet_path = tmp_path / "tb_profiling.parquet"
     df.to_parquet(parquet_path)
-
-    client = AthenaClient(config)
-    client._backend.load_table("mock_db", "tb_profiling", str(parquet_path))
+    client.load_table("mock_db", "tb_profiling", str(parquet_path))
     return client
 
 

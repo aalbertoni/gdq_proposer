@@ -1,14 +1,11 @@
 """Testes para services/dataset_service.py.
 
-Usa DuckDB (MockAthenaBackend) com dados sintéticos em memória.
+Usa DuckDB (DuckDBTestClient) com dados sintéticos em memória.
 """
 
 import pytest
-import duckdb
 import pandas as pd
 
-from config import AppConfig, AthenaConfig, AthenaMode
-from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from infra.sql_dialect import SQLDialect
 from services.dataset_service import DatasetService
@@ -22,14 +19,9 @@ from core.models.enums import PartitionMethod
 
 @pytest.fixture
 def mock_client(tmp_path):
-    """Cria AthenaClient em modo mock com tabela de teste."""
-    config = AppConfig(
-        athena=AthenaConfig(
-            mode=AthenaMode.MOCK,
-            mock_data_dir=str(tmp_path),
-        )
-    )
-    # Cria parquet de teste
+    """Cria DuckDBTestClient com tabela de teste."""
+    from tests.conftest import DuckDBTestClient
+    client = DuckDBTestClient()
     df = pd.DataFrame({
         "dt_ref": pd.date_range("2026-01-01", periods=30, freq="D").astype(str),
         "COD_PRODUTO": ["A", "B", "C"] * 10,
@@ -38,10 +30,7 @@ def mock_client(tmp_path):
     })
     parquet_path = tmp_path / "tb_teste.parquet"
     df.to_parquet(parquet_path)
-
-    client = AthenaClient(config)
-    # Carrega manualmente (o init já tentou mas o nome mock_db)
-    client._backend.load_table("mock_db", "tb_teste", str(parquet_path))
+    client.load_table("mock_db", "tb_teste", str(parquet_path))
     return client
 
 

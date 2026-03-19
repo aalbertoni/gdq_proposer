@@ -4,11 +4,9 @@ GDQ Rule Proposer — Entry point Streamlit.
 Dashboard com overview do projeto, metricas da sessao e navegacao guiada.
 """
 
-import os
-
 import streamlit as st
 
-from config import load_config, AthenaMode, Environment
+from config import load_config
 from infra.athena_client import AthenaClient
 
 __version__ = "0.2.0"
@@ -21,20 +19,6 @@ def get_client() -> AthenaClient:
         st.session_state["client"] = AthenaClient(config)
     return st.session_state["client"]
 
-
-def get_available_tables(client: AthenaClient) -> list[str]:
-    """List tables available in the current backend."""
-    if client.config.athena.mode == AthenaMode.MOCK:
-        if client._backend:
-            return sorted(client._backend._tables.values())
-        return []
-    else:
-        df = client.execute_df(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = 'gdq_test_db' ORDER BY table_name",
-            query_name="list_tables",
-        )
-        return df["table_name"].tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -50,26 +34,6 @@ def render_sidebar():
 
     if not config:
         return
-
-    # Ambiente fixo — definido no launch via run.py --env
-    env_labels = {
-        Environment.LOCAL: ":blue[Local]",
-        Environment.DEV: ":orange[Dev]",
-        Environment.PROD: ":green[Producao]",
-    }
-    st.sidebar.markdown(
-        f"**Ambiente:** {env_labels.get(config.environment, config.environment.value)}"
-    )
-
-    mode_label = config.athena.mode.value.upper()
-    st.sidebar.markdown(f"**Modo:** {mode_label}")
-
-    if config.athena.mode == AthenaMode.REAL:
-        st.sidebar.markdown(f"**Region:** {config.athena.region}")
-        st.sidebar.markdown(f"**Workgroup:** {config.athena.workgroup}")
-        # Em prod com IAM role, AWS_PROFILE nao e necessario
-        if config.environment != Environment.PROD and not os.environ.get("AWS_PROFILE") and not config.athena.aws_profile:
-            st.sidebar.warning("AWS_PROFILE nao configurado. Defina antes de usar Athena.")
 
     # Active config indicator
     if "dataset_config" in st.session_state:
@@ -116,8 +80,7 @@ def main():
         )
     with status_col:
         if connection_ok:
-            env_label = config.environment.value.upper() if config else "?"
-            st.success(f"Conectado ({env_label})")
+            st.success("Conectado")
         else:
             st.error("Desconectado")
 
@@ -129,22 +92,12 @@ def main():
         st.stop()
 
     # --- Metric cards ---
-    tables = get_available_tables(client)
-    n_tables = len(tables)
     n_cart = len(st.session_state.get("rule_cart", []))
     has_config = "dataset_config" in st.session_state
 
     # Cost from query logger
     summary = client.logger.get_session_summary()
-    is_mock = config and config.athena.mode == AthenaMode.MOCK
-    if is_mock:
-        cost_str = "Local"
-        cost_help = (
-            f"{summary['total_queries']} queries executadas no DuckDB (sem custo Athena)"
-            if summary["total_queries"] > 0
-            else "Modo mock (DuckDB) — sem custo Athena"
-        )
-    elif summary["estimated_cost_usd"] > 0:
+    if summary["estimated_cost_usd"] > 0:
         cost_str = f"${summary['estimated_cost_usd']:.4f}"
         cost_help = (
             f"{summary['total_queries']} queries, "
@@ -161,12 +114,10 @@ def main():
         cost_str = "$0.00"
         cost_help = "Nenhuma query executada nesta sessao"
 
-    m1, m2, m3 = st.columns(3)
+    m1, m2 = st.columns(2)
     with m1:
-        st.metric("Tabelas disponiveis", n_tables)
-    with m2:
         st.metric("Regras no carrinho", n_cart)
-    with m3:
+    with m2:
         st.metric("Custo da sessao", cost_str, help=cost_help)
 
     st.divider()
@@ -286,12 +237,6 @@ def main():
 
         if st.button("Comecar configuracao", type="primary", key="quick_start"):
             st.switch_page("pages/01_setup.py")
-
-    # --- Tables preview (collapsible) ---
-    if tables:
-        with st.expander(f"Tabelas disponiveis ({n_tables})", expanded=False):
-            for t in tables:
-                st.caption(f"- `{t}`")
 
 
 if __name__ == "__main__":

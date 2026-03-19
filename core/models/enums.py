@@ -107,6 +107,32 @@ class BaselineMethod(str, Enum):
     SAME_DAY_OF_MONTH = "same_day_of_month"   # evolução futura
 
 
+class SeriesRegime(str, Enum):
+    """Regime estatistico da serie temporal.
+
+    Classificacao pragmatica para orientar a escolha e calibracao
+    de regras DQ. Nao e mutuamente exclusivo — uma serie pode ter
+    tendencia + sazonalidade. O regime principal e o mais dominante.
+    """
+
+    STABLE = "stable"                        # baixa volatilidade, sem tendencia
+    VOLATILE = "volatile"                    # alta volatilidade (CV > 30%)
+    TRENDING = "trending"                    # tendencia monotonica detectada
+    SEASONAL = "seasonal"                    # padrao ciclico (semanal, mensal)
+    STRUCTURAL_BREAK = "structural_break"    # mudanca abrupta de patamar
+    ZERO_INFLATED = "zero_inflated"          # >= 30% dos valores sao zero
+    ASYMMETRIC = "asymmetric"               # skewness alta (|skew| > 1.0)
+    SPARSE = "sparse"                        # >= 30% dos valores sao nulos
+
+
+class GDQCapabilityStatus(str, Enum):
+    """Status de suporte de uma feature no GDQ runtime real."""
+
+    VALIDATED = "validated"      # testado e confirmado em producao
+    EXPERIMENTAL = "experimental"  # funciona em testes, nao confirmado em prod
+    UNKNOWN = "unknown"          # sem evidencia
+
+
 class ExportOutputMode(str, Enum):
     """Modo de output do export."""
     GDQ_RUNTIME = "gdq_runtime"       # sintaxe final para cadastro

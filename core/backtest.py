@@ -143,7 +143,7 @@ def backtest_band(
         )
 
         passed = in_sigma or in_margin
-        eval_results.append({"passed": passed})
+        eval_results.append({"index": i, "value": current, "passed": passed})
 
         if passed:
             periods_pass += 1
@@ -186,6 +186,7 @@ def backtest_band(
         has_drift=drift_result["has_drift"],
         outlier_periods=outlier_periods,
         weighted_coverage_pct=weighted_coverage_pct,
+        point_results=eval_results,
     )
 
 
@@ -315,7 +316,7 @@ def backtest_frequency_band(
         last_band = band
 
         passed = band["lower"] <= current <= band["upper"]
-        eval_results.append({"passed": passed})
+        eval_results.append({"index": i, "value": current, "passed": passed})
 
         if passed:
             periods_pass += 1
@@ -355,6 +356,7 @@ def backtest_frequency_band(
         has_drift=drift_result["has_drift"],
         outlier_periods=outlier_periods,
         weighted_coverage_pct=weighted_coverage_pct,
+        point_results=eval_results,
     )
 
 
@@ -468,7 +470,7 @@ def backtest_frequency_dual_guard(
         else:
             passes = passes_dual_guard
 
-        eval_results.append({"passed": passes})
+        eval_results.append({"index": i, "value": current, "passed": passes})
 
         if passes:
             periods_pass += 1
@@ -508,6 +510,7 @@ def backtest_frequency_dual_guard(
         has_drift=drift_result["has_drift"],
         outlier_periods=outlier_periods,
         weighted_coverage_pct=weighted_coverage_pct,
+        point_results=eval_results,
     )
 
 
