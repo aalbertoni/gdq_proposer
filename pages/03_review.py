@@ -92,7 +92,19 @@ for i, selection in enumerate(cart):
             ConfidenceLevel.MEDIUM: ":orange[MEDIUM]",
             ConfidenceLevel.LOW: ":red[LOW]",
         }
-        st.markdown(badges.get(p.confidence, p.confidence.value))
+        from core.models.enums import RecommendationTier
+        tier = getattr(p, "recommendation_tier", RecommendationTier.RECOMMENDED)
+        tier_badges = {
+            RecommendationTier.RECOMMENDED: ":green[Recomendada]",
+            RecommendationTier.POSSIBLE: ":orange[Avaliar]",
+            RecommendationTier.NOT_RECOMMENDED: ":red[Nao recomendada]",
+        }
+        conf_text = badges.get(p.confidence, p.confidence.value)
+        tier_text = tier_badges.get(tier, "")
+        st.markdown(f"{conf_text}  {tier_text}" if tier_text else conf_text)
+        reasons = getattr(p, "recommendation_reasons", [])
+        if reasons:
+            st.caption("; ".join(reasons))
 
     with col4:
         if st.button("X", key=f"remove_{i}", help="Remover esta regra"):

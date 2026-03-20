@@ -270,11 +270,39 @@ def _render_regime_panel(profile):
     st.caption(f"Regime da serie: {badge}{secondary}")
 
 
+def _recommendation_badge(proposal) -> str:
+    from core.models.enums import RecommendationTier
+    tier = getattr(proposal, "recommendation_tier", RecommendationTier.RECOMMENDED)
+    badges = {
+        RecommendationTier.RECOMMENDED: ":green[Recomendada]",
+        RecommendationTier.POSSIBLE: ":orange[Avaliar]",
+        RecommendationTier.NOT_RECOMMENDED: ":red[Nao recomendada]",
+    }
+    return badges.get(tier, "")
+
+
 def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=None):
+    from core.models.enums import RecommendationTier
+
+    # Recommendation tier badge
+    tier = getattr(proposal, "recommendation_tier", RecommendationTier.RECOMMENDED)
+    tier_badge = _recommendation_badge(proposal)
+    reasons = getattr(proposal, "recommendation_reasons", [])
+
     # Experimental badge
     badge = capability_badge(proposal.rule_type)
     if badge:
-        st.caption(badge)
+        st.caption(f"{badge}  {tier_badge}" if tier_badge else badge)
+    elif tier_badge:
+        st.caption(tier_badge)
+
+    if tier == RecommendationTier.NOT_RECOMMENDED:
+        warning_text = capability_warning(proposal.rule_type)
+        if warning_text:
+            st.warning(warning_text)
+        if reasons:
+            st.caption(f"Motivo: {'; '.join(reasons)}")
+    elif badge:
         warning_text = capability_warning(proposal.rule_type)
         if warning_text:
             st.warning(warning_text)

@@ -382,6 +382,21 @@ class ExportService:
             lines.append(
                 f"**Confianca:** {confidence_map.get(p.confidence, p.confidence.value)}"
             )
+
+            from core.models.enums import RecommendationTier
+            tier = getattr(p, "recommendation_tier", RecommendationTier.RECOMMENDED)
+            tier_map = {
+                RecommendationTier.RECOMMENDED: "RECOMENDADA",
+                RecommendationTier.POSSIBLE: "POSSIVEL (REVISAR)",
+                RecommendationTier.NOT_RECOMMENDED: "NAO RECOMENDADA",
+            }
+            lines.append(
+                f"**Recomendacao:** {tier_map.get(tier, tier.value)}"
+            )
+            reasons = getattr(p, "recommendation_reasons", [])
+            if reasons:
+                for reason in reasons:
+                    lines.append(f"- {reason}")
             lines.append("")
 
             # Racional (explanation)
