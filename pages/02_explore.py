@@ -835,11 +835,15 @@ st.caption(
 
 # Guard: precisa ter passado pelo setup
 if "dataset_config" not in st.session_state:
-    st.warning("Configure a tabela na pagina **Setup** primeiro. Use o menu lateral para navegar.")
+    st.warning("Configure a tabela na pagina **Setup** primeiro.")
+    if st.button("Ir para Setup", key="goto_setup_config"):
+        st.switch_page("pages/01_setup.py")
     st.stop()
 
 if "column_profiles" not in st.session_state:
-    st.warning("Execute o profiling na pagina **Setup** primeiro. Use o menu lateral para navegar.")
+    st.warning("Execute o profiling na pagina **Setup** primeiro.")
+    if st.button("Ir para Setup", key="goto_setup_profile"):
+        st.switch_page("pages/01_setup.py")
     st.stop()
 
 dataset_config = st.session_state["dataset_config"]
@@ -1328,7 +1332,9 @@ tab_numericas, tab_categoricas, tab_tabela, tab_resumo = st.tabs(
 
 with tab_numericas:
     if not numeric_profiles:
-        st.info("Nenhuma coluna numerica selecionada. Volte ao **Setup** para selecionar colunas.")
+        st.info("Nenhuma coluna numerica selecionada.")
+        if st.button("Selecionar colunas no Setup", key="goto_setup_num"):
+            st.switch_page("pages/01_setup.py")
     else:
         col_names = [p.column_name for p in numeric_profiles]
         selected_col = st.selectbox(
@@ -1620,7 +1626,9 @@ with tab_numericas:
 
 with tab_categoricas:
     if not cat_profiles:
-        st.info("Nenhuma coluna categorica selecionada. Volte ao **Setup** para selecionar colunas.")
+        st.info("Nenhuma coluna categorica selecionada.")
+        if st.button("Selecionar colunas no Setup", key="goto_setup_cat"):
+            st.switch_page("pages/01_setup.py")
     else:
         cat_col_names = [p.column_name for p in cat_profiles]
         selected_cat_col = st.selectbox(
