@@ -491,6 +491,13 @@ with col_t1:
              "Diario = 1 periodo por dia. Mensal = 1 periodo por mes.",
     )
 
+if grain_type == "monthly":
+    st.info(
+        "Granularidade **mensal** detectada. Os parametros de analise "
+        "(janela de lookback, auto-tune, thresholds de confianca) serao "
+        "adaptados automaticamente para series mais curtas."
+    )
+
 with col_t2:
     lookback_mode = st.selectbox(
         "Modo de lookback:",
@@ -735,6 +742,14 @@ if _max_date_str:
             )
     except (ValueError, TypeError):
         pass  # max_date em formato nao-parseable, prosseguir normalmente
+
+_n_periods = date_range.get("n_periods", 0)
+if _n_periods > 0 and _n_periods < 7:
+    st.caption(
+        f"Serie curta: **{_n_periods} periodos** disponiveis. "
+        f"Regras serao geradas com confianca reduzida. "
+        f"Recomendamos recalibrar apos acumular mais historico."
+    )
 
 
 # ===================================================================
