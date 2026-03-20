@@ -718,10 +718,13 @@ with st.expander("Completeness (qualquer coluna — estatico)"):
 with st.expander("ColumnValues (categorica — estatico)"):
     st.markdown(
         "Verifica se todos os valores pertencem a uma **lista fixa**. "
-        "Sem aspas em valores numericos. Ordem nao importa."
+        "Valores numericos sem aspas; valores string com aspas simples; "
+        "NULL nunca tem aspas. Ordem nao importa."
     )
     st.code(
-        "ColumnValues COD_SITU_OPCR in [2, 1, 3]",
+        "ColumnValues COD_SITU_OPCR in [2, 1, 3]\n"
+        "ColumnValues UF_EMPR in ['SP', 'RJ', 'MG']\n"
+        "ColumnValues STATUS in ['ATIVO', NULL, 'INATIVO']",
         language=None,
     )
 
@@ -751,7 +754,8 @@ with st.expander("CustomSql — Frequencia estatica (categorica)"):
         language=None,
     )
     st.caption(
-        "SQL entre aspas duplas. Valores string com aspas simples. "
+        "SQL entre aspas duplas. Nome da coluna em UPPERCASE sem aspas. "
+        "Valores string com aspas simples. "
         "`from primary` referencia a tabela sendo avaliada."
     )
 
@@ -761,7 +765,7 @@ with st.expander("CustomSql — Frequencia dinamica (categorica)"):
         "com dual guard (sigma OR margem), igual ao Mean."
     )
     st.code(
-        '(((CustomSql "select cast(sum(case when "COD_SITU" = \'1\' then 1 '
+        '(((CustomSql "select cast(sum(case when COD_SITU = \'1\' then 1 '
         'else 0 end) as double) * 100.0 / count(*) from primary" '
         '>= (avg(last(30)) - (2 * std(last(30))) - 0.01)) '
         'AND (CustomSql "..." <= (avg(last(30)) + (2 * std(last(30))) + 0.01))) '
@@ -1017,7 +1021,7 @@ st.caption(
 )
 
 glossary = [
-    ("AllowedValues", "Regra GDQ estatica que verifica se todos os valores de uma coluna pertencem a uma lista fixa. Sintaxe: ColumnValues COL in [...]."),
+    ("AllowedValues", "Regra GDQ estatica que verifica se todos os valores de uma coluna pertencem a uma lista fixa. Sintaxe: ColumnValues COL in [...]. Valores numericos sem aspas, strings com aspas simples, NULL sem aspas."),
     ("Athena", "Servico da AWS para consultar dados no data lake via SQL. A ferramenta usa Athena para analisar historico de tabelas."),
     ("Auto-tuning", "Busca automatica da melhor combinacao de N/sigma/margem via grid search. Testa multiplas combinacoes e retorna a que maximiza cobertura com menos falsos positivos."),
     ("Backtest", "Simulacao da regra no historico passado para medir cobertura, falsos positivos e estabilidade. Usa janela rolante para simular o comportamento real da regra em producao."),
