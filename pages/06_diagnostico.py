@@ -588,3 +588,60 @@ with col2:
         "No terminal, voce tambem pode rodar:\n"
         "`python preflight_check.py`"
     )
+
+
+# =====================================================================
+# 11. Sessao de Analise (query log)
+# =====================================================================
+
+if "client" in st.session_state:
+    _client = st.session_state["client"]
+    _entries = _client.logger.entries
+    if _entries:
+        st.divider()
+        st.header("11. Sessao de Analise")
+        st.caption("Queries executadas na sessao atual do app.")
+
+        _qs = _client.logger.get_session_summary()
+        _time_s = _qs["total_elapsed_ms"] / 1000
+        _cost = _qs["estimated_cost_usd"]
+        _err = _qs["errors"]
+
+        _qm1, _qm2, _qm3, _qm4 = st.columns(4)
+        _qm1.metric("Queries", _qs["total_queries"])
+        _qm2.metric("Tempo total", f"{_time_s:.1f}s")
+        _qm3.metric("Cache hits", f"{_qs['cache_hits']}/{_qs['total_queries']}")
+        _qm4.metric("Custo", f"${_cost:.4f}")
+
+        if _err > 0:
+            st.warning(f"{_err} query(s) com erro.")
+
+        # Tabela de queries
+        import pandas as pd
+        _rows = []
+        for _e in _entries:
+            _rows.append({
+                "Query": _e.query_name,
+                "Coluna": _e.column or "—",
+                "Rows": _e.rows_returned,
+                "Tempo (ms)": _e.elapsed_ms,
+                "Cache": "Sim" if _e.cache_hit else "Nao",
+                "Erro": _e.exception_type or "—",
+            })
+        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+
+        # SQL detalhado por query
+        with st.expander("SQL detalhado por query"):
+            for _i, _e in enumerate(_entries):
+                _status = ":red[ERRO]" if _e.exception_type else ":green[OK]"
+                st.caption(f"{_status} **{_e.query_name}** — {_e.elapsed_ms}ms")
+                if _e.sql:
+                    st.code(_e.sql, language="sql")
+
+        st.download_button(
+            label="Exportar log completo (JSON)",
+            data=_client.logger.export_json(),
+            file_name="gdq_query_log.json",
+            mime="application/json",
+            key="diag_export_log",
+        )
