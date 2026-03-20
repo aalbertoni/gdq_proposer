@@ -184,9 +184,15 @@ class DatasetService:
             schema=config.schema, table=config.table,
         )
 
+        base_filter = ""
+        if config.base_filter_sql:
+            base_filter = sanitize_filter(config.base_filter_sql)
+
         where_clause = "WHERE 1=1"
         if partition_filter:
             where_clause += f" AND {partition_filter}"
+        if base_filter:
+            where_clause += f" AND {base_filter}"
 
         sql = f"SELECT COUNT(*) as total FROM {table_ref} {where_clause}"
 
@@ -227,12 +233,20 @@ class DatasetService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        partition_filter = self.builder.resolve_partition_filter(
+            partition_column=config.partition_column,
+            partition_format=config.partition_format,
+            lookback_value=config.lookback_value,
+            reference_date=config.reference_date or "",
+        )
+
         sql = self.builder.build_volume_by_period(
             schema=config.schema,
             table=config.table,
             temporal_col=temporal_col,
             date_expression=config.date_expression,
             base_filter=base_filter,
+            partition_filter=partition_filter,
             limit=limit,
         )
         df = self.client.execute_df(

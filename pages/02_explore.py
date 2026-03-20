@@ -1717,20 +1717,33 @@ with tab_categoricas:
                 f"Considere reclassificar a coluna no Setup se a cardinalidade real for menor.",
             )
 
-        # --- Fetch data ---
+        # --- Fetch data (domain sempre, distribution e distinct sob demanda) ---
         try:
-            cat_dist_df = fetch_categorical_distribution(config_dict, selected_cat_col)
             cat_domain_df = fetch_categorical_domain(config_dict, selected_cat_col)
         except Exception as e:
-            st.error(f"Erro ao consultar dados categoricos: {e}")
+            st.error(f"Erro ao consultar dominio categorico: {e}")
             st.stop()
 
-        try:
-            cat_dc_history_df = fetch_distinct_count_history(config_dict, selected_cat_col)
-        except Exception as e:
-            st.warning(f"Nao foi possivel consultar historico de distintos: {e}")
-            import pandas as pd
-            cat_dc_history_df = pd.DataFrame()
+        # Distribution e distinct_count carregados sob demanda para reduzir custo
+        import pandas as pd
+        cat_dist_df = pd.DataFrame()
+        cat_dc_history_df = pd.DataFrame()
+
+        _cat_detail_key = f"cat_detail_loaded_{selected_cat_col}"
+        if st.button(
+            "Carregar historico de frequencia e distintos",
+            key=f"btn_cat_detail_{_fp}_{selected_cat_col}",
+            help="Executa 2 queries adicionais no Athena para obter distribuicao por periodo e contagem de distintos.",
+        ) or st.session_state.get(_cat_detail_key, False):
+            st.session_state[_cat_detail_key] = True
+            try:
+                cat_dist_df = fetch_categorical_distribution(config_dict, selected_cat_col)
+            except Exception as e:
+                st.warning(f"Erro na distribuicao: {e}")
+            try:
+                cat_dc_history_df = fetch_distinct_count_history(config_dict, selected_cat_col)
+            except Exception as e:
+                st.warning(f"Erro no historico de distintos: {e}")
 
         if cat_domain_df.empty:
             st.warning(f"Nenhum dado encontrado para `{selected_cat_col}`.")
