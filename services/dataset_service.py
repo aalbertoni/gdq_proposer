@@ -103,6 +103,9 @@ class DatasetService:
     def get_date_range(self, config: DatasetConfig) -> dict:
         """Retorna min/max da coluna temporal e contagem de períodos.
 
+        Para tabelas particionadas, usa partition_filter para evitar full scan.
+        O filtro de pruning usa a coluna bruta (sem CAST/DATE_PARSE).
+
         Args:
             config: Configuração da tabela alvo.
 
@@ -119,12 +122,23 @@ class DatasetService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
+        # Partition pruning para evitar full scan
+        partition_filter = ""
+        if config.partition_column:
+            partition_filter = self.builder.resolve_partition_filter(
+                partition_column=config.partition_column,
+                partition_format=config.partition_format,
+                lookback_value=config.lookback_value,
+                reference_date=config.reference_date or "",
+            )
+
         sql = self.builder.build_date_range(
             schema=config.schema,
             table=config.table,
             temporal_col=temporal_col,
             date_expression=config.date_expression,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
         df = self.client.execute_df(
             sql,

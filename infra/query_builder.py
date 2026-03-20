@@ -56,8 +56,12 @@ class QueryBuilder:
         temporal_col: str,
         date_expression: str = "",
         base_filter: str = "",
+        partition_filter: str = "",
     ) -> str:
-        """Query para min/max da coluna temporal e contagem de períodos."""
+        """Query para min/max da coluna temporal e contagem de períodos.
+
+        Aceita partition_filter para evitar full scan em tabelas particionadas.
+        """
         template = self.env.get_template("date_range.sql")
         return template.render(
             table_ref=adapt_function(
@@ -66,6 +70,7 @@ class QueryBuilder:
             temporal_col=temporal_col,
             date_expression=date_expression,
             base_filter=base_filter,
+            partition_filter=partition_filter,
         )
 
     def build_volume_by_period(
@@ -281,6 +286,9 @@ class QueryBuilder:
             col=col,
             date_expression=date_expression,
             date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
+            approx_distinct_expr=adapt_function(
+                "APPROX_DISTINCT", self.dialect, col=f'CAST("{col}" AS VARCHAR)',
+            ),
             base_filter=base_filter,
             partition_filter=partition_filter,
         )

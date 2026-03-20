@@ -861,6 +861,8 @@ if st.button("Executar Profiling", type="primary"):
     }
 
     _BATCH_THRESHOLD = 20
+    _MAX_PROFILING_SAMPLE = 30
+    _profiling_sample = min(lookback_value, _MAX_PROFILING_SAMPLE)
 
     if n_profiling <= _BATCH_THRESHOLD:
         # Batch: 1 query para todas as colunas
@@ -870,7 +872,7 @@ if st.button("Executar Profiling", type="primary"):
             profiles = _cached_batch_profile(
                 client_id, config_dict,
                 _col_names, _col_types,
-                lookback_value,
+                _profiling_sample,
             )
     else:
         # Per-column: progress bar individual (tabelas grandes)
@@ -884,7 +886,7 @@ if st.button("Executar Profiling", type="primary"):
             profile_list = _cached_profile_column(
                 client_id, config_dict,
                 col_info["name"], col_info["type"],
-                lookback_value,
+                _profiling_sample,
             )
             profiles.extend(profile_list)
         progress.empty()

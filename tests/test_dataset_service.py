@@ -55,6 +55,8 @@ def base_config():
         partition_column="dt_ref",
         partition_format="%Y-%m-%d",
         date_column="dt_ref",
+        reference_date="2026-01-30",
+        lookback_value=60,
     )
 
 
