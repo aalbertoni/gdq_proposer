@@ -73,6 +73,9 @@ class DatasetConfig:
 
     # === Partition pruning ===
     partition_format: Optional[str] = None
+    partition_is_integer: bool = False
+    # True quando a coluna de particao e armazenada como inteiro (bigint, int, etc.)
+    # Afeta o literal de pruning: 20260218 (sem aspas) vs '20260218' (com aspas).
     # Formato fisico da coluna de particao para pruning.
     # Ex: "%Y-%m-%d", "%Y%m%d", "%Y%m", "%Y.%m.%d"
     # None = tipo nativo (date/timestamp) — comparacao direta com DATE literal.
@@ -149,6 +152,7 @@ class DatasetConfig:
             self.partition_method.value,
             self.partition_column or "",
             self.partition_format or "",
+            str(self.partition_is_integer),
             self.date_column,
             self.temporal_axis_column or "",
             self.grain_type.value,

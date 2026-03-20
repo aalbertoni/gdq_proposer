@@ -37,17 +37,19 @@ def build_partition_predicate(
     partition_format: str | None,
     cutoff: date,
     dialect: SQLDialect = SQLDialect.ATHENA,
+    is_integer: bool = False,
 ) -> str:
     """Gera predicado SQL de pruning fisico sem funcao sobre a coluna.
 
     Args:
         partition_column: Nome da coluna de particao.
-        partition_format: strftime format da coluna string, ou None se tipo nativo.
+        partition_format: strftime format da coluna string/integer, ou None se tipo nativo.
         cutoff: Data de corte calculada.
         dialect: Dialeto SQL (Athena ou DuckDB).
+        is_integer: Se True, gera literal numerico sem aspas.
 
     Returns:
-        Predicado SQL como string. Ex: "dt_ref" >= '2026-02-18'
+        Predicado SQL como string. Ex: "dt_ref" >= '2026-02-18' ou "dt_ref" >= 20260218
     """
     col = f'"{partition_column}"'
 
@@ -57,6 +59,12 @@ def build_partition_predicate(
             return f"{col} >= TRY_CAST('{cutoff.isoformat()}' AS DATE)"
         return f"{col} >= DATE '{cutoff.isoformat()}'"
 
-    # String — formatar cutoff no layout fisico da particao
+    # Formatar cutoff no layout fisico da particao
     formatted = cutoff.strftime(partition_format)
+
+    if is_integer:
+        # Integer — literal numerico sem aspas
+        return f"{col} >= {formatted}"
+
+    # String — literal com aspas
     return f"{col} >= '{formatted}'"

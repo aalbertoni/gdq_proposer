@@ -132,6 +132,7 @@ class QueryBuilder:
         partition_format: str | None = None,
         lookback_value: int = 30,
         reference_date: str = "",
+        partition_is_integer: bool = False,
         # Deprecated — ignorado. Mantido para retrocompatibilidade de assinatura.
         date_expression: str | None = None,
     ) -> str:
@@ -149,6 +150,7 @@ class QueryBuilder:
         cutoff = compute_cutoff_date(reference_date or None, lookback_value)
         return build_partition_predicate(
             partition_column, partition_format, cutoff, self.dialect,
+            is_integer=partition_is_integer,
         )
 
     def build_column_sample(

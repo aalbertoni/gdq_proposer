@@ -65,6 +65,7 @@ class ProfilingService:
             partition_format=config.partition_format,
             lookback_value=config.lookback_value,
             reference_date=config.reference_date or "",
+            partition_is_integer=config.partition_is_integer,
         )
 
         # Tentativa batch: 1 query para todas as colunas

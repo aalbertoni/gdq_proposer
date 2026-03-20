@@ -32,6 +32,7 @@ class AnalysisService:
             partition_format=config.partition_format,
             lookback_value=config.lookback_value,
             reference_date=config.reference_date or "",
+            partition_is_integer=config.partition_is_integer,
         )
 
     def get_numeric_history(

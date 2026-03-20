@@ -108,6 +108,7 @@ def _build_config_from_dict(config_dict):
         partition_method=PartitionMethod(config_dict["partition_method"]),
         partition_column=config_dict.get("partition_column"),
         partition_format=config_dict.get("partition_format"),
+        partition_is_integer=config_dict.get("partition_is_integer", False),
         date_column=config_dict["date_column"],
         date_expression=config_dict.get("date_expression"),
         lookback_value=config_dict["lookback_value"],
@@ -684,6 +685,10 @@ dataset_config = DatasetConfig(
     partition_method=PartitionMethod(partition_method),
     partition_column=partition_col,
     partition_format=_partition_format if partition_col else None,
+    partition_is_integer=(
+        partition_col is not None
+        and _base_type(col_type_map.get(partition_col, "")) in _INTEGER_TYPES
+    ),
     date_column=date_col,
     grain_type=GrainType(grain_type),
     lookback_mode=LookbackMode(lookback_mode),
@@ -700,6 +705,7 @@ if st.button("Validar Eixo Temporal", type="primary"):
         "partition_method": dataset_config.partition_method.value,
         "partition_column": dataset_config.partition_column,
         "partition_format": dataset_config.partition_format,
+        "partition_is_integer": dataset_config.partition_is_integer,
         "date_column": dataset_config.date_column,
         "date_expression": dataset_config.date_expression,
         "lookback_value": dataset_config.lookback_value,
@@ -851,6 +857,7 @@ if st.button("Executar Profiling", type="primary"):
         "partition_method": dataset_config.partition_method.value,
         "partition_column": dataset_config.partition_column,
         "partition_format": dataset_config.partition_format,
+        "partition_is_integer": dataset_config.partition_is_integer,
         "date_column": dataset_config.date_column,
         "date_expression": dataset_config.date_expression,
         "lookback_value": dataset_config.lookback_value,

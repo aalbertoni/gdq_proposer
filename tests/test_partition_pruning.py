@@ -66,11 +66,37 @@ class TestBuildPartitionPredicate:
         assert "TRY_CAST" in result
         assert "2026-02-18" in result
 
+    def test_integer_yyyymmdd(self):
+        result = build_partition_predicate("dt_ref", "%Y%m%d", date(2026, 2, 18), is_integer=True)
+        assert result == "\"dt_ref\" >= 20260218"
+        assert "'" not in result  # sem aspas
+
+    def test_integer_yyyymm(self):
+        result = build_partition_predicate("dt_ref", "%Y%m", date(2026, 2, 18), is_integer=True)
+        assert result == "\"dt_ref\" >= 202602"
+        assert "'" not in result
+
+    def test_integer_literal_is_numeric(self):
+        result = build_partition_predicate("dt_ref", "%Y%m%d", date(2026, 2, 18), is_integer=True)
+        # Extrair o literal e verificar que e numerico
+        literal = result.split(">= ")[1]
+        assert literal.isdigit()
+
+    def test_string_has_quotes_integer_does_not(self):
+        """Mesmo formato, tipos diferentes geram literais diferentes."""
+        str_result = build_partition_predicate("dt_ref", "%Y%m%d", date(2026, 2, 18), is_integer=False)
+        int_result = build_partition_predicate("dt_ref", "%Y%m%d", date(2026, 2, 18), is_integer=True)
+        assert "'" in str_result
+        assert "'" not in int_result
+
     def test_no_function_on_column(self):
-        """Nenhum formato aplica funcao sobre a coluna."""
+        """Nenhum formato/tipo aplica funcao sobre a coluna."""
         for fmt in ["%Y-%m-%d", "%Y%m%d", "%Y%m", "%Y.%m.%d", None]:
-            result = build_partition_predicate("dt_ref", fmt, date(2026, 1, 1))
-            # Coluna deve aparecer como "dt_ref", nao CAST("dt_ref" ...) ou DATE_PARSE(...)
+            for is_int in [False, True]:
+                if fmt is None and is_int:
+                    continue  # tipo nativo nao e integer
+                result = build_partition_predicate("dt_ref", fmt, date(2026, 1, 1), is_integer=is_int)
+                # Coluna deve aparecer como "dt_ref", nao CAST("dt_ref" ...) ou DATE_PARSE(...)
             assert result.startswith('"dt_ref"')
 
 

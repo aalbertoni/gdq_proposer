@@ -176,6 +176,7 @@ class DatasetService:
             partition_format=config.partition_format,
             lookback_value=config.lookback_value,
             reference_date=config.reference_date or "",
+            partition_is_integer=config.partition_is_integer,
         )
 
         from infra.sql_dialect import adapt_function
@@ -238,6 +239,7 @@ class DatasetService:
             partition_format=config.partition_format,
             lookback_value=config.lookback_value,
             reference_date=config.reference_date or "",
+            partition_is_integer=config.partition_is_integer,
         )
 
         sql = self.builder.build_volume_by_period(
