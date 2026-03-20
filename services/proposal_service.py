@@ -114,8 +114,8 @@ class ProposalService:
 
     def set_grain_policy(self, policy) -> None:
         """Atualiza thresholds de recomendacao a partir da GrainPolicy."""
-        self._min_periods_dynamic = policy.min_periods_dynamic
-        self._min_periods_possible = policy.min_periods_possible
+        self._min_periods_dynamic = policy.min_valid_periods_dynamic
+        self._min_periods_possible = policy.min_valid_periods_possible
 
     def _apply_recommendations(
         self,

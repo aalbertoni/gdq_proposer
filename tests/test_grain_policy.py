@@ -116,3 +116,21 @@ class TestDatasetConfigGrainPolicy:
         cfg = DatasetConfig(schema="db", table="tb", grain_type=GrainType.MONTHLY)
         assert cfg.grain_policy.min_history == 3
         assert cfg.grain_policy.seasonality_enabled is False
+
+
+class TestSetGrainPolicyIntegration:
+    def test_set_grain_policy_monthly(self):
+        from services.proposal_service import ProposalService
+        svc = ProposalService()
+        policy = get_grain_policy(GrainType.MONTHLY)
+        svc.set_grain_policy(policy)
+        assert svc._min_periods_dynamic == 3
+        assert svc._min_periods_possible == 2
+
+    def test_set_grain_policy_daily(self):
+        from services.proposal_service import ProposalService
+        svc = ProposalService()
+        policy = get_grain_policy(GrainType.DAILY)
+        svc.set_grain_policy(policy)
+        assert svc._min_periods_dynamic == 10
+        assert svc._min_periods_possible == 5
