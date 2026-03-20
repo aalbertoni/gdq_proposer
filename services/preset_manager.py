@@ -6,10 +6,34 @@ Suporta salvar, carregar, clonar e comparar presets.
 """
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+
+_PRESET_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]{1,100}$")
+
+
+def validate_preset_name(name: str) -> str:
+    """Valida nome de preset contra path traversal e caracteres invalidos.
+
+    Args:
+        name: Nome do preset (sem extensao).
+
+    Returns:
+        O proprio nome, se valido.
+
+    Raises:
+        ValueError: Se nome invalido.
+    """
+    if not name or not _PRESET_NAME_PATTERN.match(name):
+        raise ValueError(
+            f"Nome de preset invalido: {name!r}. "
+            "Use apenas letras, numeros, underscores, hifens e pontos (max 100 chars)."
+        )
+    return name
 
 
 @dataclass
@@ -56,9 +80,17 @@ class PresetManager:
         """Lista nomes de presets disponiveis."""
         return sorted(p.stem for p in self.preset_dir.glob("*.json"))
 
+    def _safe_path(self, name: str) -> Path:
+        """Valida nome e retorna path seguro dentro do diretorio de presets."""
+        validate_preset_name(name)
+        path = (self.preset_dir / f"{name}.json").resolve()
+        if path.parent.resolve() != self.preset_dir.resolve():
+            raise ValueError(f"Nome de preset resolve fora do diretorio: {name!r}")
+        return path
+
     def load(self, name: str) -> Preset:
         """Carrega preset do disco."""
-        path = self.preset_dir / f"{name}.json"
+        path = self._safe_path(name)
         data = json.loads(path.read_text())
 
         meta_raw = data.pop("metadata", {})
@@ -77,7 +109,7 @@ class PresetManager:
         data = asdict(preset)
         data.pop("name")
 
-        path = self.preset_dir / f"{preset.name}.json"
+        path = self._safe_path(preset.name)
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
         return path
 
@@ -102,7 +134,7 @@ class PresetManager:
 
     def delete(self, name: str) -> bool:
         """Remove preset do disco."""
-        path = self.preset_dir / f"{name}.json"
+        path = self._safe_path(name)
         if path.exists():
             path.unlink()
             return True
