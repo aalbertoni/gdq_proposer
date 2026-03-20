@@ -64,6 +64,7 @@ class ProfilingService:
             partition_column=config.partition_column,
             date_expression=config.date_expression,
             lookback_value=config.lookback_value,
+            reference_date=config.reference_date or "",
         )
 
         # Tentativa batch: 1 query para todas as colunas
@@ -166,6 +167,7 @@ class ProfilingService:
                 sample_periods=sample_periods,
                 base_filter=base_filter,
                 partition_filter=partition_filter,
+                reference_date=config.reference_date or "",
             )
 
             df = self.client.execute_df(
@@ -390,6 +392,7 @@ class ProfilingService:
             sample_periods=sample_periods,
             base_filter=base_filter,
             partition_filter=partition_filter,
+            reference_date=config.reference_date or "",
         )
 
         df = self.client.execute_df(
@@ -477,6 +480,7 @@ class ProfilingService:
             sample_periods=sample_periods,
             base_filter=base_filter,
             partition_filter=partition_filter,
+            reference_date=config.reference_date or "",
         )
         return self.client.execute_df(
             sql,

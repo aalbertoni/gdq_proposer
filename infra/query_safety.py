@@ -77,6 +77,29 @@ def validate_lookback(value: int, mode: LookbackMode = LookbackMode.DAYS) -> int
     return value
 
 
+# Padrão estrito para datas YYYY-MM-DD
+_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def validate_reference_date(value: str) -> str:
+    """Valida que reference_date esta no formato YYYY-MM-DD.
+
+    Args:
+        value: Data como string.
+
+    Returns:
+        O proprio valor, se valido.
+
+    Raises:
+        ValueError: Se formato invalido.
+    """
+    if not _DATE_PATTERN.match(value):
+        raise ValueError(
+            f"reference_date deve ser YYYY-MM-DD, recebido: {value!r}"
+        )
+    return value
+
+
 def sanitize_expression(sql_expression: str) -> str:
     """Validação de expressões SQL como date_expression.
 

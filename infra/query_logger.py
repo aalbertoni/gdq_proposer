@@ -22,6 +22,7 @@ class QueryLogEntry:
     elapsed_ms: int
     cache_hit: bool
     rows_returned: int
+    sql: str = ""              # SQL executado (para debug)
     bytes_scanned: Optional[int] = None  # se disponível do Athena
     exception_type: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

@@ -31,6 +31,7 @@ class AnalysisService:
             partition_column=config.partition_column,
             date_expression=config.date_expression,
             lookback_value=config.lookback_value,
+            reference_date=config.reference_date or "",
         )
 
     def get_numeric_history(
@@ -74,6 +75,7 @@ class AnalysisService:
             lookback_value=config.lookback_value,
             base_filter=base_filter,
             partition_filter=partition_filter,
+            reference_date=config.reference_date or "",
         )
 
         df = self.client.execute_df(
@@ -127,6 +129,7 @@ class AnalysisService:
             lookback_value=config.lookback_value,
             base_filter=base_filter,
             partition_filter=partition_filter,
+            reference_date=config.reference_date or "",
         )
 
         df = self.client.execute_df(
@@ -183,6 +186,7 @@ class AnalysisService:
             lookback_value=config.lookback_value,
             base_filter=base_filter,
             partition_filter=partition_filter,
+            reference_date=config.reference_date or "",
         )
 
         df = self.client.execute_df(
@@ -255,6 +259,7 @@ class AnalysisService:
             lookback_value=config.lookback_value,
             base_filter=base_filter,
             partition_filter=partition_filter,
+            reference_date=config.reference_date or "",
         )
 
         df = self.client.execute_df(
@@ -325,6 +330,7 @@ class AnalysisService:
             lookback_value=config.lookback_value,
             base_filter=base_filter,
             partition_filter=partition_filter,
+            reference_date=config.reference_date or "",
         )
 
         df = self.client.execute_df(
@@ -389,6 +395,7 @@ class AnalysisService:
             base_filter=base_filter,
             partition_filter=partition_filter,
             limit=limit,
+            reference_date=config.reference_date or "",
         )
 
         df = self.client.execute_df(

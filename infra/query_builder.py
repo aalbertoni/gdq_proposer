@@ -7,7 +7,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from infra.query_safety import validate_identifier
+from infra.query_safety import validate_identifier, validate_reference_date
 from infra.sql_dialect import SQLDialect, adapt_function
 
 
@@ -24,6 +24,20 @@ class QueryBuilder:
             loader=FileSystemLoader(templates_dir),
             keep_trailing_newline=True,
         )
+
+    def date_lookback_expr(self, n: int, reference_date: str = "") -> str:
+        """Gera expressao de lookback temporal.
+
+        Se reference_date fornecido (YYYY-MM-DD), usa como ancora em vez
+        de CURRENT_DATE. Isso permite analisar tabelas com dados historicos.
+        """
+        if reference_date:
+            validate_reference_date(reference_date)
+            return adapt_function(
+                "DATE_SUBTRACT_DAYS_FROM", self.dialect,
+                n=n, reference_date=reference_date,
+            )
+        return adapt_function("DATE_SUBTRACT_DAYS", self.dialect, n=n)
 
     def build_metadata_discovery(self, schema: str, table: str) -> str:
         """Query para descobrir colunas e tipos de uma tabela."""
@@ -112,6 +126,7 @@ class QueryBuilder:
         partition_column: str | None,
         date_expression: str | None,
         lookback_value: int,
+        reference_date: str = "",
     ) -> str:
         """Gera filtro de partição adaptado ao dialeto para partition pruning.
 
@@ -123,9 +138,7 @@ class QueryBuilder:
         date_expr = self.resolve_date_expression(
             partition_column, date_expression or "",
         )
-        lookback = adapt_function(
-            "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
-        )
+        lookback = self.date_lookback_expr(lookback_value, reference_date)
         return f"{date_expr} >= {lookback}"
 
     def build_column_sample(
@@ -138,6 +151,7 @@ class QueryBuilder:
         sample_periods: int = 10,
         base_filter: str = "",
         partition_filter: str = "",
+        reference_date: str = "",
     ) -> str:
         """Query para profiling de uma coluna (contagens + cast numérico)."""
         template = self.env.get_template("column_sample.sql")
@@ -148,9 +162,7 @@ class QueryBuilder:
             col=col,
             temporal_col=temporal_col,
             date_expression=self.resolve_date_expression(temporal_col, date_expression),
-            date_lookback_expr=adapt_function(
-                "DATE_SUBTRACT_DAYS", self.dialect, n=sample_periods,
-            ),
+            date_lookback_expr=self.date_lookback_expr(sample_periods, reference_date),
             approx_distinct_expr=adapt_function(
                 "APPROX_DISTINCT", self.dialect, col=f'"{col}"',
             ),
@@ -169,6 +181,7 @@ class QueryBuilder:
         sample_periods: int = 10,
         base_filter: str = "",
         partition_filter: str = "",
+        reference_date: str = "",
     ) -> str:
         """Batch profiling de múltiplas colunas em uma única query.
 
@@ -202,9 +215,7 @@ class QueryBuilder:
             string_cols=str_col_data,
             numeric_cols=num_col_data,
             date_expression=self.resolve_date_expression(temporal_col, date_expression),
-            date_lookback_expr=adapt_function(
-                "DATE_SUBTRACT_DAYS", self.dialect, n=sample_periods,
-            ),
+            date_lookback_expr=self.date_lookback_expr(sample_periods, reference_date),
             partition_filter=partition_filter,
             base_filter=base_filter,
         )
@@ -217,6 +228,7 @@ class QueryBuilder:
         lookback_value: int,
         base_filter: str = "",
         partition_filter: str = "",
+        reference_date: str = "",
     ) -> str:
         """Query para row count por periodo (analise RowCount)."""
         template = self.env.get_template("row_count_history.sql")
@@ -225,9 +237,7 @@ class QueryBuilder:
                 "TABLE_REF", self.dialect, schema=schema, table=table,
             ),
             date_expression=date_expression,
-            date_lookback_expr=adapt_function(
-                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
-            ),
+            date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
         )
@@ -241,6 +251,7 @@ class QueryBuilder:
         lookback_value: int,
         base_filter: str = "",
         partition_filter: str = "",
+        reference_date: str = "",
     ) -> str:
         """Query para contagem de valores distintos por periodo.
 
@@ -252,6 +263,7 @@ class QueryBuilder:
             lookback_value: Dias de lookback.
             base_filter: Filtro SQL opcional.
             partition_filter: Filtro de particao para pruning.
+            reference_date: Data ancora (YYYY-MM-DD) em vez de CURRENT_DATE.
 
         Returns:
             SQL renderizado.
@@ -263,9 +275,7 @@ class QueryBuilder:
             ),
             col=col,
             date_expression=date_expression,
-            date_lookback_expr=adapt_function(
-                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
-            ),
+            date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
         )
@@ -279,6 +289,7 @@ class QueryBuilder:
         lookback_value: int,
         base_filter: str = "",
         partition_filter: str = "",
+        reference_date: str = "",
     ) -> str:
         """Query para distribuicao de valores categoricos por periodo."""
         template = self.env.get_template("categorical_distribution.sql")
@@ -288,9 +299,7 @@ class QueryBuilder:
             ),
             col=col,
             date_expression=date_expression,
-            date_lookback_expr=adapt_function(
-                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
-            ),
+            date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
         )
@@ -305,6 +314,7 @@ class QueryBuilder:
         base_filter: str = "",
         partition_filter: str = "",
         limit: int = 0,
+        reference_date: str = "",
     ) -> str:
         """Query para valores distintos e frequencia global."""
         template = self.env.get_template("categorical_domain.sql")
@@ -314,9 +324,7 @@ class QueryBuilder:
             ),
             col=col,
             date_expression=date_expression,
-            date_lookback_expr=adapt_function(
-                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
-            ),
+            date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
             limit=limit,
@@ -331,6 +339,7 @@ class QueryBuilder:
         lookback_value: int,
         base_filter: str = "",
         partition_filter: str = "",
+        reference_date: str = "",
     ) -> str:
         """Query para análise histórica de coluna numérica."""
         template = self.env.get_template("numeric_history.sql")
@@ -353,9 +362,7 @@ class QueryBuilder:
                 "STDDEV", self.dialect, expr="",
             ).split("(")[0],  # pega só o nome da função
             approx_percentile_expr=approx_expr,
-            date_lookback_expr=adapt_function(
-                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
-            ),
+            date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
         )
@@ -369,6 +376,7 @@ class QueryBuilder:
         lookback_value: int,
         base_filter: str = "",
         partition_filter: str = "",
+        reference_date: str = "",
     ) -> str:
         """Query para verificar unicidade e completude de colunas-chave por periodo.
 
@@ -383,6 +391,8 @@ class QueryBuilder:
             date_expression: Expressao SQL para eixo temporal.
             lookback_value: Dias de lookback.
             base_filter: Filtro SQL opcional.
+            partition_filter: Filtro de particao para pruning.
+            reference_date: Data ancora (YYYY-MM-DD) em vez de CURRENT_DATE.
 
         Returns:
             SQL renderizado.
@@ -412,9 +422,7 @@ class QueryBuilder:
             key_expr=key_expr,
             key_cols=key_columns,
             date_expression=date_expression,
-            date_lookback_expr=adapt_function(
-                "DATE_SUBTRACT_DAYS", self.dialect, n=lookback_value,
-            ),
+            date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
         )

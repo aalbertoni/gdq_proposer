@@ -132,6 +132,29 @@ class TestEffectivePartitionFilter:
         # Deve usar a expressão, não a coluna crua
         assert '"dt_ref" >=' not in f
 
+    def test_with_reference_date_uses_anchor(self):
+        cfg = DatasetConfig(
+            schema="db",
+            table="tb",
+            partition_column="dt_ref",
+            lookback_value=30,
+            reference_date="2024-12-31",
+        )
+        f = cfg.effective_partition_filter
+        assert f is not None
+        assert "2024-12-31" in f
+        assert "CURRENT_DATE" not in f
+
+    def test_without_reference_date_uses_current_date(self):
+        cfg = DatasetConfig(
+            schema="db",
+            table="tb",
+            partition_column="dt_ref",
+            lookback_value=30,
+        )
+        f = cfg.effective_partition_filter
+        assert "CURRENT_DATE" in f
+
 
 # ---------------------------------------------------------------------------
 # Defaults e campos básicos

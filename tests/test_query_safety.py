@@ -4,6 +4,7 @@ import pytest
 from infra.query_safety import (
     validate_identifier,
     validate_lookback,
+    validate_reference_date,
     sanitize_filter,
     LookbackMode,
     MAX_LOOKBACK_DAYS,
@@ -155,3 +156,35 @@ class TestSanitizeFilter:
     def test_keyword_as_substring_union_allowed(self):
         result = sanitize_filter("REUNION_TYPE = 'A'")
         assert result == "REUNION_TYPE = 'A'"
+
+
+# ---------------------------------------------------------------------------
+# validate_reference_date
+# ---------------------------------------------------------------------------
+
+class TestValidateReferenceDate:
+    def test_valid_date(self):
+        assert validate_reference_date("2024-12-31") == "2024-12-31"
+
+    def test_valid_date_start_of_year(self):
+        assert validate_reference_date("2025-01-01") == "2025-01-01"
+
+    def test_rejects_datetime(self):
+        with pytest.raises(ValueError):
+            validate_reference_date("2024-12-31 10:00:00")
+
+    def test_rejects_slash_format(self):
+        with pytest.raises(ValueError):
+            validate_reference_date("31/12/2024")
+
+    def test_rejects_sql_injection(self):
+        with pytest.raises(ValueError):
+            validate_reference_date("2024-01-01'); DROP TABLE x; --")
+
+    def test_rejects_empty(self):
+        with pytest.raises(ValueError):
+            validate_reference_date("")
+
+    def test_rejects_word(self):
+        with pytest.raises(ValueError):
+            validate_reference_date("today")

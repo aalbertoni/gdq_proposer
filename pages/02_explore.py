@@ -85,6 +85,7 @@ def _build_config_from_dict(config_dict):
         lookback_mode=LookbackMode(config_dict.get("lookback_mode", "last_n_periods")),
         base_filter_sql=config_dict.get("base_filter_sql"),
         unique_key_columns=config_dict.get("unique_key_columns", []),
+        reference_date=config_dict.get("reference_date"),
     )
 
 
@@ -937,6 +938,7 @@ config_dict = {
     "lookback_mode": dataset_config.lookback_mode.value,
     "base_filter_sql": dataset_config.base_filter_sql,
     "unique_key_columns": getattr(dataset_config, "unique_key_columns", []),
+    "reference_date": dataset_config.reference_date,
 }
 
 
@@ -1017,8 +1019,21 @@ with st.sidebar:
             )
 
         with st.expander("Log de queries"):
+            _entries = client.logger.entries
+            if _entries:
+                for _i, _e in enumerate(reversed(_entries[-20:])):
+                    _status = ":red[ERRO]" if _e.exception_type else ":green[OK]"
+                    _col_label = f".{_e.column}" if _e.column else ""
+                    st.caption(
+                        f"{_status} **{_e.query_name}** {_e.dataset}{_col_label} "
+                        f"— {_e.rows_returned} rows, {_e.elapsed_ms}ms"
+                    )
+                    if _e.sql:
+                        st.code(_e.sql, language="sql")
+            else:
+                st.caption("Nenhuma query executada ainda.")
             st.download_button(
-                label="Exportar log",
+                label="Exportar log completo (JSON)",
                 data=client.logger.export_json(),
                 file_name="gdq_query_log.json",
                 mime="application/json",
@@ -1108,10 +1123,129 @@ from core.rule_recommender import explain_column_exclusions
 
 _selected_profiles = [p for p in profiles if p.column_name in selected_set]
 _exclusions = explain_column_exclusions(_selected_profiles)
+
+# ---------------------------------------------------------------------------
+# Resumo executivo (acima das tabs)
+# ---------------------------------------------------------------------------
+
+from core.analysis_summary import build_analysis_summary
+from core.rule_recommender import CATEGORY_BADGES
+
+def _collect_all_proposals() -> list:
+    """Coleta todas as propostas cacheadas no session_state."""
+    from core.models.rule_proposal import RuleProposal
+    _PROPOSAL_PREFIXES = ("proposal_mean_", "proposal_stddev_", "proposal_comp_",
+                          "proposal_pct_", "proposal_rc_", "proposal_pk_",
+                          "cat_proposals_")
+    all_props = []
+    for key, val in st.session_state.items():
+        if not isinstance(key, str):
+            continue
+        if any(key.startswith(p) for p in _PROPOSAL_PREFIXES):
+            if isinstance(val, list) and val and isinstance(val[0], RuleProposal):
+                all_props.extend(val)
+    return all_props
+
+
+def _collect_series_profiles() -> dict:
+    """Coleta SeriesProfiles do session_state."""
+    return {
+        k: v for k, v in st.session_state.items()
+        if isinstance(k, str) and k.startswith("series_profile_")
+    }
+
+
+_all_proposals = _collect_all_proposals()
+_cart = st.session_state.get("rule_cart", [])
+_col_health = st.session_state.get("col_health", {})
+_series_profiles = _collect_series_profiles()
+
+_summary = build_analysis_summary(
+    profiles=_selected_profiles,
+    all_proposals=_all_proposals,
+    cart=_cart,
+    col_health=_col_health,
+    series_profiles=_series_profiles,
+    exclusions=_exclusions,
+)
+
+# --- Metricas-chave ---
+_m1, _m2, _m3, _m4 = st.columns(4)
+with _m1:
+    st.metric("Colunas analisadas", _summary.total_columns)
+with _m2:
+    st.metric("Com proposta", _summary.columns_with_proposals)
+with _m3:
+    st.metric("No carrinho", f"{_summary.columns_in_cart} col / {_summary.rules_in_cart} regras")
+with _m4:
+    if _summary.avg_coverage > 0:
+        st.metric("Cobertura media", f"{_summary.avg_coverage:.0f}%")
+    else:
+        st.metric("Cobertura media", "—")
+
+# --- Distribuicoes (expander compacto) ---
+_has_distributions = bool(_summary.by_semantic_type or _summary.by_proposal_category)
+if _has_distributions:
+    _dist_c1, _dist_c2 = st.columns(2)
+
+    # Tipos semanticos
+    _STYPE_LABELS = {
+        "numeric": "Numerica",
+        "categorical_low": "Cat. Baixa",
+        "categorical_mid": "Cat. Media",
+        "categorical_high": "Cat. Alta",
+        "datetime": "Data/Hora",
+        "identifier": "Identificador",
+        "unknown": "Desconhecido",
+        "free_text": "Texto Livre",
+    }
+    with _dist_c1:
+        _parts = [
+            f"{_STYPE_LABELS.get(k, k)} ({v})"
+            for k, v in sorted(_summary.by_semantic_type.items(), key=lambda x: -x[1])
+        ]
+        if _parts:
+            st.caption("**Tipos:** " + " · ".join(_parts))
+
+    # Categorias de proposta
+    _CAT_INLINE_BADGES = {
+        "strong": ":green[Forte]",
+        "conservative": ":blue[Conservadora]",
+        "experimental": ":orange[Experimental]",
+        "needs_review": ":orange[Revisar]",
+        "not_recommended": ":red[N/R]",
+    }
+    with _dist_c2:
+        _cat_parts = [
+            f"{_CAT_INLINE_BADGES.get(k, k)} ({v})"
+            for k, v in sorted(_summary.by_proposal_category.items(), key=lambda x: -x[1])
+            if v > 0
+        ]
+        if _cat_parts:
+            st.caption("**Propostas:** " + " · ".join(_cat_parts))
+
+# --- Alertas ---
+_alerts = []
+if _summary.experimental_in_cart > 0:
+    _alerts.append(f"{_summary.experimental_in_cart} regra(s) experimental(is) no carrinho")
+if _summary.low_coverage_rules > 0:
+    _alerts.append(f"{_summary.low_coverage_rules} proposta(s) com cobertura < 80%")
+for _regime, _cols in _summary.problematic_regimes.items():
+    _alerts.append(f"Regime **{_regime}**: {', '.join(_cols)}")
+if _summary.excluded_columns:
+    _n_exc = len(_summary.excluded_columns)
+    _alerts.append(f"{_n_exc} coluna(s) sem regras (ver detalhes abaixo)")
+
+if _alerts:
+    st.warning(" · ".join(_alerts))
+
+# --- Colunas excluidas (detalhes) ---
 if _exclusions:
     with st.expander(f"Colunas sem regras ({len(_exclusions)})", expanded=False):
         for exc in _exclusions:
             st.caption(f"**{exc.column_name}** ({exc.semantic_type.value}): {exc.reason}")
+
+st.divider()
 
 # ---------------------------------------------------------------------------
 # Tabs

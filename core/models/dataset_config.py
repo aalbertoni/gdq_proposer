@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Maximum lookback value allowed (in periods or days).
 # Higher values cause expensive Athena queries (full-table scans over long ranges).
-MAX_LOOKBACK_VALUE = 365
+MAX_LOOKBACK_VALUE = 730
 
 
 @dataclass
@@ -70,6 +70,12 @@ class DatasetConfig:
     # Ex.: "COD_SEGMENTO != 'TESTE'"
     # Muito usado em FULL_SNAPSHOT para filtrar registros relevantes.
 
+    # === Data ancora ===
+    reference_date: Optional[str] = None
+    # Data mais recente da tabela (YYYY-MM-DD), usada como ancora para lookback
+    # em vez de CURRENT_DATE. Preenchida automaticamente apos validar eixo temporal.
+    # Se None, usa CURRENT_DATE (comportamento padrao).
+
     # === Colunas selecionadas ===
     selected_columns: list[str] = field(default_factory=list)
     unique_key_columns: list[str] = field(default_factory=list)
@@ -121,15 +127,17 @@ class DatasetConfig:
 
         Se a tabela é particionada, gerar WHERE partition_col >= ...
         para que o Athena faça partition pruning (reduz custo).
+        Usa reference_date como ancora quando disponivel.
         """
         if not self.partition_column:
             return None
+        anchor = f"DATE '{self.reference_date}'" if self.reference_date else "CURRENT_DATE"
         if self.date_expression:
             return (
                 f"{self.date_expression} >= "
-                f"DATE_ADD('day', -{self.lookback_value}, CURRENT_DATE)"
+                f"DATE_ADD('day', -{self.lookback_value}, {anchor})"
             )
         return (
             f'"{self.partition_column}" >= '
-            f"CAST(DATE_ADD('day', -{self.lookback_value}, CURRENT_DATE) AS VARCHAR)"
+            f"CAST(DATE_ADD('day', -{self.lookback_value}, {anchor}) AS VARCHAR)"
         )

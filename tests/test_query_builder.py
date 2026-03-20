@@ -406,3 +406,85 @@ class TestTableRefDialect:
         sql = qb_duckdb.build_date_range(SCHEMA, TABLE, TEMPORAL, DATE_EXPR)
         assert f'"{TABLE}"' in sql
         assert f'"{SCHEMA}"' not in sql
+
+
+# ---------------------------------------------------------------------------
+# date_lookback_expr (reference_date support)
+# ---------------------------------------------------------------------------
+
+class TestDateLookbackExpr:
+    def test_athena_default_uses_current_date(self, qb_athena):
+        expr = qb_athena.date_lookback_expr(30)
+        assert "CURRENT_DATE" in expr
+        assert "30" in expr
+
+    def test_athena_with_reference_date(self, qb_athena):
+        expr = qb_athena.date_lookback_expr(30, reference_date="2024-12-31")
+        assert "2024-12-31" in expr
+        assert "CURRENT_DATE" not in expr
+        assert "30" in expr
+
+    def test_duckdb_default_uses_current_date(self, qb_duckdb):
+        expr = qb_duckdb.date_lookback_expr(30)
+        assert "CURRENT_DATE" in expr
+
+    def test_duckdb_with_reference_date(self, qb_duckdb):
+        expr = qb_duckdb.date_lookback_expr(30, reference_date="2024-12-31")
+        assert "2024-12-31" in expr
+        assert "CURRENT_DATE" not in expr
+
+    def test_empty_reference_date_uses_current(self, qb_athena):
+        expr = qb_athena.date_lookback_expr(30, reference_date="")
+        assert "CURRENT_DATE" in expr
+
+
+class TestReferenceDatePropagation:
+    """Verifica que reference_date propaga para as queries geradas."""
+
+    def test_column_sample_with_reference(self, qb_athena):
+        sql = qb_athena.build_column_sample(
+            SCHEMA, TABLE, COL, TEMPORAL, DATE_EXPR,
+            sample_periods=10, reference_date="2024-06-15",
+        )
+        assert "2024-06-15" in sql
+        assert "CURRENT_DATE" not in sql
+
+    def test_column_sample_without_reference(self, qb_athena):
+        sql = qb_athena.build_column_sample(
+            SCHEMA, TABLE, COL, TEMPORAL, DATE_EXPR, sample_periods=10,
+        )
+        assert "CURRENT_DATE" in sql
+
+    def test_numeric_history_with_reference(self, qb_duckdb):
+        sql = qb_duckdb.build_numeric_history(
+            SCHEMA, TABLE, COL, DATE_EXPR,
+            lookback_value=30, reference_date="2025-01-01",
+        )
+        assert "2025-01-01" in sql
+        assert "CURRENT_DATE" not in sql
+
+    def test_row_count_history_with_reference(self, qb_athena):
+        sql = qb_athena.build_row_count_history(
+            SCHEMA, TABLE, DATE_EXPR,
+            lookback_value=45, reference_date="2024-11-30",
+        )
+        assert "2024-11-30" in sql
+
+    def test_partition_filter_with_reference(self, qb_athena):
+        result = qb_athena.resolve_partition_filter(
+            "dt_ref", DATE_EXPR, 30, reference_date="2024-12-31",
+        )
+        assert "2024-12-31" in result
+        assert "CURRENT_DATE" not in result
+
+    def test_batch_column_sample_with_reference(self, qb_duckdb):
+        sql = qb_duckdb.build_batch_column_sample(
+            SCHEMA, TABLE,
+            string_cols=["COD_SITU"],
+            numeric_cols=["VLR_SALDO"],
+            temporal_col=TEMPORAL,
+            date_expression=DATE_EXPR,
+            sample_periods=10,
+            reference_date="2024-06-15",
+        )
+        assert "2024-06-15" in sql

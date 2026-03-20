@@ -161,6 +161,7 @@ class DatasetService:
             partition_column=config.partition_column,
             date_expression=config.date_expression,
             lookback_value=config.lookback_value,
+            reference_date=config.reference_date or "",
         )
 
         from infra.sql_dialect import adapt_function

@@ -32,6 +32,10 @@ DIALECT_FUNCTIONS: dict[str, dict[SQLDialect, str]] = {
         SQLDialect.ATHENA: "DATE_ADD('day', -{n}, CURRENT_DATE)",
         SQLDialect.DUCKDB: "CURRENT_DATE - INTERVAL '{n}' DAY",
     },
+    "DATE_SUBTRACT_DAYS_FROM": {
+        SQLDialect.ATHENA: "DATE_ADD('day', -{n}, DATE '{reference_date}')",
+        SQLDialect.DUCKDB: "DATE '{reference_date}' - INTERVAL '{n}' DAY",
+    },
     "TABLE_REF": {
         SQLDialect.ATHENA: '"{schema}"."{table}"',
         SQLDialect.DUCKDB: '"{table}"',

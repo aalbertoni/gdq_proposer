@@ -244,6 +244,7 @@ class AthenaClient:
                 elapsed_ms=elapsed,
                 cache_hit=cache_hit,
                 rows_returned=rows,
+                sql=sql,
                 bytes_scanned=bytes_scanned,
                 exception_type=exception_type,
             ))
@@ -359,6 +360,7 @@ class AthenaClient:
                 elapsed_ms=elapsed,
                 cache_hit=cache_hit,
                 rows_returned=rows,
+                sql=sql,
                 bytes_scanned=bytes_scanned,
                 exception_type=exception_type,
             ))

@@ -101,6 +101,7 @@ def _build_config_from_dict(config_dict):
         grain_type=GrainType(config_dict.get("grain_type", "daily")),
         lookback_mode=LookbackMode(config_dict.get("lookback_mode", "last_n_periods")),
         base_filter_sql=config_dict.get("base_filter_sql"),
+        reference_date=config_dict.get("reference_date"),
     )
 
 
@@ -166,12 +167,18 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
         unique_key_columns=data.get("unique_key_columns", []),
     )
 
+    # Preencher reference_date a partir do date_range do preset
+    _preset_date_range = data.get("date_range", {})
+    _preset_max = _preset_date_range.get("max_date")
+    if _preset_max:
+        config.reference_date = str(_preset_max)[:10]
+
     st.session_state["setup_validated"] = True
     st.session_state["setup_schema"] = schema
     st.session_state["setup_table"] = table
     st.session_state["setup_columns"] = columns
     st.session_state["setup_config"] = config
-    st.session_state["setup_date_range"] = data.get("date_range", {})
+    st.session_state["setup_date_range"] = _preset_date_range
     st.session_state["setup_pk_columns"] = data.get("unique_key_columns", [])
 
     return True
@@ -456,12 +463,13 @@ with col_t2:
 lookback_value = st.slider(
     "Valor de lookback:",
     min_value=5,
-    max_value=365,
+    max_value=730,
     value=30,
     help=(
-        "Quantidade de periodos recentes a considerar. "
+        "Quantidade de periodos recentes a considerar (relativo a hoje). "
         "Valores entre 20 e 60 costumam funcionar bem. "
-        "Mais periodos = amostra maior, porem pode incluir dados desatualizados."
+        "Se os dados da tabela sao historicos (nao recentes), aumente o valor "
+        "para cobrir o range temporal real dos dados."
     ),
 )
 
@@ -621,6 +629,7 @@ if st.button("Validar Eixo Temporal", type="primary"):
         "grain_type": dataset_config.grain_type.value,
         "lookback_mode": dataset_config.lookback_mode.value,
         "base_filter_sql": dataset_config.base_filter_sql,
+        "reference_date": dataset_config.reference_date,
     }
     try:
         date_range = _cached_get_date_range(client_id, config_dict)
@@ -633,6 +642,12 @@ if st.button("Validar Eixo Temporal", type="primary"):
     if date_range["n_periods"] == 0:
         st.warning("Nenhum periodo encontrado. Verifique a coluna temporal e o filtro base.")
     else:
+        # Preencher reference_date com max_date da tabela
+        _max = date_range.get("max_date")
+        if _max:
+            dataset_config.reference_date = str(_max)[:10]
+            st.session_state["setup_config"] = dataset_config
+
         # Estimar volume e adaptar timeout para tabelas grandes
         svc = st.session_state["dataset_service"]
         estimated_rows = svc.estimate_volume_and_adapt_timeout(dataset_config)
@@ -658,6 +673,26 @@ st.success(
     f"Range: **{date_range['min_date']}** a **{date_range['max_date']}** "
     f"— **{date_range['n_periods']}** periodos distintos"
 )
+
+# --- Alerta de dados desatualizados ---
+_max_date_str = date_range.get("max_date")
+if _max_date_str:
+    from datetime import date as _date_type, datetime as _datetime_type
+    try:
+        _max_date = _datetime_type.strptime(str(_max_date_str)[:10], "%Y-%m-%d").date()
+        _days_ago = (_date_type.today() - _max_date).days
+        if _days_ago > 7:
+            st.info(
+                f"A safra mais recente e de **{_max_date_str}** ({_days_ago} dias atras). "
+                f"As queries usarao essa data como referencia para o lookback."
+            )
+        if _days_ago > 30:
+            st.warning(
+                f"A tabela nao recebe dados novos ha **{_days_ago} dias**. "
+                f"Verifique se o pipeline de carga esta ativo."
+            )
+    except (ValueError, TypeError):
+        pass  # max_date em formato nao-parseable, prosseguir normalmente
 
 
 # ===================================================================
@@ -736,6 +771,7 @@ if st.button("Executar Profiling", type="primary"):
         "grain_type": dataset_config.grain_type.value,
         "lookback_mode": dataset_config.lookback_mode.value,
         "base_filter_sql": dataset_config.base_filter_sql,
+        "reference_date": dataset_config.reference_date,
     }
     profiles = []
     progress = st.progress(0, text="Classificando colunas...")
@@ -1026,3 +1062,19 @@ if "dataset_config" in st.session_state:
     )
 else:
     st.sidebar.info("Nenhuma config ativa.")
+
+# Query log no sidebar (se client disponivel)
+if "client" in st.session_state:
+    _client = st.session_state["client"]
+    _entries = _client.logger.entries
+    if _entries:
+        with st.sidebar.expander(f"Queries executadas ({len(_entries)})"):
+            for _e in reversed(_entries[-10:]):
+                _status = ":red[ERRO]" if _e.exception_type else ":green[OK]"
+                _col_label = f".{_e.column}" if _e.column else ""
+                st.caption(
+                    f"{_status} **{_e.query_name}**{_col_label} "
+                    f"— {_e.rows_returned} rows, {_e.elapsed_ms}ms"
+                )
+                if _e.sql:
+                    st.code(_e.sql, language="sql")
