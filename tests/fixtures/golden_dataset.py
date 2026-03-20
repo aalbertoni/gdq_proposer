@@ -22,7 +22,7 @@ Cenarios cobertos:
 """
 
 from dataclasses import dataclass, field
-from core.models.enums import SemanticType, RuleType, SeriesRegime, ConfidenceLevel
+from core.models.enums import SemanticType, RuleType, SeriesRegime, ConfidenceLevel, RecommendationTier
 
 
 @dataclass(frozen=True)

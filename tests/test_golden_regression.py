@@ -20,6 +20,7 @@ import pytest
 from core.column_classifier import classify_column, suggest_reclassification
 from core.models.enums import (
     ConfidenceLevel,
+    RecommendationTier,
     RuleType,
     SemanticType,
     SeriesRegime,
@@ -363,3 +364,65 @@ class TestGoldenProposalQuality:
         assert len(mean_p.history_dates) > 0
         assert len(mean_p.history_values) > 0
         assert len(mean_p.history_dates) == len(mean_p.history_values)
+
+
+# ===========================================================================
+# DIMENSAO 5: Recommendation tier
+# ===========================================================================
+
+class TestGoldenRecommendationTier:
+    """Valida que tiers de recomendacao sao atribuidos corretamente."""
+
+    def test_stable_mean_recommended(self):
+        """Mean em serie estavel = RECOMMENDED."""
+        s = make_stable_series(n=45)
+        history = _make_numeric_history(s)
+        svc = ProposalService()
+        proposals = svc.propose_numeric_rules(
+            history, "VLR_SALDO", "tb_test", _baseline(),
+        )
+        mean_p = next(p for p in proposals if p.rule_type == RuleType.MEAN_DUAL_GUARD)
+        assert mean_p.recommendation_tier == RecommendationTier.RECOMMENDED
+
+    def test_stable_completeness_trivial(self):
+        """Completeness 1.0 com 100% coverage em serie estavel = NOT_RECOMMENDED (trivial)."""
+        s = make_stable_series(n=45)
+        history = _make_numeric_history(s)
+        svc = ProposalService()
+        proposals = svc.propose_numeric_rules(
+            history, "VLR_SALDO", "tb_test", _baseline(),
+        )
+        comp_p = next(p for p in proposals if p.rule_type == RuleType.COMPLETENESS)
+        # Completeness com threshold 1.0 e 100% coverage = trivial
+        if comp_p.backtest and comp_p.backtest.coverage_pct >= 100.0:
+            assert comp_p.recommendation_tier == RecommendationTier.NOT_RECOMMENDED
+            assert any("trivial" in r.lower() for r in comp_p.recommendation_reasons)
+
+    def test_all_proposals_have_tier(self):
+        """Todas as propostas devem ter tier atribuido."""
+        s = make_stable_series(n=45)
+        history = _make_numeric_history(s)
+        svc = ProposalService()
+        proposals = svc.propose_numeric_rules(
+            history, "VLR_SALDO", "tb_test", _baseline(),
+        )
+        for p in proposals:
+            assert hasattr(p, "recommendation_tier")
+            assert isinstance(p.recommendation_tier, RecommendationTier)
+            assert isinstance(p.recommendation_reasons, list)
+
+    def test_volatile_mean_not_recommended_highest(self):
+        """Mean em serie volatil nao deve ser RECOMMENDED."""
+        s = _make_volatile_series()
+        history = _make_numeric_history(s)
+        svc = ProposalService()
+        proposals = svc.propose_numeric_rules(
+            history, "VLR_VOLATIL", "tb_test", _baseline(),
+        )
+        mean_p = next(
+            (p for p in proposals if p.rule_type == RuleType.MEAN_DUAL_GUARD),
+            None,
+        )
+        if mean_p:
+            # Volatil pode ser POSSIBLE ou NOT_RECOMMENDED, nunca RECOMMENDED
+            assert mean_p.recommendation_tier != RecommendationTier.RECOMMENDED

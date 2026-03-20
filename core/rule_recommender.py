@@ -1,0 +1,237 @@
+"""Motor de recomendacao de regras.
+
+Decide se uma regra proposta merece ser RECOMMENDED, POSSIBLE ou NOT_RECOMMENDED
+com base no score, backtest, regime estatistico e contexto da coluna.
+
+Principio: nenhuma regra e descartada — o tier apenas orienta a apresentacao.
+O usuario sempre pode sobrescrever a recomendacao.
+"""
+
+from core.models.enums import (
+    RecommendationTier,
+    RuleType,
+    SeriesRegime,
+)
+from core.models.rule_proposal import RuleProposal
+from core.models.series_profile import SeriesProfile
+
+
+# ---------------------------------------------------------------------------
+# Thresholds
+# ---------------------------------------------------------------------------
+
+# Score minimo para RECOMMENDED
+SCORE_RECOMMENDED = 0.70
+# Score minimo para POSSIBLE
+SCORE_POSSIBLE = 0.45
+# Coverage minima para RECOMMENDED
+COVERAGE_RECOMMENDED = 80.0
+# Coverage minima para POSSIBLE
+COVERAGE_POSSIBLE = 50.0
+# FP maximo para RECOMMENDED
+FP_MAX_RECOMMENDED = 2
+# FP maximo para POSSIBLE
+FP_MAX_POSSIBLE = 5
+# Historico minimo para regras dinamicas
+MIN_VALID_PERIODS_DYNAMIC = 10
+
+# Tipos de regra dinamica (usam avg(last(N))/std(last(N)))
+_DYNAMIC_RULE_TYPES = {
+    RuleType.MEAN_DUAL_GUARD,
+    RuleType.STDDEV_DUAL_GUARD,
+    RuleType.ROW_COUNT_DUAL_GUARD,
+    RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+    RuleType.CATEGORY_FREQUENCY_HYBRID,
+    RuleType.NUMERIC_PERCENTILE_BAND,
+}
+
+# Regimes que tornam Mean/StdDev nao recomendados
+_HOSTILE_REGIMES_FOR_MEAN = {
+    SeriesRegime.STRUCTURAL_BREAK,
+}
+
+# Regimes que rebaixam Mean/StdDev para POSSIBLE
+_CAUTIOUS_REGIMES_FOR_MEAN = {
+    SeriesRegime.SPARSE,
+    SeriesRegime.ZERO_INFLATED,
+    SeriesRegime.VOLATILE,
+}
+
+
+# ---------------------------------------------------------------------------
+# API publica
+# ---------------------------------------------------------------------------
+
+def recommend_tier(
+    proposal: RuleProposal,
+    profile: SeriesProfile | None = None,
+) -> tuple[RecommendationTier, list[str]]:
+    """Decide tier de recomendacao + justificativas textuais.
+
+    Args:
+        proposal: Proposta com backtest e score ja calculados.
+        profile: Perfil de regime da serie (opcional).
+
+    Returns:
+        Tupla (tier, reasons) onde reasons e lista de strings explicativas.
+    """
+    reasons: list[str] = []
+
+    # --- Regras de contexto (override por regime) ---
+    context_tier = _check_context_rules(proposal, profile, reasons)
+    if context_tier == RecommendationTier.NOT_RECOMMENDED:
+        return context_tier, reasons
+
+    # --- Sem backtest → nao pode ser RECOMMENDED ---
+    bt = proposal.backtest
+    if bt is None:
+        reasons.append("Sem backtest disponivel")
+        return RecommendationTier.NOT_RECOMMENDED, reasons
+
+    # --- Historico insuficiente para regras dinamicas ---
+    if proposal.rule_type in _DYNAMIC_RULE_TYPES:
+        n_periods = bt.total_periods
+        if n_periods < MIN_VALID_PERIODS_DYNAMIC:
+            reasons.append(
+                f"Historico insuficiente para regra dinamica "
+                f"({n_periods} periodos, minimo {MIN_VALID_PERIODS_DYNAMIC})"
+            )
+            return RecommendationTier.NOT_RECOMMENDED, reasons
+
+    # --- Metricas do backtest ---
+    coverage = bt.coverage_pct
+    fp_count = bt.false_positive_proxy
+    score = proposal.confidence.value  # fallback
+
+    # Calcular score efetivo a partir do backtest
+    score_total = _estimate_score(bt, proposal.rule_type)
+
+    # --- NOT_RECOMMENDED: falhas graves ---
+    if coverage < COVERAGE_POSSIBLE:
+        reasons.append(f"Cobertura insuficiente ({coverage:.0f}%, minimo {COVERAGE_POSSIBLE:.0f}%)")
+        return RecommendationTier.NOT_RECOMMENDED, reasons
+
+    if fp_count > FP_MAX_POSSIBLE:
+        reasons.append(f"Alto risco de falso positivo ({fp_count} FPs, maximo {FP_MAX_POSSIBLE})")
+        return RecommendationTier.NOT_RECOMMENDED, reasons
+
+    if score_total < SCORE_POSSIBLE:
+        reasons.append(f"Score muito baixo ({score_total:.2f}, minimo {SCORE_POSSIBLE:.2f})")
+        return RecommendationTier.NOT_RECOMMENDED, reasons
+
+    # --- POSSIBLE: limites intermediarios ---
+    is_possible = False
+
+    if coverage < COVERAGE_RECOMMENDED:
+        reasons.append(f"Cobertura moderada ({coverage:.0f}%)")
+        is_possible = True
+
+    if fp_count > FP_MAX_RECOMMENDED:
+        reasons.append(f"Risco moderado de falso positivo ({fp_count} FPs)")
+        is_possible = True
+
+    if score_total < SCORE_RECOMMENDED:
+        reasons.append(f"Score moderado ({score_total:.2f})")
+        is_possible = True
+
+    # Context rules podem rebaixar para POSSIBLE
+    if context_tier == RecommendationTier.POSSIBLE:
+        is_possible = True
+
+    if is_possible:
+        return RecommendationTier.POSSIBLE, reasons
+
+    # --- RECOMMENDED ---
+    return RecommendationTier.RECOMMENDED, reasons
+
+
+# ---------------------------------------------------------------------------
+# Regras de contexto (regime × rule_type)
+# ---------------------------------------------------------------------------
+
+def _check_context_rules(
+    proposal: RuleProposal,
+    profile: SeriesProfile | None,
+    reasons: list[str],
+) -> RecommendationTier | None:
+    """Aplica regras de contexto baseadas em regime e tipo de regra.
+
+    Returns:
+        NOT_RECOMMENDED ou POSSIBLE se regra de contexto dispara, None se nao.
+    """
+    # Completeness trivial (null_ratio = 0, threshold = 1.0)
+    if proposal.rule_type == RuleType.COMPLETENESS:
+        threshold = proposal.suggested_lower or 1.0
+        if threshold >= 1.0 and _completeness_is_trivial(proposal):
+            reasons.append("Completeness trivial: coluna sem nulos no historico")
+            return RecommendationTier.NOT_RECOMMENDED
+
+    if profile is None:
+        return None
+
+    rule_type = proposal.rule_type
+    regime = profile.regime
+
+    # Mean/StdDev em regime hostil
+    if rule_type in (RuleType.MEAN_DUAL_GUARD, RuleType.STDDEV_DUAL_GUARD):
+        if regime in _HOSTILE_REGIMES_FOR_MEAN:
+            reasons.append(
+                f"Regime {regime.value}: baseline desalinhado para {_rule_label(rule_type)}"
+            )
+            return RecommendationTier.NOT_RECOMMENDED
+
+        if regime in _CAUTIOUS_REGIMES_FOR_MEAN:
+            reasons.append(
+                f"Regime {regime.value}: cautela com {_rule_label(rule_type)}"
+            )
+            return RecommendationTier.POSSIBLE
+
+        # Secondary regimes also checked
+        for sec in profile.secondary_regimes:
+            if sec in _HOSTILE_REGIMES_FOR_MEAN:
+                reasons.append(
+                    f"Regime secundario {sec.value}: risco para {_rule_label(rule_type)}"
+                )
+                return RecommendationTier.POSSIBLE
+
+    return None
+
+
+def _completeness_is_trivial(proposal: RuleProposal) -> bool:
+    """Verifica se Completeness e trivial: historico com 100% coverage."""
+    bt = proposal.backtest
+    if bt is None:
+        return False
+    return bt.coverage_pct >= 100.0 and bt.false_positive_proxy == 0
+
+
+def _estimate_score(bt, rule_type: RuleType) -> float:
+    """Estima score composto a partir do backtest (sem profile)."""
+    from core.rule_scoring import (
+        WEIGHT_COVERAGE, WEIGHT_STABILITY,
+        WEIGHT_INTERPRETABILITY, WEIGHT_COST_EFFICIENCY,
+        _INTERPRETABILITY, _COST_EFFICIENCY,
+    )
+    coverage = bt.coverage_pct / 100.0
+    stability = bt.stability_score
+    interpretability = _INTERPRETABILITY.get(rule_type, 0.5)
+    cost_efficiency = _COST_EFFICIENCY.get(rule_type, 0.5)
+    # regime_fit and robustness default to 1.0 without profile
+    regime_fit = 1.0
+    robustness = 1.0
+
+    score = (
+        WEIGHT_COVERAGE * coverage
+        + WEIGHT_STABILITY * stability
+        + WEIGHT_INTERPRETABILITY * interpretability
+        + WEIGHT_COST_EFFICIENCY * cost_efficiency
+        + 0.15 * regime_fit
+        + 0.15 * robustness
+    )
+    return max(0.0, min(1.0, score))
+
+
+def _rule_label(rule_type: RuleType) -> str:
+    """Label curto para mensagens."""
+    from core.models.enums import get_rule_label
+    return get_rule_label(rule_type)

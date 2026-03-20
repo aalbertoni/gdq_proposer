@@ -125,6 +125,14 @@ class SeriesRegime(str, Enum):
     SPARSE = "sparse"                        # >= 30% dos valores sao nulos
 
 
+class RecommendationTier(str, Enum):
+    """Tier de recomendacao da regra proposta."""
+
+    RECOMMENDED = "recommended"          # propor ao usuario por padrao
+    POSSIBLE = "possible"                # mostrar colapsado, usuario decide
+    NOT_RECOMMENDED = "not_recommended"  # gerar mas esconder por padrao
+
+
 class GDQCapabilityStatus(str, Enum):
     """Status de suporte de uma feature no GDQ runtime real."""
 

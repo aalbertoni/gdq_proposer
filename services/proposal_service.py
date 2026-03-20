@@ -38,6 +38,7 @@ from core.models.enums import (
 from core.models.column_profile import ColumnProfile
 from core.models.rule_proposal import RuleProposal
 from core.models.rule_selection import UserOverride
+from core.rule_recommender import recommend_tier
 from core.rule_scoring import score_proposal
 from core.statistical_engine import (
     compute_dynamic_band,
@@ -101,6 +102,18 @@ class ProposalService:
 
     def __init__(self):
         self.generator = GDQRuleGenerator()
+
+    @staticmethod
+    def _apply_recommendations(
+        proposals: list[RuleProposal],
+        profile: "SeriesProfile | None" = None,
+    ) -> list[RuleProposal]:
+        """Aplica recommend_tier a todas as propostas."""
+        for p in proposals:
+            tier, reasons = recommend_tier(p, profile)
+            p.recommendation_tier = tier
+            p.recommendation_reasons = reasons
+        return proposals
 
     def propose_numeric_rules(
         self,
@@ -167,7 +180,7 @@ class ProposalService:
         if completeness_proposal:
             proposals.append(completeness_proposal)
 
-        return proposals
+        return self._apply_recommendations(proposals)
 
     def propose_table_rules(
         self,
@@ -191,7 +204,7 @@ class ProposalService:
         if proposal is None:
             return []
 
-        return [proposal]
+        return self._apply_recommendations([proposal])
 
     def propose_categorical_rules(
         self,
@@ -372,7 +385,7 @@ class ProposalService:
             comp_proposal.gdq_syntax_preview = self.generator.generate(comp_proposal)
             proposals.append(comp_proposal)
 
-        return proposals
+        return self._apply_recommendations(proposals)
 
     def propose_percentile_rules(
         self,
@@ -428,7 +441,7 @@ class ProposalService:
             if proposal:
                 proposals.append(proposal)
 
-        return proposals
+        return self._apply_recommendations(proposals)
 
     def _build_percentile_proposal(
         self,
@@ -671,7 +684,7 @@ class ProposalService:
             ]
             proposals.append(warn_proposal)
 
-        return proposals
+        return self._apply_recommendations(proposals)
 
     def _build_period_values_map(
         self,

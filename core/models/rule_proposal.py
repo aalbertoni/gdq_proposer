@@ -7,7 +7,7 @@ Definido conforme docs/technical_spec_v1.md secao 3.5.
 from dataclasses import dataclass, field
 from typing import Optional
 
-from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType
+from core.models.enums import BaselineMethod, ConfidenceLevel, RecommendationTier, RuleType
 
 
 @dataclass
@@ -57,6 +57,10 @@ class RuleProposal:
     backtest: Optional[BacktestSummary] = None
     confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
     warnings: list[str] = field(default_factory=list)
+
+    # Recomendacao
+    recommendation_tier: RecommendationTier = RecommendationTier.RECOMMENDED
+    recommendation_reasons: list[str] = field(default_factory=list)
 
     # Sintaxe
     gdq_syntax_preview: str = ""
