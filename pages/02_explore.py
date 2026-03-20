@@ -962,6 +962,28 @@ with st.sidebar:
 
     st.caption(f"Lookback: {dataset_config.lookback_value} periodos")
 
+    # --- Navegacao rapida entre colunas ---
+    _col_health = st.session_state.get("col_health", {})
+    _cart_cols = {
+        sel.proposal.target_column
+        for sel in st.session_state.get("rule_cart", [])
+        if sel.proposal.target_column
+    }
+    _all_cols = [p.column_name for p in numeric_profiles] + [p.column_name for p in cat_profiles]
+    if _all_cols:
+        st.divider()
+        st.caption("**Colunas**")
+        for _cn in _all_cols:
+            _has_health = _cn in _col_health
+            _in_cart = _cn in _cart_cols
+            if _in_cart:
+                _icon = ":green[●]"
+            elif _has_health:
+                _icon = ":blue[○]"
+            else:
+                _icon = "·"
+            st.caption(f"{_icon} `{_cn}`")
+
     st.divider()
 
     cart_count = len(st.session_state["rule_cart"])
