@@ -88,9 +88,23 @@ def classify_column(
         return SemanticType.DATETIME
 
     # Camada 2: heurística de conteúdo (strings)
+    # String é tratada como numérica apenas se:
+    #   1. >= 95% dos valores são castáveis para DOUBLE
+    #   2. Cardinalidade não é muito alta (senão é identificador: CPF, CNPJ, contrato)
+    #   3. Cardinalidade não é muito baixa (senão é código/flag categórico)
     if non_null_count > 0 and numeric_cast_count > 0:
         numeric_cast_ratio = numeric_cast_count / non_null_count
+        distinct_ratio_check = distinct_count / non_null_count if non_null_count > 0 else 0.0
         if numeric_cast_ratio >= NUMERIC_CAST_THRESHOLD:
+            # Alta cardinalidade + castável → provavelmente identificador (CPF, contrato)
+            if (
+                distinct_count >= NUMERIC_HIGH_CARD_MIN_DISTINCT
+                and distinct_ratio_check >= NUMERIC_HIGH_CARD_MIN_RATIO
+            ):
+                return SemanticType.IDENTIFIER
+            # Baixa cardinalidade + castável → código numérico categórico (ex: COD_SITU)
+            if distinct_count <= NUMERIC_LOW_CARD_MAX_DISTINCT:
+                return SemanticType.CATEGORICAL_LOW_CARDINALITY
             return SemanticType.NUMERIC
 
     # Camada 3: cardinalidade
