@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: Testes unitarios de logica pura (sem I/O, sem DuckDB)",
+    "integration: Testes de integracao com DuckDB (substitui Athena)",
+    "athena: Testes que requerem Athena real (skip sem AWS_PROFILE)",
+    "slow: Testes lentos (> 5s)",
+]
+addopts = "-v --tb=short"

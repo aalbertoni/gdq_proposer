@@ -2,15 +2,35 @@
 
 Provides DuckDB-backed test client that mimics AthenaClient interface,
 used by service tests that need a SQL backend without real Athena.
+
+Also provides shared QueryBuilder fixtures for both dialects.
 """
 
 import os
 
 import duckdb
 import pandas as pd
+import pytest
 
+from infra.query_builder import QueryBuilder
 from infra.query_logger import QueryLogger
 from infra.sql_dialect import SQLDialect
+
+
+# ---------------------------------------------------------------------------
+# QueryBuilder fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def qb_athena() -> QueryBuilder:
+    """QueryBuilder configurado para dialeto Athena."""
+    return QueryBuilder(dialect=SQLDialect.ATHENA)
+
+
+@pytest.fixture
+def qb_duckdb() -> QueryBuilder:
+    """QueryBuilder configurado para dialeto DuckDB."""
+    return QueryBuilder(dialect=SQLDialect.DUCKDB)
 
 
 class DuckDBTestClient:
