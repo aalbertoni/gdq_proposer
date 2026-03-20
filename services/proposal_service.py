@@ -246,6 +246,7 @@ class ProposalService:
                 rule_type=RuleType.ALLOWED_VALUES,
                 metric_name="allowed_values",
                 suggested_values=domain_values,
+                target_column_type=profile.athena_type,
             )
             # Backtest: check if all observed values per period are in allowed set
             if distinct_count_history is not None and not distribution.empty:
@@ -338,6 +339,7 @@ class ProposalService:
                     freq_mode=effective_mode,
                     floor_pct=floor_pct,
                     ceiling_pct=ceiling_pct,
+                    athena_type=profile.athena_type,
                 )
                 if freq_proposal:
                     proposals.append(freq_proposal)
@@ -702,6 +704,7 @@ class ProposalService:
         freq_mode: str = "static",
         floor_pct: float | None = None,
         ceiling_pct: float | None = None,
+        athena_type: str = "string",
     ) -> RuleProposal | None:
         """Constroi proposta de frequencia para um valor categorico."""
         mask = distribution["category_value"] == cat_value
@@ -741,6 +744,7 @@ class ProposalService:
             rule_type=rule_type,
             metric_name=f"cat_freq_{cat_value}",
             category_value=cat_value,
+            target_column_type=athena_type,
             suggested_lower=round(band["lower"], 2),
             suggested_upper=round(band["upper"], 2),
             baseline_method=baseline.method,

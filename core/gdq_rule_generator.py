@@ -167,21 +167,34 @@ class GDQRuleGenerator:
                 lower = overrides.custom_lower
             if overrides.custom_upper is not None:
                 upper = overrides.custom_upper
-        sql_inner = self._build_custom_sql_expression(col, value)
+        athena_type = proposal.target_column_type or "string"
+        sql_inner = self._build_custom_sql_expression(col, value, athena_type)
         return f'CustomSql "{sql_inner}" between {lower:.2f} and {upper:.2f}'
 
-    def _build_custom_sql_expression(self, col: str, value: str) -> str:
+    def _build_custom_sql_expression(
+        self, col: str, value: str, athena_type: str = "string",
+    ) -> str:
         """Constrói a expressão SQL interna do CustomSql frequency.
 
         Nomes de coluna em MAIUSCULO sem aspas (convencao GDQ).
-        Single quotes in category values are escaped ('' in SQL).
+        Valores: numerico sem aspas, string com aspas simples.
         """
-        safe_value = value.replace("'", "''")
         col_upper = col.upper()
+        value_literal = self._format_sql_value(value, athena_type)
         return (
-            f"select cast(sum(case when {col_upper} = '{safe_value}' "
+            f"select cast(sum(case when {col_upper} = {value_literal} "
             f"then 1 else 0 end) as double) * 100.0 / count(*) from primary"
         )
+
+    @staticmethod
+    def _format_sql_value(value: str, athena_type: str) -> str:
+        """Formata valor para SQL: numerico sem aspas, string com aspas simples."""
+        from core.column_classifier import ATHENA_NUMERIC_TYPES, _normalize_athena_type
+        base_type = _normalize_athena_type(athena_type)
+        if base_type in ATHENA_NUMERIC_TYPES:
+            return str(value)
+        safe_value = value.replace("'", "''")
+        return f"'{safe_value}'"
 
     def _generate_category_frequency_dynamic(
         self,
@@ -206,7 +219,8 @@ class GDQRuleGenerator:
             if overrides.margin_enabled is not None:
                 margin_enabled = overrides.margin_enabled
 
-        sql_expr = self._build_custom_sql_expression(col, value)
+        athena_type = proposal.target_column_type or "string"
+        sql_expr = self._build_custom_sql_expression(col, value, athena_type)
 
         spec = DualGuardSpec(
             metric=MetricRef.CUSTOM_SQL,
@@ -247,7 +261,8 @@ class GDQRuleGenerator:
             if overrides.custom_ceiling_pct is not None:
                 ceiling_pct = overrides.custom_ceiling_pct
 
-        sql_expr = self._build_custom_sql_expression(col, value)
+        athena_type = proposal.target_column_type or "string"
+        sql_expr = self._build_custom_sql_expression(col, value, athena_type)
 
         spec = DualGuardSpec(
             metric=MetricRef.CUSTOM_SQL,

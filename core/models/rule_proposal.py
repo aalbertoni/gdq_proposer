@@ -42,6 +42,7 @@ class RuleProposal:
     suggested_upper: Optional[float] = None
     suggested_values: Optional[list[str]] = None  # para allowed_values
     category_value: Optional[str] = None  # para regras de frequencia: qual valor monitorar
+    target_column_type: Optional[str] = None  # tipo Athena da coluna (ex: "string", "int")
 
     # Baseline
     baseline_method: Optional[BaselineMethod] = None

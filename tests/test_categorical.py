@@ -255,6 +255,59 @@ class TestGDQGeneratorCategorical:
         syntax = self.gen.generate(p)
         assert "ColumnValues UF in ['SP', 'RJ', 'MG']" == syntax
 
+    def test_frequency_static_numeric_column(self):
+        """Coluna numerica: valor no case when sem aspas."""
+        p = RuleProposal(
+            id="5", target_column="COD_SITU", target_table="t",
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            metric_name="cat_freq_1",
+            category_value="1",
+            target_column_type="int",
+            suggested_lower=80.0, suggested_upper=95.0,
+        )
+        syntax = self.gen.generate(p)
+        assert "COD_SITU = 1 " in syntax  # sem aspas no valor
+        assert "COD_SITU = '1'" not in syntax
+
+    def test_frequency_static_string_column(self):
+        """Coluna string: valor no case when com aspas simples."""
+        p = RuleProposal(
+            id="6", target_column="STATUS", target_table="t",
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            metric_name="cat_freq_A",
+            category_value="A",
+            target_column_type="string",
+            suggested_lower=25.0, suggested_upper=35.0,
+        )
+        syntax = self.gen.generate(p)
+        assert "STATUS = 'A'" in syntax
+
+    def test_frequency_dynamic_numeric_column(self):
+        """Dynamic com coluna int: valor sem aspas."""
+        p = RuleProposal(
+            id="7", target_column="COD_SITU", target_table="t",
+            rule_type=RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+            metric_name="cat_freq",
+            category_value="2",
+            target_column_type="bigint",
+            baseline_window=30, baseline_n_sigma=2.0,
+            baseline_margin_pct=0.10,
+        )
+        syntax = self.gen.generate(p)
+        assert "COD_SITU = 2 " in syntax
+        assert "COD_SITU = '2'" not in syntax
+
+    def test_allowed_values_numeric_column(self):
+        """ColumnValues com coluna numerica: valores sem aspas."""
+        p = RuleProposal(
+            id="8", target_column="COD_SITU", target_table="t",
+            rule_type=RuleType.ALLOWED_VALUES,
+            metric_name="allowed_values",
+            suggested_values=["1", "2", "3"],
+        )
+        syntax = self.gen.generate(p)
+        assert "ColumnValues COD_SITU in [1, 2, 3]" == syntax
+
 
 # ---------------------------------------------------------------------------
 # ProposalService.propose_categorical_rules
