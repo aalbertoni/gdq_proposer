@@ -256,6 +256,10 @@ class AthenaClient:
         DictCursor fetches results via Athena API (GetQueryResults), avoiding
         direct S3 access that fails with corporate proxy SSL inspection.
 
+        Timeout uses shutdown(wait=False) to unblock the caller immediately.
+        The worker thread may continue for up to ~60s until the underlying
+        socket/boto3 call returns. cursor.cancel() is best-effort.
+
         Args:
             sql: SQL statement to execute.
 
@@ -275,25 +279,27 @@ class AthenaClient:
             df = pd.DataFrame(rows) if rows else pd.DataFrame()
             return df, bytes_scanned, cache_hit
 
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(_run)
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(_run)
+        try:
+            return future.result(timeout=self._query_timeout)
+        except FuturesTimeoutError:
             try:
-                return future.result(timeout=self._query_timeout)
-            except FuturesTimeoutError:
-                try:
-                    cursor.cancel()
-                    logger.warning(
-                        "Query cancelled after %ds timeout", self._query_timeout,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Query timed out after %ds but cancel failed",
-                        self._query_timeout,
-                    )
-                raise TimeoutError(
-                    f"Query exceeded timeout of {self._query_timeout}s. "
-                    f"Consider reducing the lookback period or simplifying the query."
+                cursor.cancel()
+                logger.warning(
+                    "Query cancelled after %ds timeout", self._query_timeout,
                 )
+            except Exception:
+                logger.warning(
+                    "Query timed out after %ds but cancel failed",
+                    self._query_timeout,
+                )
+            raise TimeoutError(
+                f"Query exceeded timeout of {self._query_timeout}s. "
+                f"Consider reducing the lookback period or simplifying the query."
+            )
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def execute(
         self,
@@ -324,25 +330,27 @@ class AthenaClient:
 
             def _run():
                 cursor.execute(sql)
-                return cursor
+                result = cursor.fetchall()
+                bs = getattr(cursor, "data_scanned_in_bytes", None)
+                ch = bool(getattr(cursor, "reused_previous_result", False))
+                return result, bs, ch
 
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_run)
+            pool = ThreadPoolExecutor(max_workers=1)
+            future = pool.submit(_run)
+            try:
+                result, bytes_scanned, cache_hit = future.result(
+                    timeout=self._query_timeout,
+                )
+            except FuturesTimeoutError:
                 try:
-                    cursor = future.result(timeout=self._query_timeout)
-                except FuturesTimeoutError:
-                    try:
-                        cursor.cancel()
-                    except Exception:
-                        pass
-                    raise TimeoutError(
-                        f"Query exceeded timeout of {self._query_timeout}s."
-                    )
-
-            bytes_scanned = getattr(cursor, "data_scanned_in_bytes", None)
-            cache_hit = bool(getattr(cursor, "reused_previous_result", False))
-            # DictCursor.fetchall() retorna list[dict] diretamente
-            result = cursor.fetchall()
+                    cursor.cancel()
+                except Exception:
+                    pass
+                raise TimeoutError(
+                    f"Query exceeded timeout of {self._query_timeout}s."
+                )
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
 
             rows = len(result)
             return result

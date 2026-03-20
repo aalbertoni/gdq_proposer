@@ -80,9 +80,9 @@ def _cached_get_date_range(_client_id, config_dict):
     return svc.get_date_range(config)
 
 
-@st.cache_resource(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _cached_profile_column(_client_id, config_dict, col_name, col_type, sample_periods):
-    """Cached single-column profiling. _client_id forces cache bust on reconnect."""
+    """Cached single-column profiling. Returns copies (cache_data serializes)."""
     svc = st.session_state["profiling_service"]
     config = _build_config_from_dict(config_dict)
     col_info = {"name": col_name, "type": col_type}
