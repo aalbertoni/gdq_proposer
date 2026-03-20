@@ -38,7 +38,12 @@ from core.models.enums import (
 from core.models.column_profile import ColumnProfile
 from core.models.rule_proposal import RuleProposal
 from core.models.rule_selection import UserOverride
-from core.rule_recommender import compute_priority_score, prioritize_proposals, recommend_tier
+from core.rule_recommender import (
+    classify_proposal,
+    compute_priority_score,
+    prioritize_proposals,
+    recommend_tier,
+)
 from core.rule_scoring import score_proposal
 from core.statistical_engine import (
     compute_dynamic_band,
@@ -108,12 +113,13 @@ class ProposalService:
         proposals: list[RuleProposal],
         profile: "SeriesProfile | None" = None,
     ) -> list[RuleProposal]:
-        """Aplica recommend_tier + priority_score e ordena por prioridade."""
+        """Aplica recommend_tier + priority_score + category e ordena por prioridade."""
         for p in proposals:
             tier, reasons = recommend_tier(p, profile)
             p.recommendation_tier = tier
             p.recommendation_reasons = reasons
             p.priority_score = compute_priority_score(p)
+            p.proposal_category = classify_proposal(p)
         return prioritize_proposals(proposals)
 
     def propose_numeric_rules(

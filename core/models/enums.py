@@ -133,6 +133,20 @@ class RecommendationTier(str, Enum):
     NOT_RECOMMENDED = "not_recommended"  # gerar mas esconder por padrao
 
 
+class ProposalCategory(str, Enum):
+    """Categoria operacional unificada da proposta.
+
+    Sintese de RecommendationTier + GDQCapabilityStatus + tipo de regra
+    em um rotulo unico e interpretavel para o usuario.
+    """
+
+    STRONG = "strong"                    # Segura para producao (RECOMMENDED + VALIDATED)
+    CONSERVATIVE = "conservative"        # Simples e segura (built-in simples, alta cobertura)
+    EXPERIMENTAL = "experimental"        # Boa evidencia, sintaxe nao validada em prod
+    NEEDS_REVIEW = "needs_review"        # Metricas moderadas, precisa ajuste
+    NOT_RECOMMENDED = "not_recommended"  # Evitar sem ajustes significativos
+
+
 class GDQCapabilityStatus(str, Enum):
     """Status de suporte de uma feature no GDQ runtime real."""
 

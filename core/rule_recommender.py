@@ -8,6 +8,7 @@ O usuario sempre pode sobrescrever a recomendacao.
 """
 
 from core.models.enums import (
+    ProposalCategory,
     RecommendationTier,
     RuleType,
     SeriesRegime,
@@ -287,6 +288,76 @@ def compute_priority_score(proposal: RuleProposal) -> float:
         base_score -= fp_penalty
 
     return max(0.0, min(1.0, round(base_score, 4)))
+
+
+# ---------------------------------------------------------------------------
+# Categorias de proposta (sintese tier × capability × rule_type)
+# ---------------------------------------------------------------------------
+
+# Regras simples/built-in (alta interpretabilidade, baixo custo)
+_SIMPLE_RULE_TYPES = {
+    RuleType.COMPLETENESS,
+    RuleType.ALLOWED_VALUES,
+    RuleType.DISTINCT_COUNT_EXACT,
+    RuleType.DISTINCT_COUNT_RANGE,
+    RuleType.IS_PRIMARY_KEY,
+}
+
+CATEGORY_LABELS: dict[ProposalCategory, str] = {
+    ProposalCategory.STRONG: "Forte",
+    ProposalCategory.CONSERVATIVE: "Conservadora",
+    ProposalCategory.EXPERIMENTAL: "Experimental",
+    ProposalCategory.NEEDS_REVIEW: "Revisar",
+    ProposalCategory.NOT_RECOMMENDED: "Nao recomendada",
+}
+
+CATEGORY_BADGES: dict[ProposalCategory, str] = {
+    ProposalCategory.STRONG: ":green[Forte]",
+    ProposalCategory.CONSERVATIVE: ":blue[Conservadora]",
+    ProposalCategory.EXPERIMENTAL: ":orange[Experimental]",
+    ProposalCategory.NEEDS_REVIEW: ":orange[Revisar]",
+    ProposalCategory.NOT_RECOMMENDED: ":red[Nao recomendada]",
+}
+
+
+def classify_proposal(proposal: RuleProposal) -> ProposalCategory:
+    """Classifica proposta em categoria operacional unificada.
+
+    Sintese de:
+    - RecommendationTier (qualidade da evidencia)
+    - GDQCapabilityStatus (maturidade da sintaxe)
+    - RuleType (simplicidade da regra)
+
+    Returns:
+        ProposalCategory com 1 dos 5 valores.
+    """
+    from core.gdq_capability import is_experimental
+
+    tier = proposal.recommendation_tier
+
+    # NOT_RECOMMENDED domina tudo
+    if tier == RecommendationTier.NOT_RECOMMENDED:
+        return ProposalCategory.NOT_RECOMMENDED
+
+    # Experimental capability domina RECOMMENDED e POSSIBLE
+    if is_experimental(proposal.rule_type):
+        return ProposalCategory.EXPERIMENTAL
+
+    # POSSIBLE + VALIDATED = precisa revisao
+    if tier == RecommendationTier.POSSIBLE:
+        return ProposalCategory.NEEDS_REVIEW
+
+    # RECOMMENDED + VALIDATED: distinguir forte vs conservadora
+    if proposal.rule_type in _SIMPLE_RULE_TYPES:
+        return ProposalCategory.CONSERVATIVE
+
+    return ProposalCategory.STRONG
+
+
+def category_badge(proposal: RuleProposal) -> str:
+    """Retorna badge formatado para Streamlit."""
+    cat = getattr(proposal, "proposal_category", classify_proposal(proposal))
+    return CATEGORY_BADGES.get(cat, cat.value)
 
 
 def _rule_label(rule_type: RuleType) -> str:

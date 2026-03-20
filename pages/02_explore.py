@@ -270,42 +270,21 @@ def _render_regime_panel(profile):
     st.caption(f"Regime da serie: {badge}{secondary}")
 
 
-def _recommendation_badge(proposal) -> str:
-    from core.models.enums import RecommendationTier
-    tier = getattr(proposal, "recommendation_tier", RecommendationTier.RECOMMENDED)
-    badges = {
-        RecommendationTier.RECOMMENDED: ":green[Recomendada]",
-        RecommendationTier.POSSIBLE: ":orange[Avaliar]",
-        RecommendationTier.NOT_RECOMMENDED: ":red[Nao recomendada]",
-    }
-    return badges.get(tier, "")
-
-
 def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=None):
-    from core.models.enums import RecommendationTier
+    from core.rule_recommender import category_badge as _cat_badge
+    from core.models.enums import ProposalCategory
 
-    # Recommendation tier badge
-    tier = getattr(proposal, "recommendation_tier", RecommendationTier.RECOMMENDED)
-    tier_badge = _recommendation_badge(proposal)
+    # Unified category badge (replaces dual tier + capability badges)
+    cat = getattr(proposal, "proposal_category", ProposalCategory.STRONG)
+    st.caption(_cat_badge(proposal))
+
     reasons = getattr(proposal, "recommendation_reasons", [])
-
-    # Experimental badge
-    badge = capability_badge(proposal.rule_type)
-    if badge:
-        st.caption(f"{badge}  {tier_badge}" if tier_badge else badge)
-    elif tier_badge:
-        st.caption(tier_badge)
-
-    if tier == RecommendationTier.NOT_RECOMMENDED:
+    if cat in (ProposalCategory.NOT_RECOMMENDED, ProposalCategory.EXPERIMENTAL):
         warning_text = capability_warning(proposal.rule_type)
         if warning_text:
             st.warning(warning_text)
-        if reasons:
-            st.caption(f"Motivo: {'; '.join(reasons)}")
-    elif badge:
-        warning_text = capability_warning(proposal.rule_type)
-        if warning_text:
-            st.warning(warning_text)
+    if cat == ProposalCategory.NOT_RECOMMENDED and reasons:
+        st.caption(f"Motivo: {'; '.join(reasons)}")
 
     if show_syntax:
         with st.expander("Sintaxe GDQ e detalhes", expanded=False):

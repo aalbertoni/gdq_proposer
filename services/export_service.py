@@ -393,15 +393,12 @@ class ExportService:
                 f"**Confianca:** {confidence_map.get(p.confidence, p.confidence.value)}"
             )
 
-            from core.models.enums import RecommendationTier
-            tier = getattr(p, "recommendation_tier", RecommendationTier.RECOMMENDED)
-            tier_map = {
-                RecommendationTier.RECOMMENDED: "RECOMENDADA",
-                RecommendationTier.POSSIBLE: "POSSIVEL (REVISAR)",
-                RecommendationTier.NOT_RECOMMENDED: "NAO RECOMENDADA",
-            }
+            from core.models.enums import ProposalCategory
+            from core.rule_recommender import CATEGORY_LABELS
+            cat = getattr(p, "proposal_category", ProposalCategory.STRONG)
+            cat_label = CATEGORY_LABELS.get(cat, cat.value).upper()
             lines.append(
-                f"**Recomendacao:** {tier_map.get(tier, tier.value)}"
+                f"**Categoria:** {cat_label}"
             )
             reasons = getattr(p, "recommendation_reasons", [])
             if reasons:

@@ -7,7 +7,13 @@ Definido conforme docs/technical_spec_v1.md secao 3.5.
 from dataclasses import dataclass, field
 from typing import Optional
 
-from core.models.enums import BaselineMethod, ConfidenceLevel, RecommendationTier, RuleType
+from core.models.enums import (
+    BaselineMethod,
+    ConfidenceLevel,
+    ProposalCategory,
+    RecommendationTier,
+    RuleType,
+)
 
 
 @dataclass
@@ -62,6 +68,7 @@ class RuleProposal:
     recommendation_tier: RecommendationTier = RecommendationTier.RECOMMENDED
     recommendation_reasons: list[str] = field(default_factory=list)
     priority_score: float = 0.0  # Score composto para ordenacao (maior = melhor)
+    proposal_category: ProposalCategory = ProposalCategory.STRONG
 
     # Sintaxe
     gdq_syntax_preview: str = ""

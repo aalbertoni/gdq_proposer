@@ -4,13 +4,19 @@ import pytest
 
 from core.models.enums import (
     ConfidenceLevel,
+    ProposalCategory,
     RecommendationTier,
     RuleType,
     SeriesRegime,
 )
 from core.models.rule_proposal import BacktestSummary, RuleProposal
 from core.models.series_profile import SeriesProfile
-from core.rule_recommender import compute_priority_score, prioritize_proposals, recommend_tier
+from core.rule_recommender import (
+    classify_proposal,
+    compute_priority_score,
+    prioritize_proposals,
+    recommend_tier,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -401,3 +407,92 @@ class TestComputePriorityScore:
         p = _proposal(backtest=_bt(coverage=50, fp=5, stability=0.1))
         score = compute_priority_score(p)
         assert 0.0 <= score <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Categorias de proposta
+# ---------------------------------------------------------------------------
+
+class TestClassifyProposal:
+    def test_mean_recommended_validated_is_strong(self):
+        p = _proposal(
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            backtest=_bt(coverage=95, fp=0),
+        )
+        p.recommendation_tier = RecommendationTier.RECOMMENDED
+        assert classify_proposal(p) == ProposalCategory.STRONG
+
+    def test_completeness_recommended_is_conservative(self):
+        p = _proposal(
+            rule_type=RuleType.COMPLETENESS,
+            backtest=_bt(coverage=95, fp=0),
+        )
+        p.recommendation_tier = RecommendationTier.RECOMMENDED
+        assert classify_proposal(p) == ProposalCategory.CONSERVATIVE
+
+    def test_allowed_values_recommended_is_conservative(self):
+        p = _proposal(
+            rule_type=RuleType.ALLOWED_VALUES,
+            backtest=_bt(coverage=100, fp=0),
+        )
+        p.recommendation_tier = RecommendationTier.RECOMMENDED
+        assert classify_proposal(p) == ProposalCategory.CONSERVATIVE
+
+    def test_dynamic_frequency_is_experimental(self):
+        """CustomSql dynamic frequency = EXPERIMENTAL capability."""
+        p = _proposal(
+            rule_type=RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+            backtest=_bt(coverage=90, fp=0),
+        )
+        p.recommendation_tier = RecommendationTier.RECOMMENDED
+        assert classify_proposal(p) == ProposalCategory.EXPERIMENTAL
+
+    def test_hybrid_frequency_is_experimental(self):
+        p = _proposal(
+            rule_type=RuleType.CATEGORY_FREQUENCY_HYBRID,
+            backtest=_bt(coverage=85, fp=1),
+        )
+        p.recommendation_tier = RecommendationTier.POSSIBLE
+        assert classify_proposal(p) == ProposalCategory.EXPERIMENTAL
+
+    def test_percentile_is_experimental(self):
+        p = _proposal(
+            rule_type=RuleType.NUMERIC_PERCENTILE_BAND,
+            backtest=_bt(coverage=90, fp=0),
+        )
+        p.recommendation_tier = RecommendationTier.RECOMMENDED
+        assert classify_proposal(p) == ProposalCategory.EXPERIMENTAL
+
+    def test_possible_validated_is_needs_review(self):
+        p = _proposal(
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            backtest=_bt(coverage=70, fp=2),
+        )
+        p.recommendation_tier = RecommendationTier.POSSIBLE
+        assert classify_proposal(p) == ProposalCategory.NEEDS_REVIEW
+
+    def test_not_recommended_always_not_recommended(self):
+        p = _proposal(backtest=_bt(coverage=40))
+        p.recommendation_tier = RecommendationTier.NOT_RECOMMENDED
+        assert classify_proposal(p) == ProposalCategory.NOT_RECOMMENDED
+
+    def test_not_recommended_even_if_experimental(self):
+        """NOT_RECOMMENDED domina sobre EXPERIMENTAL capability."""
+        p = _proposal(
+            rule_type=RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+            backtest=_bt(coverage=30),
+        )
+        p.recommendation_tier = RecommendationTier.NOT_RECOMMENDED
+        assert classify_proposal(p) == ProposalCategory.NOT_RECOMMENDED
+
+    def test_rowcount_recommended_is_strong(self):
+        p = _proposal(
+            rule_type=RuleType.ROW_COUNT_DUAL_GUARD,
+            backtest=_bt(coverage=95, fp=0),
+        )
+        p.recommendation_tier = RecommendationTier.RECOMMENDED
+        assert classify_proposal(p) == ProposalCategory.STRONG
+
+    def test_default_category_on_new_proposal(self):
+        p = _proposal()
+        assert p.proposal_category == ProposalCategory.STRONG
