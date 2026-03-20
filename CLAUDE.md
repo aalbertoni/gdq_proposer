@@ -25,6 +25,11 @@ streamlit run app.py
 
 # Testes
 pytest tests/ -v
+
+# Por camada da piramide:
+pytest -m "not integration and not athena"  # unit (899 testes, <5s)
+pytest -m integration                       # DuckDB (97 testes, ~10s)
+pytest -m athena                            # Athena real (23 testes, requer AWS_PROFILE)
 ```
 
 ### Arquitetura
@@ -73,6 +78,20 @@ Sempre defina a interface (dataclass, type hints, docstring) ANTES de escrever o
 
 Modulos do `core/` DEVEM ter testes unitarios. Use as fixtures em `tests/fixtures/`.
 Testes usam `DuckDBTestClient` de `tests/conftest.py` em vez de Athena real.
+
+**Piramide de testes** (configurada em `pyproject.toml`):
+
+| Camada | Marker | Escopo | Qte |
+|--------|--------|--------|-----|
+| Unit | `not integration and not athena` | Logica pura, sem I/O | ~900 |
+| Integration | `@pytest.mark.integration` | DuckDB end-to-end | ~100 |
+| Contract | em `test_contracts.py` | Shapes/tipos de output | ~30 |
+| Athena | `@pytest.mark.athena` | Athena real (requer AWS) | ~23 |
+
+- Novos testes de `core/` devem ser unitarios (sem marker)
+- Testes que usam `DuckDBTestClient` devem ter `pytestmark = pytest.mark.integration`
+- `test_query_builder.py` cobre todos os 12 templates SQL × 2 dialetos
+- `test_contracts.py` protege contra mudanca de shape nos outputs criticos
 
 ### 4. Athena-first
 
