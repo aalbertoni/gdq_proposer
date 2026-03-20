@@ -180,23 +180,26 @@ def _compute_fp_risk(
     return min(round(risk, 4), 1.0)
 
 
+_DEFAULT_ROBUSTNESS_TIERS = ((7, -0.30), (15, -0.15), (30, -0.05))
+
+
 def _compute_robustness(
     profile: Optional[SeriesProfile],
     valid_count: int,
+    robustness_tiers: tuple[tuple[int, float], ...] = _DEFAULT_ROBUSTNESS_TIERS,
 ) -> float:
     """Calcula robustez/confiabilidade da avaliacao (0-1).
 
     Baseado em: quantidade de dados, % nulos, % zeros, outliers.
+    robustness_tiers define (threshold, penalty) adaptativos por grain.
     """
     score = 1.0
 
-    # Penalidade por poucos dados
-    if valid_count < 7:
-        score -= 0.30
-    elif valid_count < 15:
-        score -= 0.15
-    elif valid_count < 30:
-        score -= 0.05
+    # Penalidade por poucos dados (adaptativa)
+    for threshold, penalty in sorted(robustness_tiers, key=lambda t: t[0]):
+        if valid_count < threshold:
+            score += penalty  # penalty e negativo
+            break
 
     if profile is not None:
         # Penalidade por nulos
@@ -273,6 +276,7 @@ def score_proposal(
     proposal: RuleProposal,
     history_values: list[float] | None = None,
     profile: SeriesProfile | None = None,
+    robustness_tiers: tuple[tuple[int, float], ...] | None = None,
 ) -> RuleScore:
     """Avalia qualidade da regra proposta.
 
@@ -323,12 +327,14 @@ def score_proposal(
     values = history_values or proposal.history_values
     valid_count = len(_filter_valid(values)) if values else 0
 
-    robustness = _compute_robustness(profile, valid_count)
+    _rt = robustness_tiers or _DEFAULT_ROBUSTNESS_TIERS
+    robustness = _compute_robustness(profile, valid_count, robustness_tiers=_rt)
 
-    if valid_count < 7:
-        warnings.append("Pouco histórico: menos de 7 períodos válidos")
+    _min_tier = min(t for t, _ in _rt) if _rt else 7
+    if valid_count < _min_tier:
+        warnings.append(f"Pouco historico: menos de {_min_tier} periodos validos")
     if valid_count < 3:
-        warnings.append("Dados insuficientes: menos de 3 períodos")
+        warnings.append("Dados insuficientes: menos de 3 periodos")
 
     if bt.has_drift:
         warnings.append("Tendência detectada no histórico")
@@ -391,6 +397,7 @@ def evaluate_proposal(
     proposal: RuleProposal,
     profile: SeriesProfile | None = None,
     history_values: list[float] | None = None,
+    robustness_tiers: tuple[tuple[int, float], ...] | None = None,
 ) -> RuleEvaluation:
     """Avaliacao enriquecida com todas as dimensoes.
 
@@ -429,7 +436,8 @@ def evaluate_proposal(
         regime_warns = []
         regime_summary = None
 
-    robustness = _compute_robustness(profile, valid_count)
+    _rt_ev = robustness_tiers or _DEFAULT_ROBUSTNESS_TIERS
+    robustness = _compute_robustness(profile, valid_count, robustness_tiers=_rt_ev)
 
     # Score total
     score_total = (
@@ -476,7 +484,8 @@ def evaluate_proposal(
         if bt.band_width_ratio > 1.0:
             warnings.append("Banda muito larga — regra pouco seletiva")
 
-    if valid_count < 7:
+    _min_tier_ev = min(t for t, _ in _rt_ev) if _rt_ev else 7
+    if valid_count < _min_tier_ev:
         warnings.append("Pouco histórico: menos de 7 períodos válidos")
     if valid_count < 3:
         warnings.append("Dados insuficientes: menos de 3 períodos")

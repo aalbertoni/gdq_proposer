@@ -143,6 +143,12 @@ class DatasetConfig:
             f"CAST(DATE_ADD('day', -{self.lookback_value}, {anchor}) AS VARCHAR)"
         )
 
+    @property
+    def grain_policy(self):
+        """Policy de thresholds adaptativos para a granularidade configurada."""
+        from core.models.grain_policy import get_grain_policy
+        return get_grain_policy(self.grain_type)
+
     def analysis_fingerprint(self) -> str:
         """Hash determinisico dos campos que afetam resultados de analise.
 

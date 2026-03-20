@@ -89,7 +89,7 @@ def _build_config_from_dict(config_dict):
     )
 
 
-def _render_rule_params(rule_key: str) -> tuple:
+def _render_rule_params(rule_key: str, n_min: int = 5, n_max: int = 90, n_default: int = 20) -> tuple:
     """Renderiza controles de parametros inline.
 
     Returns:
@@ -98,7 +98,7 @@ def _render_rule_params(rule_key: str) -> tuple:
     col1, col2, col3, col4, col5 = st.columns([3, 2, 1, 3, 2])
     with col1:
         n_periods = st.slider(
-            "N (periodos):", min_value=5, max_value=90, value=20,
+            "N (periodos):", min_value=n_min, max_value=n_max, value=n_default,
             key=f"n_{rule_key}",
             help="Janela movel de historico para calcular media e desvio. "
                  "Valores maiores suavizam variacao; menores reagem mais rapido a mudancas.",
@@ -935,6 +935,9 @@ except Exception as e:
 
 analysis_svc = _get_analysis_service(client)
 proposal_svc = _get_proposal_service()
+proposal_svc.set_grain_policy(dataset_config.grain_policy)
+
+_grain_policy = dataset_config.grain_policy
 
 config_dict = {
     "schema": dataset_config.schema,
@@ -1260,13 +1263,19 @@ if numeric_profiles:
                     )
                     try:
                         _bh = fetch_numeric_history(config_dict, _bc)
-                        if _bh.empty or len(_bh) < 5:
+                        if _bh.empty or len(_bh) < _grain_policy.batch_min_periods:
                             _batch_results.append({"column": _bc, "status": "skip", "reason": "dados insuficientes"})
                             continue
 
                         _bvals = _bh["mean"].tolist()
                         _bdates = _bh["period"].astype(str).tolist()
-                        _bbest = proposal_svc.find_best_params(values=_bvals, dates=_bdates)
+                        _b_n_range = [n for n in _grain_policy.n_range if n <= len(_bvals) - _grain_policy.min_history]
+                        _bbest = proposal_svc.find_best_params(
+                            values=_bvals, dates=_bdates,
+                            n_range=_b_n_range or [_grain_policy.slider_n_min],
+                            seasonality_enabled=_grain_policy.seasonality_enabled,
+                            n_penalty_threshold=_grain_policy.n_penalty_threshold,
+                        )
 
                         if _bbest["confidence"].value == "LOW":
                             _batch_results.append({"column": _bc, "status": "skip", "reason": "confianca LOW"})
@@ -1375,10 +1384,15 @@ with tab_numericas:
 
             # Auto-tune automatico na primeira visita a coluna
             _at_key = f"autotune_{_fp}_mean_{selected_col}"
-            if _at_key not in st.session_state and _mean_vals and len(_mean_vals) >= 5:
+            _at_min = _grain_policy.min_history + 1  # precisa de min_history + pelo menos 1 ponto
+            if _at_key not in st.session_state and _mean_vals and len(_mean_vals) >= _at_min:
+                _at_n_range = [n for n in _grain_policy.n_range if n <= len(_mean_vals) - _grain_policy.min_history]
                 with st.spinner(f"Auto-tune {selected_col}..."):
                     _at_result = proposal_svc.find_best_params(
                         values=_mean_vals, dates=_mean_dates,
+                        n_range=_at_n_range or [_grain_policy.slider_n_min],
+                        seasonality_enabled=_grain_policy.seasonality_enabled,
+                        n_penalty_threshold=_grain_policy.n_penalty_threshold,
                     )
                     st.session_state[_at_key] = _at_result
                     if _at_result["viable"]:
@@ -1421,6 +1435,8 @@ with tab_numericas:
 
             mean_n, mean_k, mean_margin, mean_buffer, mean_margin_on = _render_rule_params(
                 f"{_fp}_mean_{selected_col}",
+                n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
+                n_default=_grain_policy.slider_n_default,
             )
 
             mean_baseline = BaselineStrategy(
@@ -1478,6 +1494,8 @@ with tab_numericas:
 
             std_n, std_k, std_margin, std_buffer, std_margin_on = _render_rule_params(
                 f"{_fp}_stddev_{selected_col}",
+                n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
+                n_default=_grain_policy.slider_n_default,
             )
 
             std_baseline = BaselineStrategy(
@@ -1553,6 +1571,8 @@ with tab_numericas:
             if selected_pcts:
                 pct_n, pct_k, pct_margin, pct_buffer, pct_margin_on = _render_rule_params(
                     f"{_fp}_pct_{selected_col}",
+                    n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
+                    n_default=_grain_policy.slider_n_default,
                 )
 
                 pct_baseline = BaselineStrategy(
@@ -2159,9 +2179,16 @@ with tab_tabela:
 
         # Auto-tune automatico para RowCount
         _at_rc_key = f"autotune_{_fp}_rowcount"
-        if _at_rc_key not in st.session_state and _rc_vals and len(_rc_vals) >= 5:
+        _at_rc_min = _grain_policy.min_history + 1
+        if _at_rc_key not in st.session_state and _rc_vals and len(_rc_vals) >= _at_rc_min:
+            _at_rc_n_range = [n for n in _grain_policy.n_range if n <= len(_rc_vals) - _grain_policy.min_history]
             with st.spinner("Auto-tune RowCount..."):
-                _at_rc = proposal_svc.find_best_params(values=_rc_vals, dates=_rc_dates)
+                _at_rc = proposal_svc.find_best_params(
+                    values=_rc_vals, dates=_rc_dates,
+                    n_range=_at_rc_n_range or [_grain_policy.slider_n_min],
+                    seasonality_enabled=_grain_policy.seasonality_enabled,
+                    n_penalty_threshold=_grain_policy.n_penalty_threshold,
+                )
                 st.session_state[_at_rc_key] = _at_rc
                 if _at_rc["viable"]:
                     st.session_state[f"n_{_fp}_rowcount"] = _at_rc["n_periods"]
@@ -2178,7 +2205,11 @@ with tab_tabela:
                 f"cobertura {_at_rc_cached['coverage_pct']:.0f}%, "
                 f"{_confidence_badge(_at_rc_cached['confidence'])}"
             )
-        rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params(f"{_fp}_rowcount")
+        rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params(
+            f"{_fp}_rowcount",
+            n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
+            n_default=_grain_policy.slider_n_default,
+        )
 
         _rc_profile_key = f"series_profile_rowcount_{effective_lookback}"
         if _rc_profile_key not in st.session_state and _rc_vals:

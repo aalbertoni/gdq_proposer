@@ -73,12 +73,16 @@ _CAUTIOUS_REGIMES_FOR_MEAN = {
 def recommend_tier(
     proposal: RuleProposal,
     profile: SeriesProfile | None = None,
+    min_periods_dynamic: int = MIN_VALID_PERIODS_DYNAMIC,
+    min_periods_possible: int = 5,
 ) -> tuple[RecommendationTier, list[str]]:
     """Decide tier de recomendacao + justificativas textuais.
 
     Args:
         proposal: Proposta com backtest e score ja calculados.
         profile: Perfil de regime da serie (opcional).
+        min_periods_dynamic: Minimo de periodos para RECOMMENDED (da GrainPolicy).
+        min_periods_possible: Minimo de periodos para POSSIBLE (da GrainPolicy).
 
     Returns:
         Tupla (tier, reasons) onde reasons e lista de strings explicativas.
@@ -99,12 +103,18 @@ def recommend_tier(
     # --- Historico insuficiente para regras dinamicas ---
     if proposal.rule_type in _DYNAMIC_RULE_TYPES:
         n_periods = bt.total_periods
-        if n_periods < MIN_VALID_PERIODS_DYNAMIC:
+        if n_periods < min_periods_possible:
             reasons.append(
                 f"Historico insuficiente para regra dinamica "
-                f"({n_periods} periodos, minimo {MIN_VALID_PERIODS_DYNAMIC})"
+                f"({n_periods} periodos, minimo {min_periods_possible})"
             )
             return RecommendationTier.NOT_RECOMMENDED, reasons
+        if n_periods < min_periods_dynamic:
+            reasons.append(
+                f"Historico limitado ({n_periods} periodos, "
+                f"recomendado {min_periods_dynamic})"
+            )
+            # Nao retorna — marca como possible mais abaixo
 
     # --- Metricas do backtest ---
     coverage = bt.coverage_pct
@@ -129,6 +139,11 @@ def recommend_tier(
 
     # --- POSSIBLE: limites intermediarios ---
     is_possible = False
+
+    # Historico limitado (entre min_possible e min_dynamic) → POSSIBLE no maximo
+    if (proposal.rule_type in _DYNAMIC_RULE_TYPES
+            and bt.total_periods < min_periods_dynamic):
+        is_possible = True
 
     if coverage < COVERAGE_RECOMMENDED:
         reasons.append(f"Cobertura moderada ({coverage:.0f}%)")

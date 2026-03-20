@@ -222,10 +222,18 @@ class TestNotRecommended:
         assert any("trivial" in r.lower() for r in reasons)
 
     def test_dynamic_insufficient_history(self):
-        p = _proposal(backtest=_bt(coverage=90, total_periods=7))
+        """Below min_periods_possible (default 5) → NOT_RECOMMENDED."""
+        p = _proposal(backtest=_bt(coverage=90, total_periods=3))
         tier, reasons = recommend_tier(p)
         assert tier == RecommendationTier.NOT_RECOMMENDED
-        assert any("Historico insuficiente" in r for r in reasons)
+        assert any("insuficiente" in r.lower() for r in reasons)
+
+    def test_dynamic_limited_history_is_possible(self):
+        """Between min_periods_possible (5) and min_periods_dynamic (10) → POSSIBLE."""
+        p = _proposal(backtest=_bt(coverage=95, total_periods=7))
+        tier, reasons = recommend_tier(p)
+        assert tier == RecommendationTier.POSSIBLE
+        assert any("limitado" in r.lower() for r in reasons)
 
     def test_low_score_with_hostile_profile(self):
         """Score cai abaixo do minimo com regime hostil + metricas ruins."""

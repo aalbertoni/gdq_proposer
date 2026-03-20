@@ -108,15 +108,27 @@ class ProposalService:
 
     def __init__(self):
         self.generator = GDQRuleGenerator()
+        # GrainPolicy defaults (daily). Atualizado por set_grain_policy().
+        self._min_periods_dynamic = 10
+        self._min_periods_possible = 5
 
-    @staticmethod
+    def set_grain_policy(self, policy) -> None:
+        """Atualiza thresholds de recomendacao a partir da GrainPolicy."""
+        self._min_periods_dynamic = policy.min_periods_dynamic
+        self._min_periods_possible = policy.min_periods_possible
+
     def _apply_recommendations(
+        self,
         proposals: list[RuleProposal],
         profile: "SeriesProfile | None" = None,
     ) -> list[RuleProposal]:
         """Aplica recommend_tier + redundancy + priority_score + category e ordena."""
         for p in proposals:
-            tier, reasons = recommend_tier(p, profile)
+            tier, reasons = recommend_tier(
+                p, profile,
+                min_periods_dynamic=self._min_periods_dynamic,
+                min_periods_possible=self._min_periods_possible,
+            )
             p.recommendation_tier = tier
             p.recommendation_reasons = reasons
             p.priority_score = compute_priority_score(p)
@@ -1086,6 +1098,8 @@ class ProposalService:
         sigma_range: list[float] | None = None,
         margin_range: list[float] | None = None,
         min_coverage: float = 70.0,
+        seasonality_enabled: bool = True,
+        n_penalty_threshold: int = 15,
     ) -> AutoTuneResult:
         """Busca a melhor combinacao de N/sigma/margem via grid search.
 
@@ -1117,8 +1131,11 @@ class ProposalService:
         drift_result = detect_drift(values)
         drift_bonus = 0.05 if not drift_result["has_drift"] else -0.05
 
-        # Detectar sazonalidade uma vez
-        seasonality_result = detect_seasonality(values, dates)
+        # Detectar sazonalidade (desabilitada para grains nao-daily)
+        if seasonality_enabled:
+            seasonality_result = detect_seasonality(values, dates)
+        else:
+            seasonality_result = {"has_seasonality": False, "amplitude_ratio": 0.0}
         has_strong_seasonality = (
             seasonality_result["has_seasonality"]
             and seasonality_result["amplitude_ratio"] > 0.10
@@ -1210,15 +1227,15 @@ class ProposalService:
                         # Quadratic width penalty — stronger than before
                         width_penalty = max(0, (bt.band_width_ratio - 0.20)) ** 2 * 0.5
 
-                        n_penalty = 0.05 if n < 15 else 0.0
+                        n_penalty = 0.05 if n < n_penalty_threshold else 0.0
 
                         # Prefer tighter parameters when coverage is equal
                         sigma_preference = sigma * 0.02
                         margin_preference = margin * 0.10
 
-                        # Bonus for N multiple of 7 when seasonality detected
+                        # Bonus for N multiple of 7 when weekly seasonality detected
                         seasonality_bonus = (
-                            0.02 if has_strong_seasonality and n % 7 == 0 else 0.0
+                            0.02 if seasonality_enabled and has_strong_seasonality and n % 7 == 0 else 0.0
                         )
 
                         # Bonus for N <= post-change data when regime shift detected
@@ -1337,10 +1354,11 @@ class ProposalService:
         # Append seasonality warning if detected
         if has_strong_seasonality:
             amp_ratio = seasonality_result["amplitude_ratio"]
-            recommendation += (
-                f" Sazonalidade detectada (amplitude {amp_ratio:.0%})."
-                f" Considere usar N multiplo de 7 para suavizar efeito semanal."
-            )
+            if seasonality_enabled:
+                recommendation += (
+                    f" Sazonalidade detectada (amplitude {amp_ratio:.0%})."
+                    f" Considere usar N multiplo de 7 para suavizar efeito semanal."
+                )
 
         # Append change-point note if detected
         if has_change_point:

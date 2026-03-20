@@ -33,6 +33,7 @@ SEASONALITY_MIN_POINTS = 14        # minimo para detectar sazonalidade
 def classify_series(
     values: list[float],
     dates: list[str],
+    seasonality_enabled: bool = True,
 ) -> SeriesProfile:
     """Classifica serie temporal em regime estatistico.
 
@@ -79,11 +80,11 @@ def classify_series(
     drift_slope = drift_result.get("slope", 0.0)
     drift_r_squared = drift_result.get("r_squared", 0.0)
 
-    # Deteccao de sazonalidade
+    # Deteccao de sazonalidade (desabilitada para grains nao-daily)
     is_seasonal = False
     seasonality_strength = 0.0
     seasonality_amplitude_ratio = 0.0
-    if n_valid >= SEASONALITY_MIN_POINTS:
+    if seasonality_enabled and n_valid >= SEASONALITY_MIN_POINTS:
         season_result = detect_seasonality(values, dates)
         is_seasonal = season_result.get("has_seasonality", False)
         seasonality_strength = season_result.get("seasonality_strength", 0.0)
