@@ -1,4 +1,4 @@
-"""Test fixtures: séries sintéticas para testes do statistical_engine, backtest e scoring."""
+"""Test fixtures: séries sintéticas e golden dataset para regressao funcional."""
 
 from tests.fixtures.stable_series import make_stable_series
 from tests.fixtures.drift_series import make_drift_series
