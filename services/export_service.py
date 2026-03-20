@@ -313,6 +313,7 @@ class ExportService:
         self,
         selections: list[RuleSelection],
         table_name: Optional[str] = None,
+        column_exclusions: list | None = None,
     ) -> str:
         """Gera relatório analítico markdown.
 
@@ -365,6 +366,14 @@ class ExportService:
         ]
         if with_warnings:
             lines.append(f"- **Regras com avisos:** {with_warnings}")
+        # Colunas excluidas
+        if column_exclusions:
+            lines.extend(["", "---", "", "## Colunas Sem Regras", ""])
+            for exc in column_exclusions:
+                lines.append(
+                    f"- **{exc.column_name}** ({exc.semantic_type.value}): {exc.reason}"
+                )
+
         lines.extend(["", "---", "", "## Regras Propostas", ""])
 
         # Ordenar por prioridade (maior priority_score primeiro, agrupado por tier)

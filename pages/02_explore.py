@@ -1101,6 +1101,19 @@ st.session_state["proposal_mode"] = proposal_mode
 _is_minimal_mode = proposal_mode == "Minimo"
 
 # ---------------------------------------------------------------------------
+# Colunas excluidas (motivos de nao-recomendacao)
+# ---------------------------------------------------------------------------
+
+from core.rule_recommender import explain_column_exclusions
+
+_selected_profiles = [p for p in profiles if p.column_name in selected_set]
+_exclusions = explain_column_exclusions(_selected_profiles)
+if _exclusions:
+    with st.expander(f"Colunas sem regras ({len(_exclusions)})", expanded=False):
+        for exc in _exclusions:
+            st.caption(f"**{exc.column_name}** ({exc.semantic_type.value}): {exc.reason}")
+
+# ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 

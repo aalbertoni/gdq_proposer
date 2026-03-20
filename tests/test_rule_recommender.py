@@ -7,13 +7,17 @@ from core.models.enums import (
     ProposalCategory,
     RecommendationTier,
     RuleType,
+    SemanticType,
     SeriesRegime,
 )
+from core.models.column_profile import ColumnProfile
 from core.models.rule_proposal import BacktestSummary, RuleProposal
 from core.models.series_profile import SeriesProfile
 from core.rule_recommender import (
+    ColumnExclusion,
     classify_proposal,
     detect_redundancies,
+    explain_column_exclusions,
     select_minimal_set,
     compute_priority_score,
     prioritize_proposals,
@@ -701,3 +705,93 @@ class TestSelectMinimalSet:
         assert freq not in result
         assert not_rec not in result
         assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# Explicacao de exclusoes de colunas
+# ---------------------------------------------------------------------------
+
+def _col_profile(name: str, stype: SemanticType, null_ratio: float = 0.0) -> ColumnProfile:
+    return ColumnProfile(
+        column_name=name,
+        athena_type="varchar",
+        inferred_semantic_type=stype,
+        null_ratio=null_ratio,
+    )
+
+
+class TestExplainColumnExclusions:
+    def test_datetime_excluded(self):
+        p = _col_profile("DT_REF", SemanticType.DATETIME)
+        result = explain_column_exclusions([p])
+        assert len(result) == 1
+        assert result[0].column_name == "DT_REF"
+        assert "temporal" in result[0].reason
+
+    def test_identifier_excluded(self):
+        p = _col_profile("NUM_CPF", SemanticType.IDENTIFIER)
+        result = explain_column_exclusions([p])
+        assert len(result) == 1
+        assert "identificadora" in result[0].reason
+
+    def test_unknown_excluded(self):
+        p = _col_profile("COL_VAZIA", SemanticType.UNKNOWN)
+        result = explain_column_exclusions([p])
+        assert len(result) == 1
+        assert "nula" in result[0].reason.lower()
+
+    def test_cat_high_excluded(self):
+        p = _col_profile("NOME_CLIENTE", SemanticType.CATEGORICAL_HIGH_CARDINALITY)
+        result = explain_column_exclusions([p])
+        assert len(result) == 1
+        assert "cardinalidade" in result[0].reason.lower()
+
+    def test_numeric_not_excluded(self):
+        p = _col_profile("VLR_SALDO", SemanticType.NUMERIC)
+        result = explain_column_exclusions([p])
+        assert len(result) == 0
+
+    def test_cat_low_not_excluded(self):
+        p = _col_profile("COD_SITU", SemanticType.CATEGORICAL_LOW_CARDINALITY)
+        result = explain_column_exclusions([p])
+        assert len(result) == 0
+
+    def test_cat_mid_not_excluded(self):
+        p = _col_profile("CIDADE", SemanticType.CATEGORICAL_MID_CARDINALITY)
+        result = explain_column_exclusions([p])
+        assert len(result) == 0
+
+    def test_high_null_ratio(self):
+        p = _col_profile("VLR_PARCIAL", SemanticType.NUMERIC, null_ratio=0.35)
+        result = explain_column_exclusions([p])
+        assert len(result) == 1
+        assert "Nulidade" in result[0].reason
+
+    def test_low_null_ratio_no_exclusion(self):
+        p = _col_profile("VLR_OK", SemanticType.NUMERIC, null_ratio=0.05)
+        result = explain_column_exclusions([p])
+        assert len(result) == 0
+
+    def test_mixed_profiles(self):
+        profiles = [
+            _col_profile("VLR_SALDO", SemanticType.NUMERIC),
+            _col_profile("DT_REF", SemanticType.DATETIME),
+            _col_profile("NUM_CPF", SemanticType.IDENTIFIER),
+            _col_profile("COD_SITU", SemanticType.CATEGORICAL_LOW_CARDINALITY),
+        ]
+        result = explain_column_exclusions(profiles)
+        names = {e.column_name for e in result}
+        assert "DT_REF" in names
+        assert "NUM_CPF" in names
+        assert "VLR_SALDO" not in names
+        assert "COD_SITU" not in names
+        assert len(result) == 2
+
+    def test_empty_input(self):
+        assert explain_column_exclusions([]) == []
+
+    def test_exclusion_is_frozen(self):
+        p = _col_profile("DT_REF", SemanticType.DATETIME)
+        result = explain_column_exclusions([p])
+        with pytest.raises(AttributeError):
+            result[0].reason = "changed"

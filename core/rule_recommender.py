@@ -3,14 +3,21 @@
 Decide se uma regra proposta merece ser RECOMMENDED, POSSIBLE ou NOT_RECOMMENDED
 com base no score, backtest, regime estatistico e contexto da coluna.
 
+Tambem gera explicacoes para colunas excluidas (sem regras propostas).
+
 Principio: nenhuma regra e descartada — o tier apenas orienta a apresentacao.
 O usuario sempre pode sobrescrever a recomendacao.
 """
+
+from __future__ import annotations
+
+from dataclasses import dataclass
 
 from core.models.enums import (
     ProposalCategory,
     RecommendationTier,
     RuleType,
+    SemanticType,
     SeriesRegime,
 )
 from core.models.rule_proposal import RuleProposal
@@ -490,6 +497,82 @@ def category_badge(proposal: RuleProposal) -> str:
     """Retorna badge formatado para Streamlit."""
     cat = getattr(proposal, "proposal_category", classify_proposal(proposal))
     return CATEGORY_BADGES.get(cat, cat.value)
+
+
+# ---------------------------------------------------------------------------
+# Explicacao de exclusoes de colunas
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ColumnExclusion:
+    """Justificativa de por que uma coluna nao recebeu regras (ou recebeu poucas)."""
+    column_name: str
+    semantic_type: SemanticType
+    reason: str
+
+
+# Motivos por tipo semantico
+_TYPE_EXCLUSION_REASONS: dict[SemanticType, str] = {
+    SemanticType.DATETIME: (
+        "Coluna temporal: usada como eixo de analise, nao gera regras de qualidade"
+    ),
+    SemanticType.IDENTIFIER: (
+        "Coluna identificadora: cardinalidade muito alta para regras estatisticas. "
+        "Considere IsPrimaryKey se for chave unica"
+    ),
+    SemanticType.UNKNOWN: (
+        "Coluna desconhecida: 100% nula no periodo amostrado"
+    ),
+    SemanticType.FREE_TEXT: (
+        "Texto livre: cardinalidade alta demais para regras de dominio"
+    ),
+    SemanticType.CATEGORICAL_HIGH_CARDINALITY: (
+        "Alta cardinalidade: apenas Completeness aplicavel. "
+        "Regras de dominio e frequencia nao sao viaveis"
+    ),
+}
+
+# Threshold de nulidade para gerar nota
+_HIGH_NULL_THRESHOLD = 0.10
+
+
+def explain_column_exclusions(
+    profiles: "list",
+) -> list[ColumnExclusion]:
+    """Gera explicacoes para colunas que nao recebem regras ou recebem poucas.
+
+    Args:
+        profiles: Lista de ColumnProfile selecionados pelo usuario.
+
+    Returns:
+        Lista de ColumnExclusion com motivos em pt-BR.
+    """
+    exclusions: list[ColumnExclusion] = []
+
+    for p in profiles:
+        etype = p.effective_type
+
+        # Tipo semantico sem regras completas
+        if etype in _TYPE_EXCLUSION_REASONS:
+            exclusions.append(ColumnExclusion(
+                column_name=p.column_name,
+                semantic_type=etype,
+                reason=_TYPE_EXCLUSION_REASONS[etype],
+            ))
+            continue
+
+        # Nulidade alta impede Completeness
+        if p.null_ratio > _HIGH_NULL_THRESHOLD:
+            exclusions.append(ColumnExclusion(
+                column_name=p.column_name,
+                semantic_type=etype,
+                reason=(
+                    f"Nulidade alta ({p.null_ratio:.0%}): "
+                    f"Completeness nao aplicavel com threshold padrao"
+                ),
+            ))
+
+    return exclusions
 
 
 def _rule_label(rule_type: RuleType) -> str:
