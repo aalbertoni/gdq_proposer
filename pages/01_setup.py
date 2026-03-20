@@ -175,13 +175,52 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
     return True
 
 
+def _clear_analysis_state():
+    """Limpa estado analitico do session_state ao trocar configuracao.
+
+    Remove carrinho, proposals, series profiles, auto-tune e col_health.
+    Nao remove chaves de infraestrutura (client, services, setup_*).
+    """
+    _ANALYSIS_PREFIXES = (
+        "proposal_mean_", "proposal_stddev_", "proposal_comp_",
+        "proposal_pct_", "proposal_rc_", "proposal_pk_",
+        "cat_proposals_",
+        "series_profile_",
+        "autotune_",
+    )
+    # Chaves exatas
+    for key in ["rule_cart", "col_health"]:
+        st.session_state.pop(key, None)
+    # Chaves por prefixo
+    keys_to_remove = [
+        k for k in list(st.session_state.keys())
+        if isinstance(k, str) and any(k.startswith(p) for p in _ANALYSIS_PREFIXES)
+    ]
+    for key in keys_to_remove:
+        del st.session_state[key]
+
+
 def _activate_config():
-    """Salva config ativa no session_state para uso nas paginas Explore/Review."""
+    """Salva config ativa no session_state para uso nas paginas Explore/Review.
+
+    Compara fingerprint de analise com a configuracao anterior.
+    Se houve mudanca, limpa todo o estado analitico para evitar
+    contaminacao cruzada entre configuracoes diferentes.
+    """
     config = st.session_state.get("setup_config")
     profiles = st.session_state.get("setup_profiles")
-    if config and profiles:
-        st.session_state["dataset_config"] = config
-        st.session_state["column_profiles"] = profiles
+    if not config or not profiles:
+        return
+
+    old_fp = st.session_state.get("_analysis_fingerprint", "")
+    new_fp = config.analysis_fingerprint()
+
+    if old_fp != new_fp:
+        _clear_analysis_state()
+        st.session_state["_analysis_fingerprint"] = new_fp
+
+    st.session_state["dataset_config"] = config
+    st.session_state["column_profiles"] = profiles
 
 
 # ---------------------------------------------------------------------------
@@ -981,8 +1020,7 @@ with col_btn1:
         disabled=not selected_cols,
     ):
         st.session_state["setup_config"] = dataset_config
-        st.session_state["dataset_config"] = dataset_config
-        st.session_state["column_profiles"] = profiles
+        _activate_config()
         st.switch_page("pages/02_explore.py")
 
 with col_btn2:

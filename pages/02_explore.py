@@ -279,9 +279,12 @@ def _render_regime_panel(profile):
     st.caption(f"Regime da serie: {badge}{secondary}")
 
 
-def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=None):
+def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=None, fp=""):
+    """Renderiza badge de categoria, sintaxe e botao de adicionar ao carrinho."""
     from core.rule_recommender import category_badge as _cat_badge
     from core.models.enums import ProposalCategory
+    # Namespace widget keys com fingerprint
+    _wk = f"{fp}_{stable_key}" if fp else stable_key
 
     # Unified category badge (replaces dual tier + capability badges)
     cat = getattr(proposal, "proposal_category", ProposalCategory.STRONG)
@@ -321,7 +324,7 @@ def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=N
         st.success(f"Regra {label} ja esta no carrinho.")
     elif st.button(
         f"Adicionar {label} ao carrinho",
-        key=f"cart_{stable_key}",
+        key=f"cart_{_wk}",
         type="primary",
     ):
         selection = RuleSelection(
@@ -849,6 +852,9 @@ if "column_profiles" not in st.session_state:
 dataset_config = st.session_state["dataset_config"]
 profiles = st.session_state["column_profiles"]
 
+# Fingerprint para namespace de widgets e cache keys
+_fp = dataset_config.analysis_fingerprint()[:6]
+
 # Filtrar colunas selecionadas por tipo
 selected_set = set(dataset_config.selected_columns or [])
 numeric_profiles = [
@@ -1368,7 +1374,7 @@ with tab_numericas:
             _render_regime_panel(series_profile)
 
             # Auto-tune automatico na primeira visita a coluna
-            _at_key = f"autotune_mean_{selected_col}"
+            _at_key = f"autotune_{_fp}_mean_{selected_col}"
             if _at_key not in st.session_state and _mean_vals and len(_mean_vals) >= 5:
                 with st.spinner(f"Auto-tune {selected_col}..."):
                     _at_result = proposal_svc.find_best_params(
@@ -1376,13 +1382,13 @@ with tab_numericas:
                     )
                     st.session_state[_at_key] = _at_result
                     if _at_result["viable"]:
-                        _rk = f"mean_{selected_col}"
+                        _rk = f"{_fp}_mean_{selected_col}"
                         st.session_state[f"n_{_rk}"] = _at_result["n_periods"]
                         st.session_state[f"k_{_rk}"] = _at_result["n_sigma"]
                         st.session_state[f"margin_{_rk}"] = int(_at_result["margin_pct"] * 100)
                         st.session_state[f"margin_on_{_rk}"] = _at_result["margin_enabled"]
                         # Tambem aplicar ao StdDev
-                        _rk_std = f"stddev_{selected_col}"
+                        _rk_std = f"{_fp}_stddev_{selected_col}"
                         st.session_state[f"n_{_rk_std}"] = _at_result["n_periods"]
                         st.session_state[f"k_{_rk_std}"] = _at_result["n_sigma"]
                         st.session_state[f"margin_{_rk_std}"] = int(_at_result["margin_pct"] * 100)
@@ -1414,7 +1420,7 @@ with tab_numericas:
                 )
 
             mean_n, mean_k, mean_margin, mean_buffer, mean_margin_on = _render_rule_params(
-                f"mean_{selected_col}",
+                f"{_fp}_mean_{selected_col}",
             )
 
             mean_baseline = BaselineStrategy(
@@ -1453,7 +1459,7 @@ with tab_numericas:
 
                     _render_auto_tune(
                         proposal_svc, values, dates,
-                        f"mean_{selected_col}", metric_kind="numeric",
+                        f"{_fp}_mean_{selected_col}", metric_kind="numeric",
                     )
 
                 # Metricas do backtest (ocultar se auto-tune ja exibe metricas)
@@ -1462,7 +1468,7 @@ with tab_numericas:
                 _render_add_to_cart(
                     proposal, "Mean",
                     f"mean_{selected_col}",
-                    profile=series_profile,
+                    profile=series_profile, fp=_fp,
                 )
 
             st.divider()
@@ -1471,7 +1477,7 @@ with tab_numericas:
             st.subheader(f"StdDev -- {selected_col}")
 
             std_n, std_k, std_margin, std_buffer, std_margin_on = _render_rule_params(
-                f"stddev_{selected_col}",
+                f"{_fp}_stddev_{selected_col}",
             )
 
             std_baseline = BaselineStrategy(
@@ -1510,7 +1516,7 @@ with tab_numericas:
 
                     _render_auto_tune(
                         proposal_svc, values, dates,
-                        f"stddev_{selected_col}", metric_kind="numeric",
+                        f"{_fp}_stddev_{selected_col}", metric_kind="numeric",
                     )
 
                 if f"autotune_stddev_{selected_col}" not in st.session_state:
@@ -1519,6 +1525,7 @@ with tab_numericas:
                     proposal, "StdDev",
                     f"stddev_{selected_col}",
                     profile=series_profile,
+                    fp=_fp,
                 )
 
             st.divider()
@@ -1545,7 +1552,7 @@ with tab_numericas:
 
             if selected_pcts:
                 pct_n, pct_k, pct_margin, pct_buffer, pct_margin_on = _render_rule_params(
-                    f"pct_{selected_col}",
+                    f"{_fp}_pct_{selected_col}",
                 )
 
                 pct_baseline = BaselineStrategy(
@@ -1587,6 +1594,7 @@ with tab_numericas:
                             pct_prop, f"Percentil {pct_label}",
                             f"pct_{selected_col}_{pct_prop.metric_name}",
                             profile=series_profile,
+                            fp=_fp,
                         )
 
             st.divider()
@@ -1617,6 +1625,7 @@ with tab_numericas:
                         proposal, "Completeness",
                         f"comp_{selected_col}",
                         show_syntax=False,
+                        fp=_fp,
                     )
 
 
@@ -1938,6 +1947,7 @@ with tab_categoricas:
                         _render_add_to_cart(
                             fp, f"Freq({cat_val})",
                             f"freq_{selected_cat_col}_{cat_val}",
+                            fp=_fp,
                         )
 
                 if len(freq_proposals) > 1:
@@ -1995,6 +2005,7 @@ with tab_categoricas:
                 _render_add_to_cart(
                     av, "AllowedValues",
                     f"av_{selected_cat_col}",
+                    fp=_fp,
                 )
                 st.divider()
 
@@ -2077,6 +2088,7 @@ with tab_categoricas:
                 _render_add_to_cart(
                     proposal, "DistinctValuesCount",
                     f"dc_{selected_cat_col}",
+                    fp=_fp,
                 )
                 st.divider()
 
@@ -2117,6 +2129,7 @@ with tab_categoricas:
                         proposal, "Completeness",
                         f"cat_comp_{selected_cat_col}",
                         show_syntax=False,
+                        fp=_fp,
                     )
 
 
@@ -2145,16 +2158,16 @@ with tab_tabela:
         _rc_dates = rc_history_df["period"].astype(str).tolist() if "period" in rc_history_df.columns else []
 
         # Auto-tune automatico para RowCount
-        _at_rc_key = "autotune_rowcount"
+        _at_rc_key = f"autotune_{_fp}_rowcount"
         if _at_rc_key not in st.session_state and _rc_vals and len(_rc_vals) >= 5:
             with st.spinner("Auto-tune RowCount..."):
                 _at_rc = proposal_svc.find_best_params(values=_rc_vals, dates=_rc_dates)
                 st.session_state[_at_rc_key] = _at_rc
                 if _at_rc["viable"]:
-                    st.session_state["n_rowcount"] = _at_rc["n_periods"]
-                    st.session_state["k_rowcount"] = _at_rc["n_sigma"]
-                    st.session_state["margin_rowcount"] = int(_at_rc["margin_pct"] * 100)
-                    st.session_state["margin_on_rowcount"] = _at_rc["margin_enabled"]
+                    st.session_state[f"n_{_fp}_rowcount"] = _at_rc["n_periods"]
+                    st.session_state[f"k_{_fp}_rowcount"] = _at_rc["n_sigma"]
+                    st.session_state[f"margin_{_fp}_rowcount"] = int(_at_rc["margin_pct"] * 100)
+                    st.session_state[f"margin_on_{_fp}_rowcount"] = _at_rc["margin_enabled"]
                 st.rerun()
 
         _at_rc_cached = st.session_state.get(_at_rc_key)
@@ -2165,7 +2178,7 @@ with tab_tabela:
                 f"cobertura {_at_rc_cached['coverage_pct']:.0f}%, "
                 f"{_confidence_badge(_at_rc_cached['confidence'])}"
             )
-        rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params("rowcount")
+        rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params(f"{_fp}_rowcount")
 
         _rc_profile_key = f"series_profile_rowcount_{effective_lookback}"
         if _rc_profile_key not in st.session_state and _rc_vals:
@@ -2203,12 +2216,12 @@ with tab_tabela:
                 )
                 _render_auto_tune(
                     proposal_svc, values, dates,
-                    "rowcount", metric_kind="numeric",
+                    f"{_fp}_rowcount", metric_kind="numeric",
                 )
 
             if "autotune_rowcount" not in st.session_state:
                 _render_backtest_metrics(rc_proposal)
-            _render_add_to_cart(rc_proposal, "RowCount", "rowcount", profile=rc_series_profile)
+            _render_add_to_cart(rc_proposal, "RowCount", "rowcount", profile=rc_series_profile, fp=_fp)
         else:
             st.warning(
                 "Dados insuficientes para gerar regra RowCount. "
@@ -2363,6 +2376,7 @@ with tab_tabela:
                         _render_add_to_cart(
                             pk_p, label,
                             f"pk_{pk_p.rule_type.value}",
+                            fp=_fp,
                         )
         elif pk_history_df is not None:
             st.warning(

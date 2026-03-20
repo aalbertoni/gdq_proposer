@@ -4,6 +4,7 @@ Configuração da tabela alvo para análise.
 Definido conforme docs/technical_spec_v1.md seção 3.1.
 """
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -141,3 +142,28 @@ class DatasetConfig:
             f'"{self.partition_column}" >= '
             f"CAST(DATE_ADD('day', -{self.lookback_value}, {anchor}) AS VARCHAR)"
         )
+
+    def analysis_fingerprint(self) -> str:
+        """Hash determinisico dos campos que afetam resultados de analise.
+
+        Qualquer mudanca em schema, tabela, eixo temporal, lookback,
+        filtros ou colunas selecionadas gera um fingerprint diferente.
+        Usado para invalidacao de estado analitico no session_state.
+        """
+        parts = [
+            self.schema,
+            self.table,
+            self.partition_method.value,
+            self.partition_column or "",
+            self.date_column,
+            self.temporal_axis_column or "",
+            self.grain_type.value,
+            self.date_expression or "",
+            self.lookback_mode.value,
+            str(self.lookback_value),
+            self.base_filter_sql or "",
+            self.reference_date or "",
+            ",".join(sorted(self.selected_columns or [])),
+            ",".join(sorted(self.unique_key_columns or [])),
+        ]
+        return hashlib.sha256("|".join(parts).encode()).hexdigest()[:12]
