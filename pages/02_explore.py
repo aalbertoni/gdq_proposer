@@ -1365,6 +1365,38 @@ with tab_numericas:
             # Show regime badge
             _render_regime_panel(series_profile)
 
+            # Auto-tune automatico na primeira visita a coluna
+            _at_key = f"autotune_mean_{selected_col}"
+            if _at_key not in st.session_state and _mean_vals and len(_mean_vals) >= 5:
+                with st.spinner(f"Auto-tune {selected_col}..."):
+                    _at_result = proposal_svc.find_best_params(
+                        values=_mean_vals, dates=_mean_dates,
+                    )
+                    st.session_state[_at_key] = _at_result
+                    if _at_result["viable"]:
+                        _rk = f"mean_{selected_col}"
+                        st.session_state[f"n_{_rk}"] = _at_result["n_periods"]
+                        st.session_state[f"k_{_rk}"] = _at_result["n_sigma"]
+                        st.session_state[f"margin_{_rk}"] = int(_at_result["margin_pct"] * 100)
+                        st.session_state[f"margin_on_{_rk}"] = _at_result["margin_enabled"]
+                        # Tambem aplicar ao StdDev
+                        _rk_std = f"stddev_{selected_col}"
+                        st.session_state[f"n_{_rk_std}"] = _at_result["n_periods"]
+                        st.session_state[f"k_{_rk_std}"] = _at_result["n_sigma"]
+                        st.session_state[f"margin_{_rk_std}"] = int(_at_result["margin_pct"] * 100)
+                        st.session_state[f"margin_on_{_rk_std}"] = _at_result["margin_enabled"]
+                    st.rerun()
+
+            _at_cached = st.session_state.get(_at_key)
+            if _at_cached and _at_cached.get("viable"):
+                st.caption(
+                    f"Parametros sugeridos pelo auto-tune: "
+                    f"N={_at_cached['n_periods']}, sigma={_at_cached['n_sigma']}, "
+                    f"margem={_at_cached['margin_pct']*100:.0f}% — "
+                    f"cobertura {_at_cached['coverage_pct']:.0f}%, "
+                    f"{_confidence_badge(_at_cached['confidence'])}"
+                )
+
             # ---- Mean ----
             st.subheader(f"Mean -- {selected_col}")
 
@@ -2095,8 +2127,6 @@ with tab_tabela:
         "esta dentro do esperado com base no historico."
     )
 
-    rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params("rowcount")
-
     try:
         rc_history_df = fetch_row_count_history(config_dict)
     except Exception as e:
@@ -2109,6 +2139,30 @@ with tab_tabela:
         # Classify row count series
         _rc_vals = rc_history_df["row_count"].tolist() if "row_count" in rc_history_df.columns else []
         _rc_dates = rc_history_df["period"].astype(str).tolist() if "period" in rc_history_df.columns else []
+
+        # Auto-tune automatico para RowCount
+        _at_rc_key = "autotune_rowcount"
+        if _at_rc_key not in st.session_state and _rc_vals and len(_rc_vals) >= 5:
+            with st.spinner("Auto-tune RowCount..."):
+                _at_rc = proposal_svc.find_best_params(values=_rc_vals, dates=_rc_dates)
+                st.session_state[_at_rc_key] = _at_rc
+                if _at_rc["viable"]:
+                    st.session_state["n_rowcount"] = _at_rc["n_periods"]
+                    st.session_state["k_rowcount"] = _at_rc["n_sigma"]
+                    st.session_state["margin_rowcount"] = int(_at_rc["margin_pct"] * 100)
+                    st.session_state["margin_on_rowcount"] = _at_rc["margin_enabled"]
+                st.rerun()
+
+        _at_rc_cached = st.session_state.get(_at_rc_key)
+        if _at_rc_cached and _at_rc_cached.get("viable"):
+            st.caption(
+                f"Auto-tune: N={_at_rc_cached['n_periods']}, sigma={_at_rc_cached['n_sigma']}, "
+                f"margem={_at_rc_cached['margin_pct']*100:.0f}% — "
+                f"cobertura {_at_rc_cached['coverage_pct']:.0f}%, "
+                f"{_confidence_badge(_at_rc_cached['confidence'])}"
+            )
+        rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params("rowcount")
+
         _rc_profile_key = f"series_profile_rowcount_{effective_lookback}"
         if _rc_profile_key not in st.session_state and _rc_vals:
             st.session_state[_rc_profile_key] = classify_series(_rc_vals, _rc_dates)
