@@ -1221,6 +1221,103 @@ if _has_details:
                 st.caption(f"- **{exc.column_name}** ({exc.semantic_type.value}): {exc.reason}")
 
 # ---------------------------------------------------------------------------
+# Calibracao em lote (acima das tabs para visibilidade)
+# ---------------------------------------------------------------------------
+
+if numeric_profiles:
+    with st.expander("Calibracao em lote (auto-tune)", expanded=False):
+        st.caption(
+            "Executa auto-tune em todas as colunas numericas e adiciona "
+            "regras de alta confianca ao carrinho automaticamente."
+        )
+
+        _batch_min = st.selectbox(
+            "Confianca minima",
+            options=["HIGH", "MEDIUM"],
+            index=0,
+            key="batch_min_confidence_top",
+            help="HIGH: apenas regras muito confiaveis. MEDIUM: inclui regras que precisam revisao.",
+        )
+
+        if st.button("Auto-calibrar todas", key="btn_batch_calibrate_top", type="primary"):
+            _batch_cols = [p.column_name for p in numeric_profiles]
+            if not _batch_cols:
+                st.warning("Nenhuma coluna numerica encontrada.")
+            else:
+                _batch_progress = st.progress(0, text="Iniciando...")
+                _batch_results = []
+
+                for _bi, _bc in enumerate(_batch_cols):
+                    _batch_progress.progress(
+                        (_bi + 1) / len(_batch_cols),
+                        text=f"Analisando {_bc} ({_bi + 1}/{len(_batch_cols)})...",
+                    )
+                    try:
+                        _bh = fetch_numeric_history(config_dict, _bc)
+                        if _bh.empty or len(_bh) < 5:
+                            _batch_results.append({"column": _bc, "status": "skip", "reason": "dados insuficientes"})
+                            continue
+
+                        _bvals = _bh["mean"].tolist()
+                        _bdates = _bh["period"].astype(str).tolist()
+                        _bbest = proposal_svc.find_best_params(values=_bvals, dates=_bdates)
+
+                        if _bbest["confidence"].value == "LOW":
+                            _batch_results.append({"column": _bc, "status": "skip", "reason": "confianca LOW"})
+                            continue
+                        if _batch_min == "HIGH" and _bbest["confidence"] != ConfidenceLevel.HIGH:
+                            _batch_results.append({"column": _bc, "status": "skip", "reason": f"confianca {_bbest['confidence'].value}"})
+                            continue
+
+                        _bbl = BaselineStrategy(
+                            n_periods=_bbest["n_periods"], n_sigma=_bbest["n_sigma"],
+                            margin_pct=_bbest["margin_pct"], margin_enabled=_bbest["margin_enabled"],
+                        )
+                        _bprops = proposal_svc.propose_numeric_rules(
+                            history=_bh, column=_bc,
+                            table=config_dict.get("table", ""), baseline=_bbl,
+                        )
+                        _bcart = st.session_state.get("rule_cart", [])
+                        _badded = 0
+                        for _bp in _bprops:
+                            if _bp.rule_type in (RuleType.MEAN_DUAL_GUARD, RuleType.STDDEV_DUAL_GUARD):
+                                if not any(
+                                    r.proposal.rule_type == _bp.rule_type
+                                    and r.proposal.target_column == _bp.target_column
+                                    for r in _bcart
+                                ):
+                                    _bcart.append(RuleSelection(
+                                        proposal_id=_bp.id, proposal=_bp,
+                                        final_gdq_syntax=_bp.gdq_syntax_preview,
+                                    ))
+                                    _badded += 1
+                        st.session_state["rule_cart"] = _bcart
+                        _batch_results.append({
+                            "column": _bc, "status": "added" if _badded > 0 else "exists",
+                            "confidence": _bbest["confidence"].value,
+                            "coverage": _bbest["coverage_pct"],
+                            "n": _bbest["n_periods"], "sigma": _bbest["n_sigma"],
+                            "added": _badded,
+                        })
+                    except Exception as e:
+                        _batch_results.append({"column": _bc, "status": "error", "reason": str(e)})
+
+                _batch_progress.empty()
+                _total_added = sum(r.get("added", 0) for r in _batch_results)
+                if _total_added > 0:
+                    st.success(f"{_total_added} regras adicionadas de {len(_batch_cols)} colunas.")
+                with st.expander(f"Detalhes: {len(_batch_results)} colunas", expanded=_total_added > 0):
+                    for _br in _batch_results:
+                        if _br["status"] == "added":
+                            st.caption(f":green[+{_br['added']}] **{_br['column']}** -- {_br['confidence']}, cob. {_br['coverage']:.1f}%")
+                        elif _br["status"] == "exists":
+                            st.caption(f":blue[=] **{_br['column']}** -- ja no carrinho")
+                        elif _br["status"] == "skip":
+                            st.caption(f":orange[-] **{_br['column']}** -- {_br['reason']}")
+                        elif _br["status"] == "error":
+                            st.caption(f":red[!] **{_br['column']}** -- erro: {_br['reason']}")
+
+# ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 
@@ -2310,165 +2407,4 @@ with tab_resumo:
             f"{len(cart)} regra(s) total no carrinho"
         )
 
-    st.divider()
-
-    # ------------------------------------------------------------------
-    # Batch Calibrate All
-    # ------------------------------------------------------------------
-    st.subheader("Calibracao em lote")
-    st.caption(
-        "Executa auto-tune em todas as colunas numericas e adiciona "
-        "regras de alta confianca ao carrinho automaticamente."
-    )
-
-    batch_min_confidence = st.selectbox(
-        "Confianca minima para adicionar ao carrinho",
-        options=["HIGH", "MEDIUM"],
-        index=0,
-        key="batch_min_confidence",
-        help="HIGH: apenas regras muito confiaveis. MEDIUM: inclui regras que precisam revisao.",
-    )
-
-    if st.button("Auto-calibrar todas as colunas numericas", key="btn_batch_calibrate"):
-        if not config_dict:
-            st.error("Configure a tabela no Setup primeiro.")
-            st.stop()
-
-        batch_numeric_cols = [p.column_name for p in numeric_profiles]
-
-        if not batch_numeric_cols:
-            st.warning("Nenhuma coluna numerica encontrada.")
-            st.stop()
-
-        batch_progress = st.progress(0, text="Iniciando calibracao em lote...")
-        batch_results = []
-
-        for batch_i, batch_col in enumerate(batch_numeric_cols):
-            batch_progress.progress(
-                (batch_i + 1) / len(batch_numeric_cols),
-                text=f"Analisando {batch_col} ({batch_i + 1}/{len(batch_numeric_cols)})...",
-            )
-
-            try:
-                # Fetch history (uses Streamlit cache)
-                batch_history_df = fetch_numeric_history(config_dict, batch_col)
-                if batch_history_df.empty or len(batch_history_df) < 5:
-                    batch_results.append({
-                        "column": batch_col, "status": "skip",
-                        "reason": "dados insuficientes",
-                    })
-                    continue
-
-                # Extract values for auto-tune
-                batch_values = batch_history_df["mean"].tolist()
-                batch_dates = batch_history_df["period"].astype(str).tolist()
-
-                # Run auto-tune
-                batch_best = proposal_svc.find_best_params(
-                    values=batch_values, dates=batch_dates,
-                )
-
-                if batch_best["confidence"].value == "LOW":
-                    batch_results.append({
-                        "column": batch_col, "status": "skip",
-                        "reason": "confianca LOW",
-                    })
-                    continue
-
-                if (
-                    batch_min_confidence == "HIGH"
-                    and batch_best["confidence"] != ConfidenceLevel.HIGH
-                ):
-                    batch_results.append({
-                        "column": batch_col, "status": "skip",
-                        "reason": f"confianca {batch_best['confidence'].value}",
-                    })
-                    continue
-
-                # Generate proposals with best params
-                batch_baseline = BaselineStrategy(
-                    n_periods=batch_best["n_periods"],
-                    n_sigma=batch_best["n_sigma"],
-                    margin_pct=batch_best["margin_pct"],
-                    margin_enabled=batch_best["margin_enabled"],
-                )
-
-                batch_proposals = proposal_svc.propose_numeric_rules(
-                    history=batch_history_df,
-                    column=batch_col,
-                    table=config_dict.get("table", ""),
-                    baseline=batch_baseline,
-                )
-
-                # Add Mean and StdDev to cart (skip Completeness)
-                batch_cart = st.session_state.get("rule_cart", [])
-                batch_added = 0
-                for batch_prop in batch_proposals:
-                    if batch_prop.rule_type in (
-                        RuleType.MEAN_DUAL_GUARD,
-                        RuleType.STDDEV_DUAL_GUARD,
-                    ):
-                        # Check not already in cart
-                        already_in_cart = any(
-                            r.proposal.rule_type == batch_prop.rule_type
-                            and r.proposal.target_column == batch_prop.target_column
-                            for r in batch_cart
-                        )
-                        if not already_in_cart:
-                            batch_cart.append(RuleSelection(
-                                proposal_id=batch_prop.id,
-                                proposal=batch_prop,
-                                final_gdq_syntax=batch_prop.gdq_syntax_preview,
-                            ))
-                            batch_added += 1
-
-                st.session_state["rule_cart"] = batch_cart
-                batch_results.append({
-                    "column": batch_col,
-                    "status": "added" if batch_added > 0 else "exists",
-                    "confidence": batch_best["confidence"].value,
-                    "coverage": batch_best["coverage_pct"],
-                    "n": batch_best["n_periods"],
-                    "sigma": batch_best["n_sigma"],
-                    "added": batch_added,
-                })
-
-            except Exception as e:
-                batch_results.append({
-                    "column": batch_col, "status": "error",
-                    "reason": str(e),
-                })
-
-        batch_progress.empty()
-
-        # Show results summary
-        total_added = sum(r.get("added", 0) for r in batch_results)
-        total_skipped = sum(1 for r in batch_results if r["status"] == "skip")
-        total_errors = sum(1 for r in batch_results if r["status"] == "error")
-
-        if total_added > 0:
-            st.success(
-                f"{total_added} regras adicionadas ao carrinho "
-                f"de {len(batch_numeric_cols)} colunas."
-            )
-
-        # Show details per column
-        with st.expander(
-            f"Detalhes: {len(batch_results)} colunas analisadas",
-            expanded=total_added > 0,
-        ):
-            for br in batch_results:
-                if br["status"] == "added":
-                    st.caption(
-                        f":green[+{br['added']}] **{br['column']}** -- "
-                        f"{br['confidence']}, cobertura {br['coverage']:.1f}%, "
-                        f"N={br['n']}, sigma={br['sigma']}"
-                    )
-                elif br["status"] == "exists":
-                    st.caption(f":blue[=] **{br['column']}** -- ja no carrinho")
-                elif br["status"] == "skip":
-                    st.caption(f":orange[-] **{br['column']}** -- {br['reason']}")
-                elif br["status"] == "error":
-                    st.caption(f":red[!] **{br['column']}** -- erro: {br['reason']}")
-
-    # Carrinho gerenciado na pagina Review (acessivel pelo sidebar)
+    # Batch calibrate e carrinho acessiveis acima das tabs e pelo sidebar
