@@ -186,7 +186,7 @@ class TestGeneratorDynamic:
             baseline_margin_pct=0.10,
         )
         syntax = self.gen.generate(p)
-        assert '"STATUS"' in syntax and "'A'" in syntax
+        assert 'STATUS' in syntax and "'A'" in syntax
         assert 'avg(last(30))' in syntax
         assert 'OR' in syntax
 

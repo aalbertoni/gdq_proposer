@@ -89,7 +89,7 @@ class GDQRuleGenerator:
             if overrides.margin_enabled is not None:
                 margin_enabled = overrides.margin_enabled
 
-        target = proposal.target_column or ""
+        target = proposal.target_column.upper() if proposal.target_column else ""
 
         spec = DualGuardSpec(
             metric=metric,
@@ -109,7 +109,8 @@ class GDQRuleGenerator:
         threshold = proposal.suggested_lower or 1.0
         if overrides and overrides.custom_lower is not None:
             threshold = overrides.custom_lower
-        return f"Completeness {proposal.target_column} >= {threshold:.2f}"
+        col = proposal.target_column.upper() if proposal.target_column else ""
+        return f"Completeness {col} >= {threshold:.2f}"
 
     def _generate_allowed_values(
         self,
@@ -119,8 +120,22 @@ class GDQRuleGenerator:
         values = proposal.suggested_values or []
         if overrides and overrides.custom_values is not None:
             values = overrides.custom_values
-        values_str = ", ".join(str(v) for v in values)
-        return f"ColumnValues {proposal.target_column} in [{values_str}]"
+        values_str = ", ".join(self._format_column_value(v) for v in values)
+        col = proposal.target_column.upper() if proposal.target_column else ""
+        return f"ColumnValues {col} in [{values_str}]"
+
+    @staticmethod
+    def _format_column_value(value: str) -> str:
+        """Formata valor para ColumnValues: numerico sem aspas, string com aspas, NULL sem aspas."""
+        s = str(value)
+        if s.upper() == "NULL":
+            return "NULL"
+        try:
+            # Tenta interpretar como numero
+            float(s)
+            return s
+        except (ValueError, TypeError):
+            return f"'{s}'"
 
     def _generate_distinct_count(
         self,
@@ -130,11 +145,12 @@ class GDQRuleGenerator:
         count = int(proposal.suggested_lower) if proposal.suggested_lower else 0
         if overrides and overrides.custom_lower is not None:
             count = int(overrides.custom_lower)
-        return f"DistinctValuesCount {proposal.target_column} = {count}"
+        col = proposal.target_column.upper() if proposal.target_column else ""
+        return f"DistinctValuesCount {col} = {count}"
 
     def _generate_primary_key(self, proposal: RuleProposal) -> str:
         cols = proposal.suggested_values or []
-        return f"IsPrimaryKey {' '.join(cols)}"
+        return f"IsPrimaryKey {' '.join(c.upper() for c in cols)}"
 
     def _generate_category_frequency_static(
         self,
@@ -157,13 +173,13 @@ class GDQRuleGenerator:
     def _build_custom_sql_expression(self, col: str, value: str) -> str:
         """Constrói a expressão SQL interna do CustomSql frequency.
 
-        Coluna é quoted com aspas duplas para compatibilidade com palavras
-        reservadas SQL (ex: ORDER, DATE, GROUP).
+        Nomes de coluna em MAIUSCULO sem aspas (convencao GDQ).
         Single quotes in category values are escaped ('' in SQL).
         """
         safe_value = value.replace("'", "''")
+        col_upper = col.upper()
         return (
-            f'select cast(sum(case when "{col}" = \'{safe_value}\' '
+            f"select cast(sum(case when {col_upper} = '{safe_value}' "
             f"then 1 else 0 end) as double) * 100.0 / count(*) from primary"
         )
 
@@ -251,7 +267,7 @@ class GDQRuleGenerator:
         overrides: UserOverride | None,
     ) -> str:
         """(DistinctValuesCount COL >= X) AND (DistinctValuesCount COL <= Y)."""
-        col = proposal.target_column
+        col = proposal.target_column.upper() if proposal.target_column else ""
         lower = int(proposal.suggested_lower) if proposal.suggested_lower else 0
         upper = int(proposal.suggested_upper) if proposal.suggested_upper else 0
         if overrides:
@@ -284,12 +300,12 @@ class GDQRuleGenerator:
             raise ValueError("UNIQUENESS_CUSTOM_SQL requires suggested_values with column names")
 
         if len(cols) == 1:
-            distinct_expr = f'cast(\\"{cols[0]}\\" as varchar)'
+            distinct_expr = f'cast({cols[0].upper()} as varchar)'
         else:
-            # concat(cast("COL1" as varchar), '||', cast("COL2" as varchar), ...)
+            # concat(cast(COL1 as varchar), '||', cast(COL2 as varchar), ...)
             parts = []
             for col in cols:
-                parts.append(f'cast(\\"{col}\\" as varchar)')
+                parts.append(f'cast({col.upper()} as varchar)')
             distinct_expr = "concat(" + ", '||', ".join(parts) + ")"
 
         sql_expr = (
@@ -321,8 +337,9 @@ class GDQRuleGenerator:
             if overrides.margin_enabled is not None:
                 margin_enabled = overrides.margin_enabled
 
+        col_upper = col.upper() if col else ""
         sql_expr = (
-            f'select approx_percentile(cast("{col}" as double), {pct_value}) from primary'
+            f'select approx_percentile(cast({col_upper} as double), {pct_value}) from primary'
         )
 
         spec = DualGuardSpec(

@@ -208,7 +208,8 @@ class TestGDQGeneratorCategorical:
         )
         syntax = self.gen.generate(p)
         assert 'CustomSql' in syntax
-        assert '"STATUS"' in syntax and "'A'" in syntax
+        assert 'STATUS' in syntax and "'A'" in syntax
+        assert '"STATUS"' not in syntax  # sem aspas no nome da coluna
         assert 'between 25.00 and 35.00' in syntax
         assert 'from primary' in syntax
 
@@ -237,7 +238,8 @@ class TestGDQGeneratorCategorical:
         )
         syntax = self.gen.generate(p)
         assert 'CustomSql' in syntax
-        assert '"STATUS"' in syntax and "'A'" in syntax
+        assert 'STATUS' in syntax and "'A'" in syntax
+        assert '"STATUS"' not in syntax  # sem aspas no nome da coluna
         assert 'avg(last(30))' in syntax
         assert 'std(last(30))' in syntax
         assert 'from primary' in syntax
@@ -251,7 +253,7 @@ class TestGDQGeneratorCategorical:
             suggested_values=["SP", "RJ", "MG"],
         )
         syntax = self.gen.generate(p)
-        assert "ColumnValues UF in [SP, RJ, MG]" == syntax
+        assert "ColumnValues UF in ['SP', 'RJ', 'MG']" == syntax
 
 
 # ---------------------------------------------------------------------------

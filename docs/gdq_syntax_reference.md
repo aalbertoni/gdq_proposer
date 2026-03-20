@@ -13,7 +13,7 @@
 | Nomes de regra | **CamelCase**: `Mean`, `StandardDeviation`, `RowCount`, `CustomSql` |
 | Funções dinâmicas | `avg(last(N))`, `std(last(N))` — sempre em **lowercase** |
 | Valores string em CustomSql | Com aspas simples: `'1'`, `'2'` |
-| Valores em ColumnValues | Sem aspas para números/inteiros: `in [2, 1, 3]` |
+| Valores em ColumnValues | Numéricos sem aspas: `in [2, 1, 3]`; strings com aspas simples: `in ['SP', 'RJ']`; `NULL` nunca tem aspas |
 | Buffer numérico | `0.01` adicionado/subtraído para evitar falso positivo em zero |
 | Operadores | `>=`, `<=`, `=`, `in`, `between ... and` |
 
@@ -185,7 +185,7 @@ Segue o padrao dual guard (sigma OR margem).
 ### Sintaxe
 
 ```
-(((CustomSql "select cast(sum(case when "{COL}" = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= (avg(last({N})) - ({K} * std(last({N}))) - {BUFFER})) AND (CustomSql "select cast(sum(case when "{COL}" = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= (avg(last({N})) + ({K} * std(last({N}))) + {BUFFER}))) OR ((CustomSql "select cast(sum(case when "{COL}" = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= (avg(last({N})) * {1-MARGIN}) - {BUFFER}) AND (CustomSql "select cast(sum(case when "{COL}" = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= (avg(last({N})) * {1+MARGIN}) + {BUFFER})))
+(((CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= (avg(last({N})) - ({K} * std(last({N}))) - {BUFFER})) AND (CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= (avg(last({N})) + ({K} * std(last({N}))) + {BUFFER}))) OR ((CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= (avg(last({N})) * {1-MARGIN}) - {BUFFER}) AND (CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= (avg(last({N})) * {1+MARGIN}) + {BUFFER})))
 ```
 
 ### Parametros
@@ -241,17 +241,20 @@ Veja ADR-004 para detalhes da decisao de design do modo hibrido.
 ColumnValues {COL} in [{VALUE1}, {VALUE2}, {VALUE3}]
 ```
 
-### Exemplo Real
+### Exemplos Reais
 
 ```
 ColumnValues COD_SITU_OPCR in [2, 1, 3]
+ColumnValues UF_EMPR in ['SP', 'RJ', 'MG']
+ColumnValues STATUS in ['ATIVO', NULL, 'INATIVO']
 ```
 
 ### Notas
 
-- Sem aspas nos valores quando numéricos/inteiros
-- Para valores string: confirmar se usa aspas simples `['A', 'B']` ou sem aspas
-- Sem aspas no nome da coluna
+- Valores numéricos: **sem aspas** — `in [2, 1, 3]`
+- Valores string: **com aspas simples** — `in ['SP', 'RJ', 'MG']`
+- `NULL` **nunca** tem aspas — `in ['ATIVO', NULL]`
+- Sem aspas no nome da coluna (sempre UPPERCASE)
 - Ordem dos valores não importa semanticamente
 
 ---

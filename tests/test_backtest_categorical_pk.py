@@ -472,7 +472,7 @@ class TestGDQGeneratorUniqueness:
         syntax = self.gen.generate(p)
         assert syntax.startswith('CustomSql "')
         assert 'count(distinct' in syntax
-        assert '\\"NUM_CTRT\\"' in syntax
+        assert 'NUM_CTRT' in syntax
         assert 'from primary' in syntax
         assert '>= 100.0' in syntax
         assert 'cast(' in syntax
@@ -488,8 +488,8 @@ class TestGDQGeneratorUniqueness:
         syntax = self.gen.generate(p)
         assert 'CustomSql "' in syntax
         assert 'concat(' in syntax
-        assert '\\"COL_A\\"' in syntax
-        assert '\\"COL_B\\"' in syntax
+        assert 'COL_A' in syntax
+        assert 'COL_B' in syntax
         assert "'||'" in syntax
         assert 'from primary' in syntax
         assert '>= 100.0' in syntax
@@ -503,9 +503,9 @@ class TestGDQGeneratorUniqueness:
         )
         syntax = self.gen.generate(p)
         assert 'concat(' in syntax
-        assert '\\"C1\\"' in syntax
-        assert '\\"C2\\"' in syntax
-        assert '\\"C3\\"' in syntax
+        assert 'C1' in syntax
+        assert 'C2' in syntax
+        assert 'C3' in syntax
         # Should have 2 '||' separators for 3 columns
         assert syntax.count("'||'") == 2
 
