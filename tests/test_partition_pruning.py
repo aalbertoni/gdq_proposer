@@ -163,6 +163,41 @@ class TestResolvePartitionFilterNew:
         assert "TRY_CAST" not in result
         assert "2026-02-18" in result
 
+    def test_integer_yyyymmdd_no_quotes(self, qb_athena):
+        """Integer partition: literal sem aspas."""
+        result = qb_athena.resolve_partition_filter(
+            partition_column="dt_ref",
+            partition_format="%Y%m%d",
+            lookback_value=30,
+            reference_date="2026-03-20",
+            partition_is_integer=True,
+        )
+        assert result == '"dt_ref" >= 20260218'
+        assert "'" not in result
+
+    def test_integer_yyyymm_no_quotes(self, qb_athena):
+        result = qb_athena.resolve_partition_filter(
+            partition_column="dt_ref",
+            partition_format="%Y%m",
+            lookback_value=30,
+            reference_date="2026-03-20",
+            partition_is_integer=True,
+        )
+        assert result == '"dt_ref" >= 202602'
+        assert "'" not in result
+
+    def test_string_yyyymmdd_has_quotes(self, qb_athena):
+        """String partition: literal com aspas."""
+        result = qb_athena.resolve_partition_filter(
+            partition_column="dt_ref",
+            partition_format="%Y%m%d",
+            lookback_value=30,
+            reference_date="2026-03-20",
+            partition_is_integer=False,
+        )
+        assert "'" in result
+        assert "'20260218'" in result
+
 
 # ---------------------------------------------------------------------------
 # Integracao: partition_filter nos templates
