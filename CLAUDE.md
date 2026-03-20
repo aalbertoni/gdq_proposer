@@ -30,14 +30,19 @@ pytest tests/ -v
 ### Arquitetura
 
 - `config.py` — `AppConfig` com `AthenaConfig` + `GlueTestConfig`, carrega de `.env`
-- `infra/athena_client.py` — Client PyAthena com timeout, logging e cache
+- `infra/athena_client.py` — Client PyAthena (DictCursor, sem S3), timeout adaptativo, logging
+- `infra/aws_session.py` — Fabrica de sessoes boto3: S3 path-style, CA bundle, debug hooks
 - `infra/query_builder.py` — Templates Jinja2 com dialeto SQL via `sql_dialect.py`
 - `infra/sql_dialect.py` — Adapta funcoes SQL entre Athena e DuckDB (usado nos testes)
 - `infra/glue_client.py` — Wrapper boto3 para Glue jobs (integracao Thundera)
 - `services/` — Camada de servico: dataset, profiling, analysis, proposal, export, glue_test
 - `core/` — Logica pura: statistical_engine, backtest, rule_scoring, gdq_renderer, gdq_rule_generator
-- `pages/` — 5 paginas Streamlit: Setup, Explore, Review, Teste, Ajuda
+- `core/column_classifier.py` — Classificacao semantica em 3 camadas (tipo fisico + cast + cardinalidade)
+- `pages/` — 6 paginas Streamlit: Setup, Explore, Review, Teste, Ajuda, Diagnostico
+- `pages/06_diagnostico.py` — Diagnosticos de ambiente: SSL, proxy, CA bundle, fingerprint
 - `tests/conftest.py` — `DuckDBTestClient` para testes sem Athena real
+- `preflight_check.py` — Validacao de ambiente pre-lancamento (blocking/non-blocking)
+- `launcher.py` — Orquestrador: carrega .env, executa preflight, lanca Streamlit
 
 ### SQL Dialect (Athena vs DuckDB)
 
@@ -210,7 +215,7 @@ IsPrimaryKey COL1 COL2 COL3
 4. **Frequencia em percentual 0-100** (nao 0-1) nas regras CustomSql
 5. **Todas as regras dinamicas usam padrao dual guard (sigma OR margem %)** — nunca gerar so uma parte
 6. **CustomSql tambem suporta `avg(last(N))` no between** — regras categoricas podem ser dinamicas
-7. **Athena retorna arrays de percentil como string** — parse necessario no `analysis_service`
+7. **Athena retorna arrays de percentil como lista (DictCursor) ou string (PandasCursor)** — `_parse_percentile_array` trata ambos
 8. **Coluna de data pode ser string** — sempre usar `date_expression` do config para normalizar
 9. **Streamlit reruns inteiros** a cada interacao — usar `st.session_state` para preservar estado
 10. **Plotly `add_hrect`** e ideal para desenhar bandas de confianca no grafico
@@ -226,6 +231,114 @@ IsPrimaryKey COL1 COL2 COL3
 13. **DuckDB e dependencia de teste apenas** — nunca importar em codigo de producao
     - Testes usam `DuckDBTestClient` de `tests/conftest.py`
     - `QueryBuilder(dialect=SQLDialect.DUCKDB)` nos testes para SQL compativel
+14. **PyAthena usa DictCursor** (nao PandasCursor) — busca resultados via API GetQueryResults, sem acessar S3
+    - `execute_df()` faz `pd.DataFrame(cursor.fetchall())`, nao `cursor.as_pandas()`
+    - `execute()` retorna `list[dict]` direto do DictCursor
+    - `s3_staging_dir=""` quando workgroup configurado — desabilita referencia ao S3
+    - NULLs do Athena chegam como Python `None` (nao `float('nan')`)
+15. **information_schema para metadados** — `get_columns_with_partitions()` usa
+    `information_schema.columns` (SQL padrao) em vez de `DESCRIBE` (formato varia entre cursors)
+    - Colunas retornadas: `column_name`, `data_type`, `extra_info` (contem "partition key")
+16. **Timeout adaptativo** — `AthenaClient.adapt_timeout(estimated_rows)` ajusta timeout
+    baseado na volumetria: >500M=10min, >100M=6min, >10M=4min, default=2min
+    - `DatasetService.estimate_volume_and_adapt_timeout()` roda COUNT(*) com partition pruning
+17. **Partition pruning em TODAS as queries de analise** — todos os templates de analise
+    aceitam `partition_filter` opcional via Jinja2 `{% if partition_filter %}`
+    - Templates: numeric_history, row_count_history, distinct_count_history,
+      categorical_distribution, categorical_domain, uniqueness_check
+    - `AnalysisService._resolve_partition_filter()` gera filtro via `QueryBuilder.resolve_partition_filter()`
+18. **Proxy corporativo** — `.env` configura HTTP_PROXY/HTTPS_PROXY/NO_PROXY
+    - `infra/aws_session.py` forca S3 path-style e propaga CA bundle
+    - `preflight_check.py` valida proxy, CA bundle, conectividade
+    - `pages/06_diagnostico.py` mostra SSL tests, proxy detection, environment fingerprint
+
+## Classificacao Semantica de Colunas (column_classifier)
+
+Modulo: `core/column_classifier.py`. Servico: `services/profiling_service.py`.
+
+### Inputs (coletados via SQL — `batch_column_sample.sql` / `column_sample.sql`)
+
+| Metrica | SQL | Descricao |
+|---------|-----|-----------|
+| `athena_type` | `information_schema.columns` | Tipo fisico (varchar, bigint, double, date...) |
+| `total_count` | `COUNT(*)` | Linhas na amostra (ultimos `sample_periods` dias, default 10) |
+| `non_null_count` | `COUNT("col")` | Linhas nao-nulas |
+| `distinct_count` | `APPROX_DISTINCT("col")` | Valores distintos (aproximado) |
+| `numeric_cast_count` | `SUM(CASE WHEN TRY_CAST("col" AS DOUBLE) IS NOT NULL ...)` | So para strings: quantos valores sao castaveis para numero |
+
+Metricas derivadas: `null_ratio`, `distinct_ratio`, `numeric_cast_ratio`.
+
+### Camada 1 — Tipo Fisico Athena (sem query)
+
+| Tipo normalizado | Resultado |
+|-----------------|-----------|
+| `tinyint, smallint, int, integer, bigint, float, double, decimal, real` | **NUMERIC** (com guardrails de cardinalidade) |
+| `date, timestamp, timestamp with time zone` | **DATETIME** |
+| `string, varchar, char, binary, varbinary` | vai para Camada 2 |
+
+Normalizacao: `varchar(255)` → `varchar`, `decimal(10,2)` → `decimal`, `BIGINT` → `bigint`.
+
+### Camada 1b — Guardrails de Numericas Nativas (`suggest_reclassification`)
+
+| Condicao | Resultado | Exemplo |
+|----------|-----------|---------|
+| `distinct <= 20` | **CATEGORICAL_LOW** | COD_SITU (int com valores 1,2,3) |
+| `distinct >= 10000 AND ratio >= 50% AND tipo inteiro` | **IDENTIFIER** | NUM_CONTRATO (bigint) |
+| `tipo double/decimal com alta cardinalidade` | mantém **NUMERIC** | VLR_SALDO |
+
+### Camada 2 — Heuristica de Conteudo (strings castaveis)
+
+| Condicao | Resultado | Exemplo |
+|----------|-----------|---------|
+| `cast_ratio >= 0.95 AND distinct >= 10000 AND ratio >= 50%` | **IDENTIFIER** | CPF (varchar "12345678901") |
+| `cast_ratio >= 0.95 AND distinct <= 20` | **CATEGORICAL_LOW** | COD_TIPO (varchar "1","2","3") |
+| `cast_ratio >= 0.95 AND 21 <= distinct <= 9999` | **NUMERIC** | VLR_PARCELA (varchar com valores monetarios) |
+| `cast_ratio < 0.95` | vai para Camada 3 | |
+
+### Camada 3 — Cardinalidade (strings nao-numericas)
+
+| Condicao | Resultado | Exemplo |
+|----------|-----------|---------|
+| `non_null == 0` | **UNKNOWN** | Coluna 100% nula |
+| `distinct <= 50 AND ratio < 0.005` | **CATEGORICAL_LOW** | UF (27 estados) |
+| `distinct <= 500 AND ratio < 0.05` | **CATEGORICAL_MID** | CIDADE (300 cidades) |
+| Senao | **CATEGORICAL_HIGH** | NOME_CLIENTE |
+
+### Thresholds (configuraveis em `column_classifier.py`)
+
+| Constante | Valor | Uso |
+|-----------|-------|-----|
+| `NUMERIC_CAST_THRESHOLD` | 0.95 | Min ratio cast para classificar string como NUMERIC |
+| `LOW_CARDINALITY_MAX_DISTINCT` | 50 | Max distinct para CATEGORICAL_LOW |
+| `LOW_CARDINALITY_MAX_RATIO` | 0.005 | Max ratio para CATEGORICAL_LOW |
+| `MID_CARDINALITY_MAX_DISTINCT` | 500 | Max distinct para CATEGORICAL_MID |
+| `MID_CARDINALITY_MAX_RATIO` | 0.05 | Max ratio para CATEGORICAL_MID |
+| `NUMERIC_LOW_CARD_MAX_DISTINCT` | 20 | Guardrail: numerico nativo com <= 20 distintos → categorica |
+| `NUMERIC_HIGH_CARD_MIN_DISTINCT` | 10000 | Guardrail: inteiro com >= 10k distintos → identificador |
+| `NUMERIC_HIGH_CARD_MIN_RATIO` | 0.50 | Guardrail: + ratio >= 50% → confirma identificador |
+
+### SemanticType → Regras GDQ
+
+| SemanticType | Regras geradas |
+|-------------|----------------|
+| NUMERIC | Mean, StandardDeviation, Completeness |
+| CATEGORICAL_LOW | AllowedValues, DistinctCountExact, Frequency, Completeness |
+| CATEGORICAL_MID | DistinctCountRange, Top-20 Frequency, Completeness |
+| CATEGORICAL_HIGH | Completeness only |
+| DATETIME | Nenhuma (eixo temporal) |
+| IDENTIFIER | IsPrimaryKey (se chave), Completeness |
+| UNKNOWN | Nenhuma |
+
+### Limitacoes conhecidas
+
+1. Gap entre 20-9999 distintos na Camada 2: strings castaveis com ~200 distintos sao NUMERIC, mas podem ser codigos
+2. Sem analise de padrao textual (comprimento fixo, leading zeros, formato misto)
+3. APPROX_DISTINCT pode variar entre execucoes, cruzando boundaries
+4. Amostra de 10 periodos pode nao representar colunas com sazonalidade
+5. Sem distincao entre CATEGORICAL_HIGH e FREE_TEXT
+6. `suggest_reclassification` nao reclassifica double/decimal para IDENTIFIER (intencional: saldos tem alta cardinalidade)
+
+---
 
 ## Diagnosticos Estatisticos (Painel de Calibracao)
 
