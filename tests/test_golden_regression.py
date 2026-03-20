@@ -426,3 +426,57 @@ class TestGoldenRecommendationTier:
         if mean_p:
             # Volatil pode ser POSSIBLE ou NOT_RECOMMENDED, nunca RECOMMENDED
             assert mean_p.recommendation_tier != RecommendationTier.RECOMMENDED
+
+
+# ===========================================================================
+# DIMENSAO 6: Priorizacao (ordenacao)
+# ===========================================================================
+
+class TestGoldenPrioritization:
+    """Valida que propostas sao retornadas ordenadas por prioridade."""
+
+    def test_proposals_ordered_by_tier(self):
+        """Propostas RECOMMENDED aparecem antes de NOT_RECOMMENDED."""
+        s = make_stable_series(n=45)
+        history = _make_numeric_history(s)
+        svc = ProposalService()
+        proposals = svc.propose_numeric_rules(
+            history, "VLR_SALDO", "tb_test", _baseline(),
+        )
+        tiers = [p.recommendation_tier for p in proposals]
+        # RECOMMENDED e POSSIBLE devem vir antes de NOT_RECOMMENDED
+        from core.rule_recommender import _TIER_RANK
+        ranks = [_TIER_RANK.get(t, 0) for t in tiers]
+        assert ranks == sorted(ranks, reverse=True), (
+            f"Proposals nao estao ordenadas por tier: {tiers}"
+        )
+
+    def test_all_proposals_have_priority_score(self):
+        """Todas as propostas devem ter priority_score > 0 (exceto sem backtest)."""
+        s = make_stable_series(n=45)
+        history = _make_numeric_history(s)
+        svc = ProposalService()
+        proposals = svc.propose_numeric_rules(
+            history, "VLR_SALDO", "tb_test", _baseline(),
+        )
+        for p in proposals:
+            assert hasattr(p, "priority_score")
+            assert isinstance(p.priority_score, float)
+            if p.backtest is not None:
+                assert p.priority_score > 0.0
+
+    def test_higher_score_first_within_same_tier(self):
+        """Dentro do mesmo tier, maior priority_score aparece primeiro."""
+        s = make_stable_series(n=45)
+        history = _make_numeric_history(s)
+        svc = ProposalService()
+        proposals = svc.propose_numeric_rules(
+            history, "VLR_SALDO", "tb_test", _baseline(),
+        )
+        # Agrupar por tier
+        from core.models.enums import RecommendationTier as RT
+        for tier in (RT.RECOMMENDED, RT.POSSIBLE, RT.NOT_RECOMMENDED):
+            tier_proposals = [p for p in proposals if p.recommendation_tier == tier]
+            if len(tier_proposals) > 1:
+                scores = [p.priority_score for p in tier_proposals]
+                assert scores == sorted(scores, reverse=True)

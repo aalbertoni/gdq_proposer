@@ -61,6 +61,7 @@ class RuleProposal:
     # Recomendacao
     recommendation_tier: RecommendationTier = RecommendationTier.RECOMMENDED
     recommendation_reasons: list[str] = field(default_factory=list)
+    priority_score: float = 0.0  # Score composto para ordenacao (maior = melhor)
 
     # Sintaxe
     gdq_syntax_preview: str = ""

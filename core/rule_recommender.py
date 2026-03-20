@@ -231,6 +231,64 @@ def _estimate_score(bt, rule_type: RuleType) -> float:
     return max(0.0, min(1.0, score))
 
 
+def prioritize_proposals(proposals: list[RuleProposal]) -> list[RuleProposal]:
+    """Ordena propostas por relevancia (maior prioridade primeiro).
+
+    Sort key composta:
+    1. Tier: RECOMMENDED > POSSIBLE > NOT_RECOMMENDED
+    2. Priority score (maior primeiro)
+    3. Coverage (maior primeiro)
+    4. Falsos positivos (menor primeiro)
+
+    Returns:
+        Lista ordenada (novo objeto, nao muta a original).
+    """
+    return sorted(proposals, key=_sort_key)
+
+
+_TIER_RANK = {
+    RecommendationTier.RECOMMENDED: 2,
+    RecommendationTier.POSSIBLE: 1,
+    RecommendationTier.NOT_RECOMMENDED: 0,
+}
+
+
+def _sort_key(proposal: RuleProposal) -> tuple:
+    """Chave de ordenacao composta (negada para desc onde maior = melhor)."""
+    tier_rank = _TIER_RANK.get(proposal.recommendation_tier, 0)
+    score = proposal.priority_score
+    bt = proposal.backtest
+    coverage = bt.coverage_pct if bt else 0.0
+    fp = bt.false_positive_proxy if bt else 999
+
+    return (-tier_rank, -score, -coverage, fp)
+
+
+def compute_priority_score(proposal: RuleProposal) -> float:
+    """Calcula priority_score para ordenacao.
+
+    Combina score estimado do backtest com bonus/penalidades de tier.
+    Resultado em [0, 1].
+    """
+    bt = proposal.backtest
+    if bt is None:
+        return 0.0
+
+    base_score = _estimate_score(bt, proposal.rule_type)
+
+    # Bonus por cobertura ponderada (recencia)
+    if bt.weighted_coverage_pct > 0:
+        recency_bonus = min(0.05, (bt.weighted_coverage_pct - bt.coverage_pct) / 100.0 * 0.5)
+        base_score += max(0.0, recency_bonus)
+
+    # Penalidade por FP
+    if bt.false_positive_proxy > 0:
+        fp_penalty = min(0.10, bt.false_positive_proxy * 0.02)
+        base_score -= fp_penalty
+
+    return max(0.0, min(1.0, round(base_score, 4)))
+
+
 def _rule_label(rule_type: RuleType) -> str:
     """Label curto para mensagens."""
     from core.models.enums import get_rule_label

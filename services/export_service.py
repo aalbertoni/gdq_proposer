@@ -367,6 +367,16 @@ class ExportService:
             lines.append(f"- **Regras com avisos:** {with_warnings}")
         lines.extend(["", "---", "", "## Regras Propostas", ""])
 
+        # Ordenar por prioridade (maior priority_score primeiro, agrupado por tier)
+        from core.rule_recommender import _TIER_RANK
+        enabled = sorted(
+            enabled,
+            key=lambda sel: (
+                -_TIER_RANK.get(sel.proposal.recommendation_tier, 0),
+                -sel.proposal.priority_score,
+            ),
+        )
+
         for idx, sel in enumerate(enabled, 1):
             p = sel.proposal
             target = p.target_column or "(tabela)"

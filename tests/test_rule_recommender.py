@@ -10,7 +10,7 @@ from core.models.enums import (
 )
 from core.models.rule_proposal import BacktestSummary, RuleProposal
 from core.models.series_profile import SeriesProfile
-from core.rule_recommender import recommend_tier
+from core.rule_recommender import compute_priority_score, prioritize_proposals, recommend_tier
 
 
 # ---------------------------------------------------------------------------
@@ -280,3 +280,124 @@ class TestProposalIntegration:
         p = _proposal(backtest=_bt(coverage=95, fp=0))
         _, reasons = recommend_tier(p, _stable_profile())
         assert isinstance(reasons, list)
+
+    def test_default_priority_score_is_zero(self):
+        p = _proposal()
+        assert p.priority_score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Priorizacao (ordenacao)
+# ---------------------------------------------------------------------------
+
+class TestPrioritizeProposals:
+    def test_recommended_before_possible(self):
+        rec = _proposal(backtest=_bt(coverage=95, fp=0))
+        rec.recommendation_tier = RecommendationTier.RECOMMENDED
+        rec.priority_score = 0.85
+
+        pos = _proposal(backtest=_bt(coverage=70, fp=2))
+        pos.recommendation_tier = RecommendationTier.POSSIBLE
+        pos.priority_score = 0.60
+
+        result = prioritize_proposals([pos, rec])
+        assert result[0] is rec
+        assert result[1] is pos
+
+    def test_possible_before_not_recommended(self):
+        pos = _proposal(backtest=_bt(coverage=70))
+        pos.recommendation_tier = RecommendationTier.POSSIBLE
+        pos.priority_score = 0.55
+
+        nr = _proposal(backtest=_bt(coverage=40))
+        nr.recommendation_tier = RecommendationTier.NOT_RECOMMENDED
+        nr.priority_score = 0.30
+
+        result = prioritize_proposals([nr, pos])
+        assert result[0] is pos
+        assert result[1] is nr
+
+    def test_same_tier_higher_score_first(self):
+        high = _proposal(backtest=_bt(coverage=95, fp=0))
+        high.recommendation_tier = RecommendationTier.RECOMMENDED
+        high.priority_score = 0.90
+
+        low = _proposal(backtest=_bt(coverage=85, fp=1))
+        low.recommendation_tier = RecommendationTier.RECOMMENDED
+        low.priority_score = 0.75
+
+        result = prioritize_proposals([low, high])
+        assert result[0] is high
+        assert result[1] is low
+
+    def test_same_tier_same_score_higher_coverage_first(self):
+        a = _proposal(backtest=_bt(coverage=95))
+        a.recommendation_tier = RecommendationTier.RECOMMENDED
+        a.priority_score = 0.85
+
+        b = _proposal(backtest=_bt(coverage=80))
+        b.recommendation_tier = RecommendationTier.RECOMMENDED
+        b.priority_score = 0.85
+
+        result = prioritize_proposals([b, a])
+        assert result[0] is a
+
+    def test_same_everything_fewer_fp_first(self):
+        a = _proposal(backtest=_bt(coverage=90, fp=0))
+        a.recommendation_tier = RecommendationTier.RECOMMENDED
+        a.priority_score = 0.85
+
+        b = _proposal(backtest=_bt(coverage=90, fp=2))
+        b.recommendation_tier = RecommendationTier.RECOMMENDED
+        b.priority_score = 0.85
+
+        result = prioritize_proposals([b, a])
+        assert result[0] is a
+
+    def test_empty_list(self):
+        assert prioritize_proposals([]) == []
+
+    def test_single_proposal(self):
+        p = _proposal(backtest=_bt())
+        result = prioritize_proposals([p])
+        assert result == [p]
+
+    def test_does_not_mutate_original(self):
+        a = _proposal(backtest=_bt(coverage=90))
+        a.recommendation_tier = RecommendationTier.RECOMMENDED
+        a.priority_score = 0.85
+
+        b = _proposal(backtest=_bt(coverage=50))
+        b.recommendation_tier = RecommendationTier.NOT_RECOMMENDED
+        b.priority_score = 0.30
+
+        original = [b, a]
+        result = prioritize_proposals(original)
+        assert original[0] is b  # original nao muda
+        assert result[0] is a  # resultado reordenado
+
+
+class TestComputePriorityScore:
+    def test_good_backtest_high_score(self):
+        p = _proposal(backtest=_bt(coverage=95, fp=0, stability=0.9))
+        score = compute_priority_score(p)
+        assert score >= 0.80
+
+    def test_no_backtest_zero(self):
+        p = _proposal(backtest=None)
+        assert compute_priority_score(p) == 0.0
+
+    def test_low_coverage_low_score(self):
+        p = _proposal(backtest=_bt(coverage=50, fp=0, stability=0.3))
+        score = compute_priority_score(p)
+        assert score < 0.75
+
+    def test_fp_penalty_reduces_score(self):
+        no_fp = _proposal(backtest=_bt(coverage=90, fp=0, stability=0.8))
+        with_fp = _proposal(backtest=_bt(coverage=90, fp=3, stability=0.8))
+        assert compute_priority_score(no_fp) > compute_priority_score(with_fp)
+
+    def test_score_in_range(self):
+        p = _proposal(backtest=_bt(coverage=50, fp=5, stability=0.1))
+        score = compute_priority_score(p)
+        assert 0.0 <= score <= 1.0

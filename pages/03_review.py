@@ -52,13 +52,23 @@ export_svc = ExportService()
 
 
 # ---------------------------------------------------------------------------
-# Exibir regras no carrinho
+# Exibir regras no carrinho (ordenadas por prioridade)
 # ---------------------------------------------------------------------------
 
 st.header(f"Carrinho ({len(cart)} regras)")
 
+# Ordenar cart por prioridade (maior priority_score primeiro, agrupado por tier)
+from core.rule_recommender import _TIER_RANK
+_sorted_cart = sorted(
+    enumerate(cart),
+    key=lambda item: (
+        -_TIER_RANK.get(item[1].proposal.recommendation_tier, 0),
+        -item[1].proposal.priority_score,
+    ),
+)
+
 remove_idx = None
-for i, selection in enumerate(cart):
+for i, selection in _sorted_cart:
     p = selection.proposal
     col1, col2, col3, col4 = st.columns([0.6, 5, 1.5, 0.5])
 
