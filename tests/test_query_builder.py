@@ -359,18 +359,28 @@ class TestResolvePartitionFilter:
         result = qb_athena.resolve_partition_filter(None, None, 30)
         assert result == ""
 
-    def test_athena_uses_date_add(self, qb_athena):
-        result = qb_athena.resolve_partition_filter("dt_ref", DATE_EXPR, 30)
-        assert "DATE_ADD" in result
-        assert "30" in result
+    def test_athena_string_partition_no_cast(self, qb_athena):
+        result = qb_athena.resolve_partition_filter(
+            "dt_ref", partition_format="%Y-%m-%d", lookback_value=30,
+            reference_date="2026-03-20",
+        )
+        assert "CAST" not in result
+        assert "DATE_PARSE" not in result
+        assert '"dt_ref"' in result
 
-    def test_duckdb_uses_interval(self, qb_duckdb):
-        result = qb_duckdb.resolve_partition_filter("dt_ref", DATE_EXPR, 30)
-        assert "INTERVAL" in result
-        assert "30" in result
+    def test_duckdb_string_partition_no_cast(self, qb_duckdb):
+        result = qb_duckdb.resolve_partition_filter(
+            "dt_ref", partition_format="%Y-%m-%d", lookback_value=30,
+            reference_date="2026-03-20",
+        )
+        assert "CAST" not in result
+        assert "TRY_CAST" not in result
 
-    def test_duckdb_without_date_expression_uses_try_cast(self, qb_duckdb):
-        result = qb_duckdb.resolve_partition_filter("dt_ref", "", 30)
+    def test_duckdb_native_uses_try_cast(self, qb_duckdb):
+        result = qb_duckdb.resolve_partition_filter(
+            "dt_ref", partition_format=None, lookback_value=30,
+            reference_date="2026-03-20",
+        )
         assert "TRY_CAST" in result
 
 
@@ -472,9 +482,10 @@ class TestReferenceDatePropagation:
 
     def test_partition_filter_with_reference(self, qb_athena):
         result = qb_athena.resolve_partition_filter(
-            "dt_ref", DATE_EXPR, 30, reference_date="2024-12-31",
+            "dt_ref", partition_format="%Y-%m-%d", lookback_value=30,
+            reference_date="2024-12-31",
         )
-        assert "2024-12-31" in result
+        assert "2024-12-01" in result  # 2024-12-31 - 30 days = 2024-12-01
         assert "CURRENT_DATE" not in result
 
     def test_batch_column_sample_with_reference(self, qb_duckdb):

@@ -67,6 +67,7 @@ def base_config():
         table="tb_numeric",
         partition_method=PartitionMethod.INCREMENTAL,
         partition_column="dt_ref",
+        partition_format="%Y-%m-%d",
         date_column="dt_ref",
         date_expression='CAST("dt_ref" AS DATE)',
         lookback_value=60,

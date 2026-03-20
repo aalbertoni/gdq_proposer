@@ -29,7 +29,7 @@ class AnalysisService:
         """Resolve filtro de particao para partition pruning nas queries de analise."""
         return self.builder.resolve_partition_filter(
             partition_column=config.partition_column,
-            date_expression=config.date_expression,
+            partition_format=config.partition_format,
             lookback_value=config.lookback_value,
             reference_date=config.reference_date or "",
         )

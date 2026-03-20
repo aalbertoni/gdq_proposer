@@ -71,6 +71,13 @@ class DatasetConfig:
     # Ex.: "COD_SEGMENTO != 'TESTE'"
     # Muito usado em FULL_SNAPSHOT para filtrar registros relevantes.
 
+    # === Partition pruning ===
+    partition_format: Optional[str] = None
+    # Formato fisico da coluna de particao para pruning.
+    # Ex: "%Y-%m-%d", "%Y%m%d", "%Y%m", "%Y.%m.%d"
+    # None = tipo nativo (date/timestamp) — comparacao direta com DATE literal.
+    # Usado APENAS para pruning fisico, NAO para analise temporal.
+
     # === Data ancora ===
     reference_date: Optional[str] = None
     # Data mais recente da tabela (YYYY-MM-DD), usada como ancora para lookback
@@ -122,26 +129,6 @@ class DatasetConfig:
             return self.partition_column or self.date_column
         return self.date_column
 
-    @property
-    def effective_partition_filter(self) -> Optional[str]:
-        """Gera filtro de partição para otimizar queries (partition pruning).
-
-        Se a tabela é particionada, gerar WHERE partition_col >= ...
-        para que o Athena faça partition pruning (reduz custo).
-        Usa reference_date como ancora quando disponivel.
-        """
-        if not self.partition_column:
-            return None
-        anchor = f"DATE '{self.reference_date}'" if self.reference_date else "CURRENT_DATE"
-        if self.date_expression:
-            return (
-                f"{self.date_expression} >= "
-                f"DATE_ADD('day', -{self.lookback_value}, {anchor})"
-            )
-        return (
-            f'"{self.partition_column}" >= '
-            f"CAST(DATE_ADD('day', -{self.lookback_value}, {anchor}) AS VARCHAR)"
-        )
 
     @property
     def grain_policy(self):
@@ -161,6 +148,7 @@ class DatasetConfig:
             self.table,
             self.partition_method.value,
             self.partition_column or "",
+            self.partition_format or "",
             self.date_column,
             self.temporal_axis_column or "",
             self.grain_type.value,

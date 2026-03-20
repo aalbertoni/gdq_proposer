@@ -107,6 +107,7 @@ def _build_config_from_dict(config_dict):
         table=config_dict["table"],
         partition_method=PartitionMethod(config_dict["partition_method"]),
         partition_column=config_dict.get("partition_column"),
+        partition_format=config_dict.get("partition_format"),
         date_column=config_dict["date_column"],
         date_expression=config_dict.get("date_expression"),
         lookback_value=config_dict["lookback_value"],
@@ -530,29 +531,35 @@ needs_date_expression = selected_col_base_type in (_STRING_TYPES | _INTEGER_TYPE
 is_integer_temporal = selected_col_base_type in _INTEGER_TYPES
 
 if needs_date_expression:
-    # SQL expressions: (label, athena_expr)
-    # Patterns depend on whether the column is string or integer type
+    # SQL expressions: (label, athena_expr, partition_format_for_pruning)
+    # partition_format: strftime format for raw partition column comparison
+    # None = no safe pruning (epoch, custom, non-lexicographic)
     if is_integer_temporal:
         _DATE_PATTERNS = [
             (
                 "yyyyMMdd como inteiro (ex: 20240115)",
                 'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m%d\')',
+                "%Y%m%d",
             ),
             (
                 "yyyyMM como inteiro (ex: 202401)",
                 'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m\')',
+                "%Y%m",
             ),
             (
                 "Epoch segundos (ex: 1705276800)",
                 'CAST(FROM_UNIXTIME("{col}") AS DATE)',
+                None,  # Epoch nao suporta pruning lexicografico
             ),
             (
                 "Epoch milissegundos (ex: 1705276800000)",
                 'CAST(FROM_UNIXTIME("{col}" / 1000) AS DATE)',
+                None,
             ),
             (
                 "Customizado (digitar manualmente)",
                 "",
+                None,
             ),
         ]
     else:
@@ -560,26 +567,32 @@ if needs_date_expression:
             (
                 "yyyy-MM-dd (ex: 2024-01-15)",
                 'CAST("{col}" AS DATE)',
+                "%Y-%m-%d",
             ),
             (
                 "yyyyMMdd (ex: 20240115)",
                 'DATE_PARSE("{col}", \'%Y%m%d\')',
+                "%Y%m%d",
             ),
             (
                 "yyyyMM (ex: 202401)",
                 'DATE_PARSE("{col}", \'%Y%m\')',
+                "%Y%m",
             ),
             (
                 "dd/MM/yyyy (ex: 15/01/2024)",
                 'DATE_PARSE("{col}", \'%d/%m/%Y\')',
+                None,  # Nao lexicografico — pruning inseguro
             ),
             (
                 "yyyy-MM-dd HH:mm:ss (ex: 2024-01-15 10:30:00)",
                 'CAST("{col}" AS TIMESTAMP)',
+                "%Y-%m-%d",
             ),
             (
                 "Customizado (digitar manualmente)",
                 "",
+                None,
             ),
         ]
 
@@ -604,12 +617,24 @@ if needs_date_expression:
             placeholder=f'ex: DATE_PARSE("{date_col}", \'%Y%m%d\')',
             help="Informe a expressao SQL que converte a coluna string para date/timestamp.",
         )
+        _partition_format = None  # Custom — sem pruning seguro
     else:
-        _, athena_expr = _DATE_PATTERNS[chosen_idx]
+        _, athena_expr, _partition_format = _DATE_PATTERNS[chosen_idx]
         date_expression = athena_expr.format(col=date_col)
 
         st.code(date_expression, language="sql")
         st.caption("Expressao SQL gerada automaticamente para o Athena.")
+
+    # Feedback de pruning
+    if _partition_format and partition_col:
+        from datetime import date as _d
+        _preview_cutoff = _d.today().strftime(_partition_format)
+        st.caption(f"Partition pruning: `\"{partition_col}\" >= '{_preview_cutoff}'`")
+    elif partition_col:
+        st.warning(
+            "Este formato nao permite partition pruning otimizado. "
+            "As queries podem escanear mais dados do que o necessario."
+        )
 
     if not date_expression.strip():
         st.error(
@@ -619,7 +644,8 @@ if needs_date_expression:
         st.stop()
 
 else:
-    # date/timestamp columns: optional expression (e.g. date_trunc)
+    # date/timestamp columns: tipo nativo — pruning direto com DATE literal
+    _partition_format = None
     date_expression = st.text_input(
         "Expressao de normalizacao (opcional):",
         value="",
@@ -657,6 +683,7 @@ dataset_config = DatasetConfig(
     table=table,
     partition_method=PartitionMethod(partition_method),
     partition_column=partition_col,
+    partition_format=_partition_format if partition_col else None,
     date_column=date_col,
     grain_type=GrainType(grain_type),
     lookback_mode=LookbackMode(lookback_mode),
@@ -672,6 +699,7 @@ if st.button("Validar Eixo Temporal", type="primary"):
         "table": dataset_config.table,
         "partition_method": dataset_config.partition_method.value,
         "partition_column": dataset_config.partition_column,
+        "partition_format": dataset_config.partition_format,
         "date_column": dataset_config.date_column,
         "date_expression": dataset_config.date_expression,
         "lookback_value": dataset_config.lookback_value,
@@ -822,6 +850,7 @@ if st.button("Executar Profiling", type="primary"):
         "table": dataset_config.table,
         "partition_method": dataset_config.partition_method.value,
         "partition_column": dataset_config.partition_column,
+        "partition_format": dataset_config.partition_format,
         "date_column": dataset_config.date_column,
         "date_expression": dataset_config.date_expression,
         "lookback_value": dataset_config.lookback_value,

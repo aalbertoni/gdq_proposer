@@ -124,22 +124,27 @@ class QueryBuilder:
     def resolve_partition_filter(
         self,
         partition_column: str | None,
-        date_expression: str | None,
-        lookback_value: int,
+        partition_format: str | None = None,
+        lookback_value: int = 30,
         reference_date: str = "",
+        # Deprecated — ignorado. Mantido para retrocompatibilidade de assinatura.
+        date_expression: str | None = None,
     ) -> str:
-        """Gera filtro de partição adaptado ao dialeto para partition pruning.
+        """Gera filtro de particao fisico para pruning de custo.
+
+        O predicado NUNCA aplica funcao sobre a coluna de particao.
+        Calcula o cutoff em Python e formata no layout fisico da particao.
 
         Returns:
-            String SQL para WHERE ou string vazia se não aplicável.
+            String SQL para WHERE ou string vazia se nao aplicavel.
         """
         if not partition_column:
             return ""
-        date_expr = self.resolve_date_expression(
-            partition_column, date_expression or "",
+        from infra.partition_pruning import compute_cutoff_date, build_partition_predicate
+        cutoff = compute_cutoff_date(reference_date or None, lookback_value)
+        return build_partition_predicate(
+            partition_column, partition_format, cutoff, self.dialect,
         )
-        lookback = self.date_lookback_expr(lookback_value, reference_date)
-        return f"{date_expr} >= {lookback}"
 
     def build_column_sample(
         self,

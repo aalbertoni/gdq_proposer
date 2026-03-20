@@ -62,7 +62,7 @@ class TestApproxDistinctDialect:
 # ===========================================================================
 
 class TestResolvePartitionFilter:
-    """Testa geracaoo de filtro de particao adaptado ao dialeto."""
+    """Testa geracao de filtro de particao fisico (sem CAST/DATE_PARSE)."""
 
     @pytest.fixture
     def duckdb_builder(self):
@@ -73,63 +73,51 @@ class TestResolvePartitionFilter:
         return QueryBuilder(dialect=SQLDialect.ATHENA)
 
     def test_no_partition_column_returns_empty(self, duckdb_builder):
-        """Sem coluna de particao, retorna string vazia."""
-        result = duckdb_builder.resolve_partition_filter(
-            partition_column=None,
-            date_expression=None,
-            lookback_value=30,
-        )
+        result = duckdb_builder.resolve_partition_filter(partition_column=None)
         assert result == ""
 
-    def test_with_date_expression_duckdb(self, duckdb_builder):
-        """Com date_expression explicita, usa-a no filtro."""
-        result = duckdb_builder.resolve_partition_filter(
-            partition_column="dt_ref",
-            date_expression='CAST("dt_ref" AS DATE)',
-            lookback_value=30,
-        )
-        assert ">=" in result
-        assert 'CAST("dt_ref" AS DATE)' in result
-        assert "30" in result
-
-    def test_with_date_expression_athena(self, athena_builder):
-        """Com date_expression explicita no Athena, usa DATE_ADD."""
+    def test_string_partition_athena_no_cast(self, athena_builder):
         result = athena_builder.resolve_partition_filter(
-            partition_column="dt_ref",
-            date_expression='CAST("dt_ref" AS DATE)',
-            lookback_value=30,
-        )
-        assert ">=" in result
-        assert 'CAST("dt_ref" AS DATE)' in result
-        assert "DATE_ADD" in result
-        assert "30" in result
-
-    def test_without_date_expression_duckdb(self, duckdb_builder):
-        """Sem date_expression, usa TRY_CAST no DuckDB (VARCHAR -> DATE)."""
-        result = duckdb_builder.resolve_partition_filter(
-            partition_column="dt_ref",
-            date_expression=None,
-            lookback_value=60,
-        )
-        assert 'TRY_CAST("dt_ref" AS DATE)' in result
-        assert "CURRENT_DATE - INTERVAL '60' DAY" in result
-
-    def test_without_date_expression_athena(self, athena_builder):
-        """Sem date_expression, usa coluna diretamente (Athena DATE_ADD)."""
-        result = athena_builder.resolve_partition_filter(
-            partition_column="dt_ref",
-            date_expression=None,
-            lookback_value=60,
+            partition_column="dt_ref", partition_format="%Y-%m-%d",
+            lookback_value=30, reference_date="2026-03-20",
         )
         assert '"dt_ref" >=' in result
-        assert "DATE_ADD('day', -60, CURRENT_DATE)" in result
+        assert "CAST" not in result
+        assert "DATE_PARSE" not in result
+        assert "DATE_ADD" not in result
+
+    def test_string_partition_duckdb_no_cast(self, duckdb_builder):
+        result = duckdb_builder.resolve_partition_filter(
+            partition_column="dt_ref", partition_format="%Y-%m-%d",
+            lookback_value=30, reference_date="2026-03-20",
+        )
+        assert "CAST" not in result
+        assert "TRY_CAST" not in result
+
+    def test_native_date_duckdb_uses_try_cast(self, duckdb_builder):
+        result = duckdb_builder.resolve_partition_filter(
+            partition_column="dt_ref", partition_format=None,
+            lookback_value=30, reference_date="2026-03-20",
+        )
+        assert "TRY_CAST" in result
+
+    def test_native_date_athena_uses_date_literal(self, athena_builder):
+        result = athena_builder.resolve_partition_filter(
+            partition_column="dt_ref", partition_format=None,
+            lookback_value=30, reference_date="2026-03-20",
+        )
+        assert "DATE '" in result
+        assert "CAST" not in result
 
     def test_different_lookback_values(self, duckdb_builder):
-        """Valores de lookback distintos geram filtros distintos."""
-        r30 = duckdb_builder.resolve_partition_filter("dt_ref", None, 30)
-        r90 = duckdb_builder.resolve_partition_filter("dt_ref", None, 90)
-        assert "30" in r30
-        assert "90" in r90
+        r30 = duckdb_builder.resolve_partition_filter(
+            "dt_ref", partition_format="%Y-%m-%d",
+            lookback_value=30, reference_date="2026-03-20",
+        )
+        r90 = duckdb_builder.resolve_partition_filter(
+            "dt_ref", partition_format="%Y-%m-%d",
+            lookback_value=90, reference_date="2026-03-20",
+        )
         assert r30 != r90
 
 
@@ -294,6 +282,7 @@ class TestBatchProfiling:
             table="tb_batch_test",
             partition_method=PartitionMethod.INCREMENTAL,
             partition_column="dt_ref",
+            partition_format="%Y-%m-%d",
             date_column="dt_ref",
             date_expression='CAST("dt_ref" AS DATE)',
             lookback_value=60,

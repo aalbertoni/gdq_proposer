@@ -96,64 +96,8 @@ class TestEffectiveTemporalAxis:
         assert cfg.effective_temporal_axis == "dt_ref"
 
 
-# ---------------------------------------------------------------------------
-# effective_partition_filter
-# ---------------------------------------------------------------------------
-
-class TestEffectivePartitionFilter:
-    def test_incremental_generates_filter(self, config_incremental):
-        f = config_incremental.effective_partition_filter
-        assert f is not None
-        assert '"dt_ref"' in f
-        assert "DATE_ADD" in f
-        assert "-30" in f
-
-    def test_full_snapshot_generates_filter(self, config_full_snapshot):
-        f = config_full_snapshot.effective_partition_filter
-        assert f is not None
-        assert '"dt_carga"' in f
-        assert "-30" in f
-
-    def test_non_partitioned_returns_none(self, config_non_partitioned):
-        assert config_non_partitioned.effective_partition_filter is None
-
-    def test_with_date_expression_uses_expression(self):
-        cfg = DatasetConfig(
-            schema="db",
-            table="tb",
-            partition_column="dt_ref",
-            date_expression="date_parse(dt_ref, '%Y.%m.%d')",
-            lookback_value=60,
-        )
-        f = cfg.effective_partition_filter
-        assert f is not None
-        assert "date_parse" in f
-        assert "-60" in f
-        # Deve usar a expressão, não a coluna crua
-        assert '"dt_ref" >=' not in f
-
-    def test_with_reference_date_uses_anchor(self):
-        cfg = DatasetConfig(
-            schema="db",
-            table="tb",
-            partition_column="dt_ref",
-            lookback_value=30,
-            reference_date="2024-12-31",
-        )
-        f = cfg.effective_partition_filter
-        assert f is not None
-        assert "2024-12-31" in f
-        assert "CURRENT_DATE" not in f
-
-    def test_without_reference_date_uses_current_date(self):
-        cfg = DatasetConfig(
-            schema="db",
-            table="tb",
-            partition_column="dt_ref",
-            lookback_value=30,
-        )
-        f = cfg.effective_partition_filter
-        assert "CURRENT_DATE" in f
+# effective_partition_filter foi removido — pruning agora em infra/partition_pruning.py
+# Testes de pruning em tests/test_partition_pruning.py
 
 
 # ---------------------------------------------------------------------------

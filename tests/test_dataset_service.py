@@ -53,6 +53,7 @@ def base_config():
         table="tb_teste",
         partition_method=PartitionMethod.INCREMENTAL,
         partition_column="dt_ref",
+        partition_format="%Y-%m-%d",
         date_column="dt_ref",
     )
 
