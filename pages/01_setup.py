@@ -89,6 +89,18 @@ def _cached_profile_column(_client_id, config_dict, col_name, col_type, sample_p
     return svc.profile_columns(config, [col_info], sample_periods=sample_periods)
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_batch_profile(_client_id, config_dict, _col_names_frozen, _col_types_frozen, sample_periods):
+    """Cached batch profiling. 1 query para todas as colunas."""
+    svc = st.session_state["profiling_service"]
+    config = _build_config_from_dict(config_dict)
+    columns = [
+        {"name": n, "type": t}
+        for n, t in zip(_col_names_frozen, _col_types_frozen)
+    ]
+    return svc.profile_columns(config, columns, sample_periods=sample_periods)
+
+
 def _build_config_from_dict(config_dict):
     return DatasetConfig(
         schema=config_dict["schema"],
@@ -803,24 +815,36 @@ if st.button("Executar Profiling", type="primary"):
         "base_filter_sql": dataset_config.base_filter_sql,
         "reference_date": dataset_config.reference_date,
     }
-    profiles = []
-    progress = st.progress(0, text="Classificando colunas...")
 
-    for i, col_info in enumerate(profiling_cols_selected):
-        progress.progress(
-            (i + 1) / n_profiling,
-            text=f"Classificando {col_info['name']}...",
-        )
-        profile_list = _cached_profile_column(
-            client_id,
-            config_dict,
-            col_info["name"],
-            col_info["type"],
-            lookback_value,
-        )
-        profiles.extend(profile_list)
+    _BATCH_THRESHOLD = 20
 
-    progress.empty()
+    if n_profiling <= _BATCH_THRESHOLD:
+        # Batch: 1 query para todas as colunas
+        with st.spinner(f"Profiling {n_profiling} colunas (batch)..."):
+            _col_names = tuple(c["name"] for c in profiling_cols_selected)
+            _col_types = tuple(c["type"] for c in profiling_cols_selected)
+            profiles = _cached_batch_profile(
+                client_id, config_dict,
+                _col_names, _col_types,
+                lookback_value,
+            )
+    else:
+        # Per-column: progress bar individual (tabelas grandes)
+        profiles = []
+        progress = st.progress(0, text="Classificando colunas...")
+        for i, col_info in enumerate(profiling_cols_selected):
+            progress.progress(
+                (i + 1) / n_profiling,
+                text=f"Classificando {col_info['name']}...",
+            )
+            profile_list = _cached_profile_column(
+                client_id, config_dict,
+                col_info["name"], col_info["type"],
+                lookback_value,
+            )
+            profiles.extend(profile_list)
+        progress.empty()
+
     st.session_state["setup_profiles"] = profiles
     st.success(f"Profiling concluido — {len(profiles)} colunas classificadas")
 
