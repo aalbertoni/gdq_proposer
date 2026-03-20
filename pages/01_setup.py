@@ -111,17 +111,8 @@ def _get_client_id() -> str:
 
 
 def _semantic_type_label(st_type: SemanticType) -> str:
-    labels = {
-        SemanticType.NUMERIC: "Numerico",
-        SemanticType.CATEGORICAL_LOW_CARDINALITY: "Categorico (low)",
-        SemanticType.CATEGORICAL_MID_CARDINALITY: "Categorico (mid)",
-        SemanticType.CATEGORICAL_HIGH_CARDINALITY: "Categorico (high)",
-        SemanticType.DATETIME: "Data/hora",
-        SemanticType.IDENTIFIER: "Identificador",
-        SemanticType.FREE_TEXT: "Texto livre",
-        SemanticType.UNKNOWN: "Desconhecido",
-    }
-    return labels.get(st_type, st_type.value)
+    from core.models.enums import get_semantic_label
+    return get_semantic_label(st_type)
 
 
 def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:

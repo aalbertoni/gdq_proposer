@@ -162,6 +162,27 @@ class ExportOutputMode(str, Enum):
 
 
 # ---------------------------------------------------------------------------
+# Labels legíveis para tipos semanticos
+# ---------------------------------------------------------------------------
+
+SEMANTIC_TYPE_LABELS: dict[SemanticType, str] = {
+    SemanticType.NUMERIC: "Numerico",
+    SemanticType.CATEGORICAL_LOW_CARDINALITY: "Cat. Baixa",
+    SemanticType.CATEGORICAL_MID_CARDINALITY: "Cat. Media",
+    SemanticType.CATEGORICAL_HIGH_CARDINALITY: "Cat. Alta",
+    SemanticType.DATETIME: "Data/Hora",
+    SemanticType.IDENTIFIER: "Identificador",
+    SemanticType.FREE_TEXT: "Texto Livre",
+    SemanticType.UNKNOWN: "Desconhecido",
+}
+
+
+def get_semantic_label(semantic_type: SemanticType) -> str:
+    """Retorna label legivel para o tipo semantico."""
+    return SEMANTIC_TYPE_LABELS.get(semantic_type, semantic_type.value)
+
+
+# ---------------------------------------------------------------------------
 # Labels legíveis para tipos de regra
 # ---------------------------------------------------------------------------
 

@@ -1182,12 +1182,8 @@ if _alerts:
     st.warning(" · ".join(_alerts))
 
 # --- Detalhes (expander colapsado) ---
-_STYPE_LABELS = {
-    "numeric": "Numerica", "categorical_low": "Cat. Baixa",
-    "categorical_mid": "Cat. Media", "categorical_high": "Cat. Alta",
-    "datetime": "Data/Hora", "identifier": "Identificador",
-    "unknown": "Desconhecido", "free_text": "Texto Livre",
-}
+from core.models.enums import SEMANTIC_TYPE_LABELS as _STYPE_MAP
+_STYPE_LABELS = {st.value: label for st, label in _STYPE_MAP.items()}
 _CAT_INLINE_BADGES = {
     "strong": ":green[Forte]", "conservative": ":blue[Conservadora]",
     "experimental": ":orange[Experimental]", "needs_review": ":orange[Revisar]",
@@ -1218,7 +1214,7 @@ if _has_details:
             st.markdown("---")
             st.caption(f"**Colunas sem regras ({len(_exclusions)}):**")
             for exc in _exclusions:
-                st.caption(f"- **{exc.column_name}** ({exc.semantic_type.value}): {exc.reason}")
+                st.caption(f"- **{exc.column_name}** ({_STYPE_LABELS.get(exc.semantic_type.value, exc.semantic_type.value)}): {exc.reason}")
 
 # ---------------------------------------------------------------------------
 # Calibracao em lote (acima das tabs para visibilidade)
@@ -2389,20 +2385,20 @@ with tab_resumo:
         "Numericas/Categoricas/Tabela para preencher o painel."
     )
 
+    import pandas as pd
+
     col_health = st.session_state.get("col_health", {})
     cart = st.session_state.get("rule_cart", [])
 
-    # Build set of (column, rule_type) in cart for quick lookup
-    _cart_by_col: dict[str, set[str]] = {}
+    # Build cart lookup
+    _cart_by_col: dict[str, int] = {}
     for sel in cart:
         p = sel.proposal
         col_key = p.target_column or "__table__"
-        if col_key not in _cart_by_col:
-            _cart_by_col[col_key] = set()
-        _cart_by_col[col_key].add(p.rule_type.value)
+        _cart_by_col[col_key] = _cart_by_col.get(col_key, 0) + 1
 
-    # Determine which columns to show: all selected + table-level
-    all_display_cols: list[tuple[str, str]] = []  # (display_name, health_key)
+    # Columns to display
+    all_display_cols: list[tuple[str, str]] = []
     for p in numeric_profiles:
         all_display_cols.append((p.column_name, p.column_name))
     for p in cat_profiles:
@@ -2410,55 +2406,55 @@ with tab_resumo:
             all_display_cols.append((p.column_name, p.column_name))
     all_display_cols.append((f"{dataset_config.table} (tabela)", "__table__"))
 
-    # Define rule columns to display
     _rule_cols = [
-        ("Mean", "mean"),
-        ("StdDev", "stddev"),
-        ("Compl.", "completeness"),
-        ("Freq.", "frequency"),
-        ("RowCount", "rowcount"),
+        ("Mean", "mean"), ("StdDev", "stddev"), ("Compl.", "completeness"),
+        ("Freq.", "frequency"), ("RowCount", "rowcount"),
     ]
 
+    _conf_display = {
+        ConfidenceLevel.HIGH: "HIGH",
+        ConfidenceLevel.MEDIUM: "MEDIUM",
+        ConfidenceLevel.LOW: "LOW",
+    }
+
     if all_display_cols:
-        # Header row
-        hdr = st.columns([3] + [1] * len(_rule_cols) + [1])
-        hdr[0].markdown("**Coluna**")
-        for i, (label, _) in enumerate(_rule_cols):
-            hdr[i + 1].markdown(f"**{label}**")
-        hdr[len(_rule_cols) + 1].markdown("**Carrinho**")
-
-        # Data rows
+        rows = []
         for display_name, health_key in all_display_cols:
-            row = st.columns([3] + [1] * len(_rule_cols) + [1])
-            row[0].caption(display_name)
-
             health_data = col_health.get(health_key, {})
-            cart_types = _cart_by_col.get(health_key, set())
-
-            for i, (_, rule_key) in enumerate(_rule_cols):
+            row_data = {"Coluna": display_name}
+            for label, rule_key in _rule_cols:
                 if rule_key in health_data:
-                    row[i + 1].markdown(_confidence_badge(health_data[rule_key]))
+                    row_data[label] = _conf_display.get(health_data[rule_key], "--")
                 else:
-                    row[i + 1].caption("--")
+                    row_data[label] = "--"
+            n_cart = _cart_by_col.get(health_key, 0)
+            row_data["Carrinho"] = f"{n_cart}" if n_cart > 0 else "--"
+            rows.append(row_data)
 
-            # Cart indicator: count rules in cart for this column
-            n_in_cart = len(cart_types)
-            if n_in_cart > 0:
-                row[len(_rule_cols) + 1].markdown(f":white_check_mark: {n_in_cart}")
-            else:
-                row[len(_rule_cols) + 1].caption("--")
+        df_health = pd.DataFrame(rows)
 
-        # Summary counts
+        def _style_cell(val):
+            if val == "HIGH":
+                return "color: green; font-weight: bold"
+            elif val == "MEDIUM":
+                return "color: orange; font-weight: bold"
+            elif val == "LOW":
+                return "color: red; font-weight: bold"
+            elif val == "--":
+                return "color: #ccc"
+            return ""
+
+        styled = df_health.style.map(
+            _style_cell,
+            subset=[c for c, _ in _rule_cols] + ["Carrinho"],
+        ).hide(axis="index")
+
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
         n_analyzed = sum(1 for _, hk in all_display_cols if hk in col_health)
-        n_total = len(all_display_cols)
-        n_in_cart_total = len({
-            (sel.proposal.target_column or "__table__")
-            for sel in cart
-        })
         st.caption(
-            f"{n_analyzed}/{n_total} colunas analisadas | "
-            f"{n_in_cart_total} com regras no carrinho | "
-            f"{len(cart)} regra(s) total no carrinho"
+            f"{n_analyzed}/{len(all_display_cols)} colunas analisadas | "
+            f"{len(cart)} regra(s) no carrinho"
         )
 
     # Batch calibrate e carrinho acessiveis acima das tabs e pelo sidebar
