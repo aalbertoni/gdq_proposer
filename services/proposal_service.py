@@ -41,6 +41,7 @@ from core.models.rule_selection import UserOverride
 from core.rule_recommender import (
     classify_proposal,
     compute_priority_score,
+    detect_redundancies,
     prioritize_proposals,
     recommend_tier,
 )
@@ -113,12 +114,16 @@ class ProposalService:
         proposals: list[RuleProposal],
         profile: "SeriesProfile | None" = None,
     ) -> list[RuleProposal]:
-        """Aplica recommend_tier + priority_score + category e ordena por prioridade."""
+        """Aplica recommend_tier + redundancy + priority_score + category e ordena."""
         for p in proposals:
             tier, reasons = recommend_tier(p, profile)
             p.recommendation_tier = tier
             p.recommendation_reasons = reasons
             p.priority_score = compute_priority_score(p)
+            p.proposal_category = classify_proposal(p)
+        detect_redundancies(proposals)
+        # Reclassificar e reordenar apos redundancia (tier pode ter mudado)
+        for p in proposals:
             p.proposal_category = classify_proposal(p)
         return prioritize_proposals(proposals)
 

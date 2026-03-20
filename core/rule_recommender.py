@@ -232,6 +232,84 @@ def _estimate_score(bt, rule_type: RuleType) -> float:
     return max(0.0, min(1.0, score))
 
 
+def detect_redundancies(proposals: list[RuleProposal]) -> list[RuleProposal]:
+    """Detecta regras redundantes e rebaixa para NOT_RECOMMENDED.
+
+    Opera no conjunto de propostas (tipicamente de uma coluna) e aplica
+    4 padroes de redundancia. Regras rebaixadas recebem motivo explicativo.
+    Nenhuma proposta e removida — apenas o tier e a categoria sao ajustados.
+
+    Padroes:
+    R1. AllowedValues + DistinctCountExact → rebaixa DistinctCountExact
+    R2. IsPrimaryKey + Completeness (threshold=1.0) → rebaixa Completeness
+    R3. Mean + Percentil P50 → rebaixa P50
+    """
+    if len(proposals) < 2:
+        return proposals
+
+    # Indexar por (coluna, tipo) para lookup rapido
+    by_col_type: dict[tuple, RuleProposal] = {}
+    for p in proposals:
+        key = (p.target_column, p.rule_type)
+        by_col_type[key] = p
+
+    # Colunas com AllowedValues
+    av_cols = {
+        p.target_column for p in proposals
+        if p.rule_type == RuleType.ALLOWED_VALUES
+    }
+    # Colunas com IsPrimaryKey (target_column=None para PK de tabela)
+    pk_cols: set[str] = set()
+    for p in proposals:
+        if p.rule_type == RuleType.IS_PRIMARY_KEY and p.suggested_values:
+            pk_cols.update(p.suggested_values)
+    # Colunas com Mean
+    mean_cols = {
+        p.target_column for p in proposals
+        if p.rule_type == RuleType.MEAN_DUAL_GUARD
+    }
+
+    for p in proposals:
+        # R1: DistinctCountExact redundante com AllowedValues
+        if (p.rule_type == RuleType.DISTINCT_COUNT_EXACT
+                and p.target_column in av_cols):
+            _mark_redundant(p, "AllowedValues")
+
+        # R2: Completeness redundante com IsPrimaryKey
+        if (p.rule_type == RuleType.COMPLETENESS
+                and p.target_column in pk_cols
+                and (p.suggested_lower or 1.0) >= 1.0):
+            _mark_redundant(p, "IsPrimaryKey")
+
+        # R3: Percentil P50 redundante com Mean
+        if (p.rule_type == RuleType.NUMERIC_PERCENTILE_BAND
+                and p.target_column in mean_cols
+                and _is_p50(p)):
+            _mark_redundant(p, "Mean")
+
+    return proposals
+
+
+def _mark_redundant(proposal: RuleProposal, covered_by: str) -> None:
+    """Rebaixa proposta para NOT_RECOMMENDED com motivo de redundancia."""
+    proposal.recommendation_tier = RecommendationTier.NOT_RECOMMENDED
+    proposal.recommendation_reasons.append(
+        f"Redundante com {covered_by} na mesma coluna"
+    )
+    proposal.proposal_category = ProposalCategory.NOT_RECOMMENDED
+
+
+def _is_p50(proposal: RuleProposal) -> bool:
+    """Verifica se proposta de percentil e P50 (mediana)."""
+    if proposal.suggested_values and len(proposal.suggested_values) > 0:
+        try:
+            val = float(proposal.suggested_values[0])
+            return abs(val - 0.50) < 0.01
+        except (ValueError, TypeError):
+            pass
+    return "p50" in proposal.metric_name.lower()
+
+
 def prioritize_proposals(proposals: list[RuleProposal]) -> list[RuleProposal]:
     """Ordena propostas por relevancia (maior prioridade primeiro).
 

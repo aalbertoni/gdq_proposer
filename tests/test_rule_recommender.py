@@ -13,6 +13,7 @@ from core.models.rule_proposal import BacktestSummary, RuleProposal
 from core.models.series_profile import SeriesProfile
 from core.rule_recommender import (
     classify_proposal,
+    detect_redundancies,
     compute_priority_score,
     prioritize_proposals,
     recommend_tier,
@@ -496,3 +497,110 @@ class TestClassifyProposal:
     def test_default_category_on_new_proposal(self):
         p = _proposal()
         assert p.proposal_category == ProposalCategory.STRONG
+
+
+# ---------------------------------------------------------------------------
+# Deteccao de redundancia
+# ---------------------------------------------------------------------------
+
+class TestDetectRedundancies:
+    def test_allowed_values_plus_distinct_count(self):
+        """DistinctCountExact rebaixado quando AllowedValues presente."""
+        av = _proposal(
+            rule_type=RuleType.ALLOWED_VALUES,
+            backtest=_bt(coverage=100),
+        )
+        av.recommendation_tier = RecommendationTier.RECOMMENDED
+        dc = _proposal(
+            rule_type=RuleType.DISTINCT_COUNT_EXACT,
+            backtest=_bt(coverage=100),
+        )
+        dc.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        detect_redundancies([av, dc])
+        assert av.recommendation_tier == RecommendationTier.RECOMMENDED
+        assert dc.recommendation_tier == RecommendationTier.NOT_RECOMMENDED
+        assert any("Redundante" in r for r in dc.recommendation_reasons)
+        assert any("AllowedValues" in r for r in dc.recommendation_reasons)
+
+    def test_different_columns_not_redundant(self):
+        """AllowedValues col_A + DistinctCount col_B = nao redundante."""
+        av = _proposal(rule_type=RuleType.ALLOWED_VALUES, backtest=_bt())
+        av.target_column = "COL_A"
+        av.recommendation_tier = RecommendationTier.RECOMMENDED
+        dc = _proposal(rule_type=RuleType.DISTINCT_COUNT_EXACT, backtest=_bt())
+        dc.target_column = "COL_B"
+        dc.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        detect_redundancies([av, dc])
+        assert dc.recommendation_tier == RecommendationTier.RECOMMENDED
+
+    def test_pk_plus_completeness(self):
+        """Completeness 1.0 rebaixada quando IsPrimaryKey cobre a coluna."""
+        pk = _proposal(
+            rule_type=RuleType.IS_PRIMARY_KEY,
+            backtest=_bt(coverage=100),
+        )
+        pk.target_column = None
+        pk.suggested_values = ["COL_PK"]
+        pk.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        comp = _proposal(
+            rule_type=RuleType.COMPLETENESS,
+            backtest=_bt(coverage=100),
+            suggested_lower=1.0,
+        )
+        comp.target_column = "COL_PK"
+        comp.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        detect_redundancies([pk, comp])
+        assert comp.recommendation_tier == RecommendationTier.NOT_RECOMMENDED
+        assert any("IsPrimaryKey" in r for r in comp.recommendation_reasons)
+
+    def test_mean_plus_p50(self):
+        """P50 rebaixado quando Mean presente na mesma coluna."""
+        mean = _proposal(
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            backtest=_bt(coverage=95),
+        )
+        mean.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        p50 = _proposal(
+            rule_type=RuleType.NUMERIC_PERCENTILE_BAND,
+            backtest=_bt(coverage=90),
+        )
+        p50.metric_name = "p50"
+        p50.suggested_values = ["0.50"]
+        p50.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        detect_redundancies([mean, p50])
+        assert mean.recommendation_tier == RecommendationTier.RECOMMENDED
+        assert p50.recommendation_tier == RecommendationTier.NOT_RECOMMENDED
+
+    def test_mean_plus_p10_p90_not_redundant(self):
+        """P10 e P90 nao sao redundantes com Mean."""
+        mean = _proposal(rule_type=RuleType.MEAN_DUAL_GUARD, backtest=_bt())
+        mean.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        p10 = _proposal(rule_type=RuleType.NUMERIC_PERCENTILE_BAND, backtest=_bt())
+        p10.metric_name = "p10"
+        p10.suggested_values = ["0.10"]
+        p10.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        p90 = _proposal(rule_type=RuleType.NUMERIC_PERCENTILE_BAND, backtest=_bt())
+        p90.metric_name = "p90"
+        p90.suggested_values = ["0.90"]
+        p90.recommendation_tier = RecommendationTier.RECOMMENDED
+
+        detect_redundancies([mean, p10, p90])
+        assert p10.recommendation_tier == RecommendationTier.RECOMMENDED
+        assert p90.recommendation_tier == RecommendationTier.RECOMMENDED
+
+    def test_empty_list(self):
+        assert detect_redundancies([]) == []
+
+    def test_single_proposal_unchanged(self):
+        p = _proposal(rule_type=RuleType.MEAN_DUAL_GUARD, backtest=_bt())
+        p.recommendation_tier = RecommendationTier.RECOMMENDED
+        detect_redundancies([p])
+        assert p.recommendation_tier == RecommendationTier.RECOMMENDED
