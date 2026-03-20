@@ -101,13 +101,17 @@ class DatasetService:
             return []
 
     def get_date_range(self, config: DatasetConfig) -> dict:
-        """Retorna min/max da coluna temporal e contagem de períodos.
+        """Retorna min/max da coluna temporal e contagem de periodos.
 
-        Para tabelas particionadas, usa partition_filter para evitar full scan.
-        O filtro de pruning usa a coluna bruta (sem CAST/DATE_PARSE).
+        Estrategia metadata-first:
+        1. Para tabelas particionadas: descobre range via lista de particoes
+           (SHOW PARTITIONS no Athena, SELECT DISTINCT no DuckDB).
+           Zero bytes scanned no Athena. Deriva reference_date do max.
+        2. Se base_filter_sql configurado: valida com query SQL leve pruneada.
+        3. Fallback: query SQL sem pruning (tabelas nao particionadas ou erro).
 
         Args:
-            config: Configuração da tabela alvo.
+            config: Configuracao da tabela alvo.
 
         Returns:
             {"min_date": str, "max_date": str, "n_periods": int}
@@ -115,6 +119,89 @@ class DatasetService:
         validate_identifier(config.schema)
         validate_identifier(config.table)
 
+        # --- Caminho A: metadata de particoes (zero scan no Athena) ---
+        if config.partition_column:
+            try:
+                result = self._get_date_range_from_partitions(config)
+                if result and result["n_periods"] > 0:
+                    return result
+            except Exception:
+                pass  # fallback para SQL
+
+        # --- Caminho C: SQL sem pruning (fallback) ---
+        return self._get_date_range_sql(config)
+
+    def _get_date_range_from_partitions(self, config: DatasetConfig) -> dict | None:
+        """Descobre range via lista de particoes (metadata-first).
+
+        Usa SHOW PARTITIONS no Athena (zero scan) ou SELECT DISTINCT no DuckDB.
+        Faz parsing dos valores de particao e deriva min/max/count em Python.
+        """
+        from datetime import datetime
+
+        partition_col = config.partition_column
+        validate_identifier(partition_col)
+
+        # Obter lista de particoes
+        if self.builder.dialect.value == "duckdb":
+            # DuckDB: SELECT DISTINCT (teste-only)
+            raw_values = self.get_partitions(config.schema, config.table)
+        else:
+            # Athena: SHOW PARTITIONS (zero scan)
+            try:
+                sql = f'SHOW PARTITIONS "{config.schema}"."{config.table}"'
+                rows = self.client.execute(
+                    sql,
+                    query_name="show_partitions_metadata",
+                    dataset=f"{config.schema}.{config.table}",
+                )
+                # SHOW PARTITIONS retorna rows como {"partition": "col=value"}
+                raw_values = []
+                for row in rows:
+                    val = list(row.values())[0]  # primeiro campo
+                    # Parse "col=value" ou valor direto
+                    if "=" in str(val):
+                        val = str(val).split("=", 1)[1]
+                    raw_values.append(str(val))
+            except Exception:
+                # Fallback para SELECT DISTINCT
+                raw_values = self.get_partitions(config.schema, config.table)
+
+        if not raw_values:
+            return None
+
+        # Parse para datas usando partition_format
+        fmt = config.partition_format
+        dates = []
+        for v in raw_values:
+            v = v.strip()
+            if not v:
+                continue
+            try:
+                if fmt:
+                    dt = datetime.strptime(v, fmt).date()
+                else:
+                    # Tipo nativo — tentar ISO parse
+                    dt = datetime.fromisoformat(v.split(" ")[0]).date()
+                dates.append(dt)
+            except (ValueError, TypeError):
+                continue
+
+        if not dates:
+            return None
+
+        min_date = min(dates)
+        max_date = max(dates)
+        n_periods = len(set(dates))
+
+        return {
+            "min_date": str(min_date),
+            "max_date": str(max_date),
+            "n_periods": n_periods,
+        }
+
+    def _get_date_range_sql(self, config: DatasetConfig) -> dict:
+        """Fallback: query SQL sem pruning para descobrir range."""
         temporal_col = config.effective_temporal_axis
         validate_identifier(temporal_col)
 
@@ -122,24 +209,14 @@ class DatasetService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
-        # Partition pruning para evitar full scan
-        partition_filter = ""
-        if config.partition_column:
-            partition_filter = self.builder.resolve_partition_filter(
-                partition_column=config.partition_column,
-                partition_format=config.partition_format,
-                lookback_value=config.lookback_value,
-                reference_date=config.reference_date or "",
-                partition_is_integer=config.partition_is_integer,
-            )
-
+        # SEM partition_filter — esta query descobre o range global
         sql = self.builder.build_date_range(
             schema=config.schema,
             table=config.table,
             temporal_col=temporal_col,
             date_expression=config.date_expression,
             base_filter=base_filter,
-            partition_filter=partition_filter,
+            partition_filter="",
         )
         df = self.client.execute_df(
             sql,

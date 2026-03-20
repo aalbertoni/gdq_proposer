@@ -126,6 +126,28 @@ class TestGetDateRange:
         result = service.get_date_range(base_config)
         assert result["n_periods"] == 10  # 30 dias / 3 produtos = 10 por produto
 
+    def test_metadata_first_no_reference_date(self, service, base_config):
+        """Sem reference_date, metadata-first descobre range corretamente."""
+        base_config.reference_date = None
+        result = service.get_date_range(base_config)
+        # Deve encontrar dados mesmo sem reference_date (metadata nao depende de lookback)
+        assert result["min_date"] is not None
+        assert result["max_date"] is not None
+        assert result["n_periods"] > 0
+
+    def test_non_partitioned_uses_sql_fallback(self, service):
+        """Tabela sem particao usa fallback SQL."""
+        config = DatasetConfig(
+            schema="mock_db",
+            table="tb_teste",
+            partition_method=PartitionMethod.NON_PARTITIONED,
+            date_column="dt_ref",
+            reference_date="2026-01-30",
+            lookback_value=60,
+        )
+        result = service.get_date_range(config)
+        assert result["n_periods"] == 30
+
     def test_invalid_temporal_col_raises(self, service):
         config = DatasetConfig(
             schema="mock_db",
