@@ -1,6 +1,8 @@
 """
 Sprint C2 End-of-Sprint Athena Integration Test.
 
+pytest markers: athena (requires real AWS), slow (runs against Athena).
+
 Validates full pipeline against real Athena:
 1. Table connectivity and column discovery
 2. Numeric history query + proposals (Mean/StdDev/Completeness)
@@ -28,6 +30,8 @@ import time
 
 import pandas as pd
 import pytest
+
+pytestmark = [pytest.mark.athena, pytest.mark.slow]
 
 from config import load_config
 from core.models.baseline import BaselineStrategy

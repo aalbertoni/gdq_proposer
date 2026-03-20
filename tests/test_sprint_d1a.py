@@ -9,6 +9,9 @@ Covers:
 """
 
 import math
+import pytest
+
+pytestmark = pytest.mark.integration
 from datetime import date, timedelta
 
 import pandas as pd

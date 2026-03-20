@@ -4,6 +4,8 @@ Usa DuckDB (DuckDBTestClient) com dados sintéticos em memória.
 """
 
 import pytest
+
+pytestmark = pytest.mark.integration
 import pandas as pd
 
 from infra.query_builder import QueryBuilder

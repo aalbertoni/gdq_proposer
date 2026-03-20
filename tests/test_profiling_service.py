@@ -5,6 +5,8 @@ Valida classificação end-to-end: query → classify → ColumnProfile.
 """
 
 import pytest
+
+pytestmark = pytest.mark.integration
 import pandas as pd
 
 from infra.query_builder import QueryBuilder
