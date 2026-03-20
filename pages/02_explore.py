@@ -53,6 +53,14 @@ def _get_proposal_service() -> ProposalService:
     return st.session_state["proposal_service"]
 
 
+def _filter_minimal(proposals: list) -> list:
+    """Filtra propostas para modo minimo (se ativo)."""
+    if not st.session_state.get("proposal_mode") == "Minimo":
+        return proposals
+    from core.rule_recommender import select_minimal_set
+    return select_minimal_set(proposals)
+
+
 def _confidence_badge(level: ConfidenceLevel) -> str:
     badges = {
         ConfidenceLevel.HIGH: ":green[HIGH]",
@@ -1075,6 +1083,24 @@ def fetch_uniqueness_history(_config_dict, _key_columns_tuple):
 
 
 # ---------------------------------------------------------------------------
+# Modo de proposta (Completo vs Minimo)
+# ---------------------------------------------------------------------------
+
+proposal_mode = st.radio(
+    "Modo de proposta",
+    options=["Completo", "Minimo"],
+    index=0,
+    horizontal=True,
+    help=(
+        "**Completo:** todas as regras propostas. "
+        "**Minimo:** apenas regras essenciais de alta confianca "
+        "(RowCount, PrimaryKey, Completeness, AllowedValues, Mean)."
+    ),
+)
+st.session_state["proposal_mode"] = proposal_mode
+_is_minimal_mode = proposal_mode == "Minimo"
+
+# ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 
@@ -1149,7 +1175,7 @@ with tab_numericas:
             )
 
             mean_cache_key = f"proposal_mean_{selected_col}_{mean_n}_{mean_k}_{mean_margin}_{mean_margin_on}_{effective_lookback}"
-            mean_proposals = _get_cached_proposals(
+            mean_proposals = _filter_minimal(_get_cached_proposals(
                 mean_cache_key,
                 lambda: [
                     p for p in proposal_svc.propose_numeric_rules(
@@ -1157,7 +1183,7 @@ with tab_numericas:
                     )
                     if "mean" in p.rule_type.value
                 ],
-            )
+            ))
 
             if mean_proposals:
                 proposal = mean_proposals[0]
@@ -1206,7 +1232,7 @@ with tab_numericas:
             )
 
             std_cache_key = f"proposal_stddev_{selected_col}_{std_n}_{std_k}_{std_margin}_{std_margin_on}_{effective_lookback}"
-            std_proposals = _get_cached_proposals(
+            std_proposals = _filter_minimal(_get_cached_proposals(
                 std_cache_key,
                 lambda: [
                     p for p in proposal_svc.propose_numeric_rules(
@@ -1214,7 +1240,7 @@ with tab_numericas:
                     )
                     if "stddev" in p.rule_type.value
                 ],
-            )
+            ))
 
             if std_proposals:
                 proposal = std_proposals[0]
@@ -1316,7 +1342,7 @@ with tab_numericas:
 
             # ---- Completeness ----
             comp_cache_key = f"proposal_comp_{selected_col}_{effective_lookback}"
-            comp_proposals = _get_cached_proposals(
+            comp_proposals = _filter_minimal(_get_cached_proposals(
                 comp_cache_key,
                 lambda: [
                     p for p in proposal_svc.propose_numeric_rules(
@@ -1325,7 +1351,7 @@ with tab_numericas:
                     )
                     if p.rule_type.value.startswith("completeness")
                 ],
-            )
+            ))
 
             if comp_proposals:
                 _update_col_health(selected_col, "completeness", comp_proposals[0].confidence)
@@ -1606,10 +1632,10 @@ with tab_categoricas:
                 RuleType.CATEGORY_FREQUENCY_DYNAMIC,
                 RuleType.CATEGORY_FREQUENCY_HYBRID,
             }
-            freq_proposals = [
+            freq_proposals = _filter_minimal([
                 p for p in cat_proposals
                 if p.rule_type in freq_types
-            ]
+            ])
             if freq_proposals:
                 mode_labels = {
                     "static": "Estatico",
@@ -1681,7 +1707,7 @@ with tab_categoricas:
                 st.divider()
 
             # ---- AllowedValues (CAT_LOW) ----
-            av_proposals = [p for p in cat_proposals if p.rule_type == RuleType.ALLOWED_VALUES]
+            av_proposals = _filter_minimal([p for p in cat_proposals if p.rule_type == RuleType.ALLOWED_VALUES])
             if av_proposals:
                 st.subheader("Valores Permitidos (AllowedValues)")
                 av = av_proposals[0]
@@ -1720,10 +1746,10 @@ with tab_categoricas:
                 st.divider()
 
             # ---- DistinctValuesCount ----
-            dc_proposals = [
+            dc_proposals = _filter_minimal([
                 p for p in cat_proposals
                 if p.rule_type in (RuleType.DISTINCT_COUNT_EXACT, RuleType.DISTINCT_COUNT_RANGE)
-            ]
+            ])
             if dc_proposals:
                 st.subheader("Contagem de Distintos (DistinctValuesCount)")
                 proposal = dc_proposals[0]
@@ -1802,7 +1828,7 @@ with tab_categoricas:
                 st.divider()
 
             # ---- Completeness ----
-            comp_proposals = [p for p in cat_proposals if p.rule_type == RuleType.COMPLETENESS]
+            comp_proposals = _filter_minimal([p for p in cat_proposals if p.rule_type == RuleType.COMPLETENESS])
             if comp_proposals:
                 with st.expander(f"Completeness {selected_cat_col}", expanded=False):
                     proposal = comp_proposals[0]
@@ -1881,12 +1907,12 @@ with tab_tabela:
         )
 
         rc_cache_key = f"proposal_rc_{rc_n}_{rc_k}_{rc_margin}_{rc_margin_on}_{effective_lookback}"
-        rc_proposals = _get_cached_proposals(
+        rc_proposals = _filter_minimal(_get_cached_proposals(
             rc_cache_key,
             lambda: proposal_svc.propose_table_rules(
                 rc_history_df, dataset_config.table, rc_baseline,
             ),
-        )
+        ))
 
         if rc_proposals:
             rc_proposal = rc_proposals[0]

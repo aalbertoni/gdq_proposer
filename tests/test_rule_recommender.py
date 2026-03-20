@@ -14,6 +14,7 @@ from core.models.series_profile import SeriesProfile
 from core.rule_recommender import (
     classify_proposal,
     detect_redundancies,
+    select_minimal_set,
     compute_priority_score,
     prioritize_proposals,
     recommend_tier,
@@ -604,3 +605,99 @@ class TestDetectRedundancies:
         p.recommendation_tier = RecommendationTier.RECOMMENDED
         detect_redundancies([p])
         assert p.recommendation_tier == RecommendationTier.RECOMMENDED
+
+
+# ---------------------------------------------------------------------------
+# Modo minimo (select_minimal_set)
+# ---------------------------------------------------------------------------
+
+class TestSelectMinimalSet:
+    def _make(self, rule_type, tier=RecommendationTier.RECOMMENDED,
+              category=ProposalCategory.STRONG, **kw):
+        p = _proposal(rule_type=rule_type, backtest=_bt(), **kw)
+        p.recommendation_tier = tier
+        p.proposal_category = category
+        return p
+
+    def test_rowcount_included(self):
+        p = self._make(RuleType.ROW_COUNT_DUAL_GUARD)
+        assert p in select_minimal_set([p])
+
+    def test_isprimarykey_included(self):
+        p = self._make(RuleType.IS_PRIMARY_KEY, category=ProposalCategory.CONSERVATIVE)
+        assert p in select_minimal_set([p])
+
+    def test_mean_strong_included(self):
+        p = self._make(RuleType.MEAN_DUAL_GUARD, category=ProposalCategory.STRONG)
+        assert p in select_minimal_set([p])
+
+    def test_completeness_conservative_included(self):
+        p = self._make(RuleType.COMPLETENESS, category=ProposalCategory.CONSERVATIVE)
+        assert p in select_minimal_set([p])
+
+    def test_allowed_values_conservative_included(self):
+        p = self._make(RuleType.ALLOWED_VALUES, category=ProposalCategory.CONSERVATIVE)
+        assert p in select_minimal_set([p])
+
+    def test_stddev_excluded(self):
+        """StdDev excluido do minimo (nao esta em _MINIMAL_RULE_TYPES)."""
+        p = self._make(RuleType.STDDEV_DUAL_GUARD)
+        assert p not in select_minimal_set([p])
+
+    def test_frequency_excluded(self):
+        p = self._make(RuleType.CATEGORY_FREQUENCY_STATIC)
+        assert p not in select_minimal_set([p])
+
+    def test_percentile_excluded(self):
+        p = self._make(RuleType.NUMERIC_PERCENTILE_BAND)
+        assert p not in select_minimal_set([p])
+
+    def test_distinct_count_excluded(self):
+        p = self._make(RuleType.DISTINCT_COUNT_EXACT)
+        assert p not in select_minimal_set([p])
+
+    def test_not_recommended_excluded(self):
+        p = self._make(
+            RuleType.MEAN_DUAL_GUARD,
+            tier=RecommendationTier.NOT_RECOMMENDED,
+            category=ProposalCategory.NOT_RECOMMENDED,
+        )
+        assert p not in select_minimal_set([p])
+
+    def test_possible_excluded(self):
+        p = self._make(
+            RuleType.MEAN_DUAL_GUARD,
+            tier=RecommendationTier.POSSIBLE,
+            category=ProposalCategory.NEEDS_REVIEW,
+        )
+        assert p not in select_minimal_set([p])
+
+    def test_experimental_excluded(self):
+        p = self._make(
+            RuleType.CATEGORY_FREQUENCY_DYNAMIC,
+            category=ProposalCategory.EXPERIMENTAL,
+        )
+        assert p not in select_minimal_set([p])
+
+    def test_empty_input(self):
+        assert select_minimal_set([]) == []
+
+    def test_mixed_keeps_only_eligible(self):
+        """De um conjunto misto, so as elegiveis passam."""
+        mean = self._make(RuleType.MEAN_DUAL_GUARD, category=ProposalCategory.STRONG)
+        stddev = self._make(RuleType.STDDEV_DUAL_GUARD, category=ProposalCategory.STRONG)
+        comp = self._make(RuleType.COMPLETENESS, category=ProposalCategory.CONSERVATIVE)
+        freq = self._make(RuleType.CATEGORY_FREQUENCY_STATIC, category=ProposalCategory.CONSERVATIVE)
+        not_rec = self._make(
+            RuleType.COMPLETENESS,
+            tier=RecommendationTier.NOT_RECOMMENDED,
+            category=ProposalCategory.NOT_RECOMMENDED,
+        )
+
+        result = select_minimal_set([mean, stddev, comp, freq, not_rec])
+        assert mean in result
+        assert comp in result
+        assert stddev not in result
+        assert freq not in result
+        assert not_rec not in result
+        assert len(result) == 2

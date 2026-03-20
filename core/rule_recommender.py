@@ -310,6 +310,60 @@ def _is_p50(proposal: RuleProposal) -> bool:
     return "p50" in proposal.metric_name.lower()
 
 
+# ---------------------------------------------------------------------------
+# Modo minimo: subconjunto essencial de alta confianca
+# ---------------------------------------------------------------------------
+
+# Tipos de regra elegiveis no modo minimo
+_MINIMAL_RULE_TYPES = {
+    RuleType.ROW_COUNT_DUAL_GUARD,
+    RuleType.IS_PRIMARY_KEY,
+    RuleType.COMPLETENESS,
+    RuleType.ALLOWED_VALUES,
+    RuleType.MEAN_DUAL_GUARD,
+}
+
+# Categorias aceitas no modo minimo
+_MINIMAL_CATEGORIES = {
+    ProposalCategory.STRONG,
+    ProposalCategory.CONSERVATIVE,
+}
+
+
+def select_minimal_set(proposals: list[RuleProposal]) -> list[RuleProposal]:
+    """Filtra propostas para o conjunto minimo de alta confianca.
+
+    Criterios de inclusao:
+    - Tipo de regra elegivel (RowCount, IsPrimaryKey, Completeness, AllowedValues, Mean)
+    - Categoria STRONG ou CONSERVATIVE
+    - Tier RECOMMENDED
+    - Completeness nao trivial (NOT_RECOMMENDED excluida)
+    - StdDev excluido (redundante com Mean no modo minimo)
+    - Percentis, Frequency, DistinctCount excluidos
+
+    Returns:
+        Subconjunto filtrado (nova lista).
+    """
+    result = []
+    # Track quais colunas ja tem Mean para evitar duplicar Mean
+    for p in proposals:
+        # Tipo elegivel?
+        if p.rule_type not in _MINIMAL_RULE_TYPES:
+            continue
+
+        # Tier deve ser RECOMMENDED
+        if p.recommendation_tier != RecommendationTier.RECOMMENDED:
+            continue
+
+        # Categoria deve ser STRONG ou CONSERVATIVE
+        if p.proposal_category not in _MINIMAL_CATEGORIES:
+            continue
+
+        result.append(p)
+
+    return result
+
+
 def prioritize_proposals(proposals: list[RuleProposal]) -> list[RuleProposal]:
     """Ordena propostas por relevancia (maior prioridade primeiro).
 
