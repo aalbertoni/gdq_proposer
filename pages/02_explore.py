@@ -193,7 +193,7 @@ def _render_rolling_chart(
     ))
 
     fig.update_layout(
-        height=400,
+        height=300,
         margin=dict(l=50, r=20, t=30, b=30),
         xaxis_title="Periodo",
         yaxis_title=y_label,
@@ -979,66 +979,36 @@ with st.sidebar:
 
     st.divider()
 
-    # Query cost summary
-    _summary = client.logger.get_session_summary()
-    if _summary["total_queries"] > 0:
-        st.subheader("Queries")
-        _cols = st.columns(2)
-        _cols[0].metric("Executadas", _summary["total_queries"])
-        _cols[1].metric("Tempo total", f"{_summary['total_elapsed_ms'] / 1000:.1f}s")
+    # Query summary (compact)
+    _qs = client.logger.get_session_summary()
+    if _qs["total_queries"] > 0:
+        _time_s = _qs["total_elapsed_ms"] / 1000
+        _cost = _qs["estimated_cost_usd"]
+        _err_label = f" · :red[{_qs['errors']} erros]" if _qs["errors"] > 0 else ""
+        st.caption(f"{_qs['total_queries']} queries · {_time_s:.1f}s · ${_cost:.4f}{_err_label}")
 
-        if _summary["cache_hits"] > 0:
-            st.caption(
-                f"Cache hits Athena: {_summary['cache_hits']}/{_summary['total_queries']} "
-                f"({_summary['cache_hit_rate']:.0%})"
-            )
-
-        if _summary["total_bytes_scanned"] > 0:
-            _bytes = _summary["total_bytes_scanned"]
-            if _bytes >= 1024 ** 3:
-                _bytes_label = f"{_bytes / (1024 ** 3):.2f} GB"
-            elif _bytes >= 1024 ** 2:
-                _bytes_label = f"{_bytes / (1024 ** 2):.1f} MB"
-            else:
-                _bytes_label = f"{_bytes / 1024:.0f} KB"
-            st.caption(f"Dados escaneados: {_bytes_label}")
-            st.caption(f"Custo estimado: ${_summary['estimated_cost_usd']:.4f}")
-
-        if _summary["errors"] > 0:
-            st.caption(f":red[Erros: {_summary['errors']}]")
-
-        # Cost guardrail warning
+        # Cost guardrail
         _app_cfg = st.session_state.get("config")
         _threshold = _app_cfg.athena.cost_warning_threshold_usd if _app_cfg else 0.50
-        if _summary["estimated_cost_usd"] > _threshold:
-            st.warning(
-                f"Custo da sessao (${_summary['estimated_cost_usd']:.4f}) "
-                f"excedeu o limite de ${_threshold:.2f}. "
-                f"Considere reduzir o lookback ou o numero de colunas.",
-                icon="💰",
-            )
+        if _cost > _threshold:
+            st.warning(f"Custo (${_cost:.4f}) excedeu ${_threshold:.2f}.")
 
         with st.expander("Log de queries"):
             _entries = client.logger.entries
             if _entries:
-                for _i, _e in enumerate(reversed(_entries[-20:])):
+                for _e in reversed(_entries[-10:]):
                     _status = ":red[ERRO]" if _e.exception_type else ":green[OK]"
                     _col_label = f".{_e.column}" if _e.column else ""
                     st.caption(
-                        f"{_status} **{_e.query_name}** {_e.dataset}{_col_label} "
+                        f"{_status} **{_e.query_name}**{_col_label} "
                         f"— {_e.rows_returned} rows, {_e.elapsed_ms}ms"
                     )
-                    if _e.sql:
-                        st.code(_e.sql, language="sql")
-            else:
-                st.caption("Nenhuma query executada ainda.")
             st.download_button(
-                label="Exportar log completo (JSON)",
+                label="Exportar log (JSON)",
                 data=client.logger.export_json(),
                 file_name="gdq_query_log.json",
                 mime="application/json",
                 key="sidebar_export_log",
-                help="JSON com resumo da sessao e detalhes de cada query executada.",
             )
 
     st.divider()
@@ -1169,83 +1139,64 @@ _summary = build_analysis_summary(
     exclusions=_exclusions,
 )
 
-# --- Metricas-chave ---
-_m1, _m2, _m3, _m4 = st.columns(4)
-with _m1:
-    st.metric("Colunas analisadas", _summary.total_columns)
-with _m2:
-    st.metric("Com proposta", _summary.columns_with_proposals)
-with _m3:
-    st.metric("No carrinho", f"{_summary.columns_in_cart} col / {_summary.rules_in_cart} regras")
-with _m4:
-    if _summary.avg_coverage > 0:
-        st.metric("Cobertura media", f"{_summary.avg_coverage:.0f}%")
-    else:
-        st.metric("Cobertura media", "—")
+# --- Resumo compacto (1 linha) ---
+_cov_label = f" · Cobertura media {_summary.avg_coverage:.0f}%" if _summary.avg_coverage > 0 else ""
+st.caption(
+    f"**{_summary.total_columns}** colunas · "
+    f"**{_summary.columns_with_proposals}** com proposta · "
+    f"**{_summary.rules_in_cart}** regras no carrinho"
+    f"{_cov_label}"
+)
 
-# --- Distribuicoes (expander compacto) ---
-_has_distributions = bool(_summary.by_semantic_type or _summary.by_proposal_category)
-if _has_distributions:
-    _dist_c1, _dist_c2 = st.columns(2)
-
-    # Tipos semanticos
-    _STYPE_LABELS = {
-        "numeric": "Numerica",
-        "categorical_low": "Cat. Baixa",
-        "categorical_mid": "Cat. Media",
-        "categorical_high": "Cat. Alta",
-        "datetime": "Data/Hora",
-        "identifier": "Identificador",
-        "unknown": "Desconhecido",
-        "free_text": "Texto Livre",
-    }
-    with _dist_c1:
-        _parts = [
-            f"{_STYPE_LABELS.get(k, k)} ({v})"
-            for k, v in sorted(_summary.by_semantic_type.items(), key=lambda x: -x[1])
-        ]
-        if _parts:
-            st.caption("**Tipos:** " + " · ".join(_parts))
-
-    # Categorias de proposta
-    _CAT_INLINE_BADGES = {
-        "strong": ":green[Forte]",
-        "conservative": ":blue[Conservadora]",
-        "experimental": ":orange[Experimental]",
-        "needs_review": ":orange[Revisar]",
-        "not_recommended": ":red[N/R]",
-    }
-    with _dist_c2:
-        _cat_parts = [
-            f"{_CAT_INLINE_BADGES.get(k, k)} ({v})"
-            for k, v in sorted(_summary.by_proposal_category.items(), key=lambda x: -x[1])
-            if v > 0
-        ]
-        if _cat_parts:
-            st.caption("**Propostas:** " + " · ".join(_cat_parts))
-
-# --- Alertas ---
+# --- Alertas inline (apenas se houver) ---
 _alerts = []
 if _summary.experimental_in_cart > 0:
-    _alerts.append(f"{_summary.experimental_in_cart} regra(s) experimental(is) no carrinho")
+    _alerts.append(f"{_summary.experimental_in_cart} experimental(is) no carrinho")
 if _summary.low_coverage_rules > 0:
-    _alerts.append(f"{_summary.low_coverage_rules} proposta(s) com cobertura < 80%")
+    _alerts.append(f"{_summary.low_coverage_rules} com cobertura < 80%")
 for _regime, _cols in _summary.problematic_regimes.items():
-    _alerts.append(f"Regime **{_regime}**: {', '.join(_cols)}")
-if _summary.excluded_columns:
-    _n_exc = len(_summary.excluded_columns)
-    _alerts.append(f"{_n_exc} coluna(s) sem regras (ver detalhes abaixo)")
-
+    _alerts.append(f"Regime {_regime}: {', '.join(_cols)}")
 if _alerts:
     st.warning(" · ".join(_alerts))
 
-# --- Colunas excluidas (detalhes) ---
-if _exclusions:
-    with st.expander(f"Colunas sem regras ({len(_exclusions)})", expanded=False):
-        for exc in _exclusions:
-            st.caption(f"**{exc.column_name}** ({exc.semantic_type.value}): {exc.reason}")
-
-st.divider()
+# --- Detalhes (expander colapsado) ---
+_STYPE_LABELS = {
+    "numeric": "Numerica", "categorical_low": "Cat. Baixa",
+    "categorical_mid": "Cat. Media", "categorical_high": "Cat. Alta",
+    "datetime": "Data/Hora", "identifier": "Identificador",
+    "unknown": "Desconhecido", "free_text": "Texto Livre",
+}
+_CAT_INLINE_BADGES = {
+    "strong": ":green[Forte]", "conservative": ":blue[Conservadora]",
+    "experimental": ":orange[Experimental]", "needs_review": ":orange[Revisar]",
+    "not_recommended": ":red[N/R]",
+}
+_has_details = bool(
+    _summary.by_semantic_type or _summary.by_proposal_category or _exclusions
+)
+if _has_details:
+    with st.expander("Detalhes da analise", expanded=False):
+        _dc1, _dc2 = st.columns(2)
+        with _dc1:
+            _parts = [
+                f"{_STYPE_LABELS.get(k, k)} ({v})"
+                for k, v in sorted(_summary.by_semantic_type.items(), key=lambda x: -x[1])
+            ]
+            if _parts:
+                st.caption("**Tipos:** " + " · ".join(_parts))
+        with _dc2:
+            _cat_parts = [
+                f"{_CAT_INLINE_BADGES.get(k, k)} ({v})"
+                for k, v in sorted(_summary.by_proposal_category.items(), key=lambda x: -x[1])
+                if v > 0
+            ]
+            if _cat_parts:
+                st.caption("**Propostas:** " + " · ".join(_cat_parts))
+        if _exclusions:
+            st.markdown("---")
+            st.caption(f"**Colunas sem regras ({len(_exclusions)}):**")
+            for exc in _exclusions:
+                st.caption(f"- **{exc.column_name}** ({exc.semantic_type.value}): {exc.reason}")
 
 # ---------------------------------------------------------------------------
 # Tabs
@@ -2498,46 +2449,4 @@ with tab_resumo:
                 elif br["status"] == "error":
                     st.caption(f":red[!] **{br['column']}** -- erro: {br['reason']}")
 
-    st.divider()
-
-    # ------------------------------------------------------------------
-    # Cart list (existing behavior)
-    # ------------------------------------------------------------------
-    st.subheader("Regras no Carrinho")
-
-    if not cart:
-        st.info(
-            "Nenhuma regra no carrinho ainda. "
-            "Use as abas **Numericas**, **Categoricas** e **Tabela** para calibrar e adicionar regras."
-        )
-    else:
-        for sel in cart:
-            p = sel.proposal
-            label = get_rule_label(p.rule_type)
-            target = p.target_column or "(tabela)"
-            confidence = p.confidence.value.upper()
-
-            badge = {
-                "HIGH": ":green[HIGH]",
-                "MEDIUM": ":orange[MEDIUM]",
-                "LOW": ":red[LOW]",
-            }.get(confidence, confidence)
-
-            coverage_str = f"{p.backtest.coverage_pct:.1f}%" if p.backtest else "N/A"
-
-            res_c1, res_c2, res_c3 = st.columns([4, 1.5, 1.5])
-            exp_badge = capability_badge(p.rule_type)
-            res_c1.markdown(f"**{label}** {exp_badge} -- `{target}`")
-            res_c2.markdown(badge)
-            res_c3.caption(f"Cobertura: {coverage_str}")
-
-            st.caption(explain_rule(p))
-
-        st.divider()
-
-        res_btn1, res_btn2 = st.columns(2)
-        with res_btn1:
-            if st.button("Ir para Review & Export", type="primary", key="resumo_review"):
-                st.switch_page("pages/03_review.py")
-        with res_btn2:
-            st.caption(f"{len(cart)} regra(s) no carrinho")
+    # Carrinho gerenciado na pagina Review (acessivel pelo sidebar)
