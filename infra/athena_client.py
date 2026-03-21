@@ -219,9 +219,18 @@ class AthenaClient:
     def _check_cost_guardrail(self, query_name: str = "") -> None:
         """Verifica custo acumulado antes de executar query.
 
+        Usa session_state para persistir bypass entre reruns do Streamlit.
+
         Raises:
             CostGuardrailTriggered: Se custo >= threshold e bypass nao ativo.
         """
+        # Verificar bypass persistido no session_state (sobrevive a reruns)
+        try:
+            import streamlit as st
+            if st.session_state.get("_cost_guardrail_bypassed", False):
+                return
+        except Exception:
+            pass
         if self._cost_guardrail_bypassed:
             return
         summary = self.logger.get_session_summary()
@@ -234,12 +243,22 @@ class AthenaClient:
             )
 
     def bypass_cost_guardrail(self) -> None:
-        """Desbloqueia guardrail de custo (confirmacao explicita do usuario)."""
+        """Desbloqueia guardrail de custo. Persiste no session_state."""
         self._cost_guardrail_bypassed = True
+        try:
+            import streamlit as st
+            st.session_state["_cost_guardrail_bypassed"] = True
+        except Exception:
+            pass
 
     def reset_cost_guardrail(self) -> None:
         """Reseta bypass (ex: ao trocar configuracao)."""
         self._cost_guardrail_bypassed = False
+        try:
+            import streamlit as st
+            st.session_state.pop("_cost_guardrail_bypassed", None)
+        except Exception:
+            pass
 
     def execute_df(
         self,
