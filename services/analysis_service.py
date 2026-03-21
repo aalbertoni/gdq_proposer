@@ -8,14 +8,82 @@ Definido conforme docs/technical_spec_v1.md seção 4.3.
 """
 
 import json
+import logging
 import math
 
 import pandas as pd
 
 from core.models.dataset_config import DatasetConfig
+from core.models.enums import GrainType
+from core.models.grain_policy import get_grain_policy
 from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from infra.query_safety import validate_identifier, sanitize_filter, sanitize_expression
+
+logger = logging.getLogger(__name__)
+
+
+def diagnose_history_gap(
+    n_periods_returned: int,
+    config: DatasetConfig,
+    profiling_total_count: int | None = None,
+) -> list[str]:
+    """Diagnostica gap entre profiling (encontrou dados) e histórico (vazio/curto).
+
+    Retorna lista de warnings contextuais e acionáveis.
+    Lista vazia = sem problemas detectados.
+
+    Args:
+        n_periods_returned: Períodos retornados pelo histórico (0 = vazio).
+        config: DatasetConfig usada na análise.
+        profiling_total_count: total_count do profiling (se disponível).
+            Quando > 0 e n_periods == 0, sinaliza gap profiling→histórico.
+    """
+    warnings: list[str] = []
+    policy = get_grain_policy(config.grain_type)
+
+    if n_periods_returned == 0:
+        # Gap: histórico vazio
+        if profiling_total_count is not None and profiling_total_count > 0:
+            warnings.append(
+                "Profiling encontrou dados, mas historico retornou 0 periodos. "
+                "Possivel causa: lookback_value ou reference_date incompativeis "
+                "com a janela de analise historica."
+            )
+        else:
+            warnings.append(
+                "Historico retornou 0 periodos. "
+                "Verifique reference_date, lookback_value e granularidade."
+            )
+
+        if config.grain_type == GrainType.MONTHLY:
+            warnings.append(
+                f"Granularidade MONTHLY com lookback_value={config.lookback_value} dias. "
+                f"Para capturar N meses, lookback_value deve ser >= N*31 dias."
+            )
+
+        if not config.reference_date:
+            warnings.append(
+                "reference_date nao definido — lookback usa data atual. "
+                "Se a tabela tem dados historicos, defina reference_date "
+                "para a data do ultimo processamento."
+            )
+
+    elif n_periods_returned < policy.min_history:
+        # Poucos períodos: backtest não vai funcionar
+        warnings.append(
+            f"Historico com {n_periods_returned} periodos, "
+            f"abaixo do minimo para backtest ({policy.min_history}). "
+            f"Regras serao propostas sem evidencia de backtest — confianca reduzida."
+        )
+        if config.grain_type == GrainType.MONTHLY and config.lookback_value < 365:
+            warnings.append(
+                f"lookback_value={config.lookback_value} dias pode ser insuficiente "
+                f"para acumular {policy.min_history}+ periodos mensais. "
+                f"Considere aumentar para {policy.min_history * 31}+ dias."
+            )
+
+    return warnings
 
 
 class AnalysisService:
@@ -86,6 +154,12 @@ class AnalysisService:
             column=column,
         )
 
+        n_periods = len(df) if not df.empty else 0
+        diag = diagnose_history_gap(n_periods, config)
+        for w in diag:
+            logger.warning("[numeric_history %s.%s.%s] %s",
+                           config.schema, config.table, column, w)
+
         if df.empty:
             return pd.DataFrame(columns=[
                 "period", "mean", "stddev", "min", "max",
@@ -138,6 +212,12 @@ class AnalysisService:
             query_name="row_count_history",
             dataset=f"{config.schema}.{config.table}",
         )
+
+        n_periods = len(df) if not df.empty else 0
+        diag = diagnose_history_gap(n_periods, config)
+        for w in diag:
+            logger.warning("[row_count_history %s.%s] %s",
+                           config.schema, config.table, w)
 
         if df.empty:
             return pd.DataFrame(columns=["period", "row_count"])

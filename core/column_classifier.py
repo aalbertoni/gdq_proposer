@@ -156,10 +156,21 @@ def suggest_reclassification(
 
     # Guardrail 1: cardinalidade muito baixa → sugerir categórica
     if distinct_count <= NUMERIC_LOW_CARD_MAX_DISTINCT:
+        if distinct_count == 1:
+            msg = (
+                f"Coluna numerica com valor unico (constante). "
+                f"Reclassificada como categorica — regras de Mean/StdDev "
+                f"nao serao geradas. Se a coluna deveria ter variacao, "
+                f"verifique os dados ou ajuste manualmente para NUMERIC."
+            )
+        else:
+            msg = (
+                f"Coluna numerica com apenas {distinct_count} valores distintos. "
+                f"Considere tratar como categorica (ex: codigo, flag, status)."
+            )
         return (
             SemanticType.CATEGORICAL_LOW_CARDINALITY,
-            f"Coluna numerica com apenas {distinct_count} valores distintos. "
-            f"Considere tratar como categorica (ex: codigo, flag, status).",
+            msg,
         )
 
     # Guardrail 2: cardinalidade muito alta → sugerir identificador

@@ -14,7 +14,9 @@ import uuid
 import pytest
 
 from core.column_classifier import suggest_reclassification
-from core.models.enums import SemanticType, MetricRef, RuleType, BaselineMethod
+from core.models.dataset_config import DatasetConfig
+from core.models.enums import GrainType, SemanticType, MetricRef, RuleType, BaselineMethod
+from services.analysis_service import diagnose_history_gap
 from core.models.dual_guard import DualGuardSpec
 from core.gdq_renderer import DualGuardRenderer
 from core.gdq_rule_generator import GDQRuleGenerator
@@ -133,6 +135,113 @@ class TestSuggestReclassification:
         )
         assert suggested is None
         assert msg == ""
+
+    def test_constant_column_has_specific_warning(self):
+        """Column with exactly 1 distinct value → specific constant warning."""
+        suggested, msg = suggest_reclassification(
+            athena_type="double",
+            distinct_count=1,
+            total_count=100000,
+            non_null_count=100000,
+        )
+        assert suggested == SemanticType.CATEGORICAL_LOW_CARDINALITY
+        assert "constante" in msg.lower() or "unico" in msg.lower()
+        assert "Mean" in msg or "StdDev" in msg
+
+    def test_constant_int_has_specific_warning(self):
+        """Integer with 1 distinct → same constant warning."""
+        suggested, msg = suggest_reclassification(
+            athena_type="integer",
+            distinct_count=1,
+            total_count=50000,
+            non_null_count=50000,
+        )
+        assert suggested == SemanticType.CATEGORICAL_LOW_CARDINALITY
+        assert "constante" in msg.lower() or "unico" in msg.lower()
+
+    def test_few_distinct_has_generic_warning(self):
+        """Column with 5 distinct → generic low-cardinality warning (not constant)."""
+        _, msg = suggest_reclassification(
+            athena_type="integer",
+            distinct_count=5,
+            total_count=100000,
+            non_null_count=100000,
+        )
+        # Should mention code/flag/status, NOT constant
+        assert "codigo" in msg.lower() or "flag" in msg.lower() or "status" in msg.lower()
+        assert "constante" not in msg.lower()
+
+
+# =====================================================================
+# 1b. History gap diagnostics
+# =====================================================================
+
+class TestDiagnoseHistoryGap:
+    """diagnose_history_gap: warns when profiling finds data but history is empty/thin."""
+
+    def _make_config(self, grain=GrainType.DAILY, lookback=30, reference_date="2026-01-30"):
+        return DatasetConfig(
+            schema="test", table="t",
+            partition_column="dt_ref", date_column="dt_ref",
+            grain_type=grain, lookback_value=lookback,
+            reference_date=reference_date,
+        )
+
+    def test_zero_periods_emits_warning(self):
+        """0 periods returned → at least 1 warning."""
+        config = self._make_config()
+        warnings = diagnose_history_gap(0, config)
+        assert len(warnings) >= 1
+        assert any("0 periodos" in w for w in warnings)
+
+    def test_zero_periods_with_profiling_data_explains_gap(self):
+        """0 periods but profiling had data → mentions the gap explicitly."""
+        config = self._make_config()
+        warnings = diagnose_history_gap(0, config, profiling_total_count=5000)
+        assert any("Profiling encontrou dados" in w for w in warnings)
+
+    def test_zero_periods_without_reference_date_suggests_it(self):
+        """No reference_date → suggests setting it."""
+        config = self._make_config(reference_date=None)
+        warnings = diagnose_history_gap(0, config)
+        assert any("reference_date" in w for w in warnings)
+
+    def test_zero_periods_monthly_mentions_lookback(self):
+        """Monthly grain with 0 periods → mentions lookback_value in days."""
+        config = self._make_config(grain=GrainType.MONTHLY, lookback=30)
+        warnings = diagnose_history_gap(0, config)
+        assert any("MONTHLY" in w and "lookback_value" in w for w in warnings)
+
+    def test_few_periods_daily_warns_below_min_history(self):
+        """Daily with 3 periods (< min_history=7) → warns about insufficient backtest."""
+        config = self._make_config()
+        warnings = diagnose_history_gap(3, config)
+        assert len(warnings) >= 1
+        assert any("backtest" in w.lower() for w in warnings)
+
+    def test_few_periods_monthly_suggests_larger_lookback(self):
+        """Monthly with 2 periods and small lookback → suggests increasing."""
+        config = self._make_config(grain=GrainType.MONTHLY, lookback=90)
+        warnings = diagnose_history_gap(2, config)
+        assert any("lookback_value" in w for w in warnings)
+
+    def test_sufficient_periods_daily_no_warnings(self):
+        """Daily with 30 periods → no warnings."""
+        config = self._make_config()
+        warnings = diagnose_history_gap(30, config)
+        assert warnings == []
+
+    def test_sufficient_periods_monthly_no_warnings(self):
+        """Monthly with 6 periods (>= min_history=3) → no warnings."""
+        config = self._make_config(grain=GrainType.MONTHLY, lookback=400)
+        warnings = diagnose_history_gap(6, config)
+        assert warnings == []
+
+    def test_exactly_min_history_daily_no_warning(self):
+        """Daily with exactly 7 periods (= min_history) → no warning."""
+        config = self._make_config()
+        warnings = diagnose_history_gap(7, config)
+        assert warnings == []
 
 
 # =====================================================================

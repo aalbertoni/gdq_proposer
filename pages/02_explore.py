@@ -24,7 +24,7 @@ from core.rule_scoring import evaluate_proposal
 from core.series_regime import classify_series
 from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
-from services.analysis_service import AnalysisService
+from services.analysis_service import AnalysisService, diagnose_history_gap
 from services.proposal_service import ProposalService
 
 
@@ -1414,9 +1414,23 @@ with tab_numericas:
             st.error(f"Erro ao consultar historico: {e}")
             st.stop()
 
+        # Diagnostico de historico insuficiente
+        _n_hist_periods = len(history_df)
+        _sel_profile = next((p for p in numeric_profiles if p.column_name == selected_col), None)
+        _hist_diag = diagnose_history_gap(
+            _n_hist_periods, dataset_config,
+            profiling_total_count=_sel_profile.total_count if _sel_profile else None,
+        )
+
         if history_df.empty:
             st.warning(f"Nenhum dado historico encontrado para `{selected_col}`.")
+            for _dw in _hist_diag:
+                st.info(_dw)
         else:
+            # Warnings de historico insuficiente (nao vazio, mas curto)
+            for _dw in _hist_diag:
+                st.warning(_dw)
+
             # Classify series regime once per column
             _mean_vals = history_df["mean"].tolist() if "mean" in history_df.columns else []
             _mean_dates = history_df["period"].astype(str).tolist() if "period" in history_df.columns else []
@@ -1796,6 +1810,12 @@ with tab_categoricas:
 
         if cat_domain_df.empty:
             st.warning(f"Nenhum dado encontrado para `{selected_cat_col}`.")
+            _cat_diag = diagnose_history_gap(
+                0, dataset_config,
+                profiling_total_count=cat_profile.total_count,
+            )
+            for _dw in _cat_diag:
+                st.info(_dw)
         else:
             is_low = effective == SemanticType.CATEGORICAL_LOW_CARDINALITY
             is_mid = effective == SemanticType.CATEGORICAL_MID_CARDINALITY
@@ -2237,9 +2257,18 @@ with tab_tabela:
         st.error(f"Erro ao consultar historico de volume: {e}")
         st.stop()
 
+    # Diagnostico de historico de volume
+    _rc_n_periods = len(rc_history_df)
+    _rc_diag = diagnose_history_gap(_rc_n_periods, dataset_config)
+
     if rc_history_df.empty:
         st.warning("Nenhum dado de volume encontrado.")
+        for _dw in _rc_diag:
+            st.info(_dw)
     else:
+        for _dw in _rc_diag:
+            st.warning(_dw)
+
         # Classify row count series
         _rc_vals = rc_history_df["row_count"].tolist() if "row_count" in rc_history_df.columns else []
         _rc_dates = rc_history_df["period"].astype(str).tolist() if "period" in rc_history_df.columns else []
@@ -2482,6 +2511,9 @@ with tab_tabela:
                 "Nenhum dado de unicidade encontrado para as colunas "
                 "selecionadas."
             )
+            _pk_diag = diagnose_history_gap(0, dataset_config)
+            for _dw in _pk_diag:
+                st.info(_dw)
     else:
         st.divider()
         st.info(

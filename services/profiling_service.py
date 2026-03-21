@@ -12,7 +12,7 @@ import logging
 from core.column_classifier import classify_column
 from core.models.column_profile import ColumnProfile
 from core.models.dataset_config import DatasetConfig
-from core.models.enums import SemanticType
+from core.models.enums import GrainType, SemanticType
 from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from infra.query_safety import validate_identifier, sanitize_filter
@@ -67,6 +67,26 @@ class ProfilingService:
             reference_date=config.reference_date or "",
             partition_is_integer=config.partition_is_integer,
         )
+
+        # Auto-ajuste de sample_periods para granularidade mensal.
+        # sample_periods é usado como dias no date_lookback_expr.
+        # Com grain_type=MONTHLY e default=10 dias, a amostra captura no
+        # máximo 1 período — insuficiente para classificação.
+        # Ajustamos para 310 dias (~10 meses) quando o caller não
+        # especificou um valor explícito (usa o default 10).
+        _MONTHLY_MIN_SAMPLE_DAYS = 310
+        if (
+            config.grain_type == GrainType.MONTHLY
+            and sample_periods < _MONTHLY_MIN_SAMPLE_DAYS
+        ):
+            logger.info(
+                "grain_type=MONTHLY com sample_periods=%d (dias) — "
+                "ajustado automaticamente para %d dias para capturar "
+                "periodos mensais suficientes.",
+                sample_periods,
+                _MONTHLY_MIN_SAMPLE_DAYS,
+            )
+            sample_periods = _MONTHLY_MIN_SAMPLE_DAYS
 
         # Batch profiling: 1 query para todas as colunas.
         # Fail-closed: se batch falha, NAO cair para N queries individuais.
@@ -185,6 +205,7 @@ class ProfilingService:
 
             row = df.iloc[0]
             total_count = int(row["total_count"] or 0)
+            _empty_sample = total_count == 0
 
             # Parse string columns
             for col_info in string_cols:
@@ -208,9 +229,14 @@ class ProfilingService:
                 numeric_cast_ratio = castable / non_null if non_null > 0 else 0.0
 
                 warnings = []
+                if _empty_sample:
+                    warnings.append(
+                        "Amostra vazia: nenhuma linha na janela temporal. "
+                        "Verifique reference_date, lookback e granularidade."
+                    )
                 if null_ratio > 0.5:
                     warnings.append(f"Alta taxa de nulls: {null_ratio:.1%}")
-                if total_count < 100:
+                if total_count < 100 and total_count > 0:
                     warnings.append(f"Amostra pequena: {total_count} linhas")
 
                 profiles_map[col_name] = ColumnProfile(
@@ -235,6 +261,11 @@ class ProfilingService:
 
                 semantic_type = SemanticType.NUMERIC
                 warnings = []
+                if _empty_sample:
+                    warnings.append(
+                        "Amostra vazia: nenhuma linha na janela temporal. "
+                        "Verifique reference_date, lookback e granularidade."
+                    )
 
                 suggested, warning_msg = suggest_reclassification(
                     athena_type=athena_type,
@@ -342,6 +373,12 @@ class ProfilingService:
             except Exception:
                 pass  # fallback: classificar como NUMERIC sem guardrail
 
+            if total_count == 0:
+                warnings.append(
+                    "Amostra vazia: nenhuma linha na janela temporal. "
+                    "Verifique reference_date, lookback e granularidade."
+                )
+
             null_ratio = (
                 (total_count - non_null_count) / total_count
                 if total_count > 0 else 0.0
@@ -446,9 +483,14 @@ class ProfilingService:
         )
 
         warnings = []
+        if total_count == 0:
+            warnings.append(
+                "Amostra vazia: nenhuma linha na janela temporal. "
+                "Verifique reference_date, lookback e granularidade."
+            )
         if null_ratio > 0.5:
             warnings.append(f"Alta taxa de nulls: {null_ratio:.1%}")
-        if total_count < 100:
+        if total_count < 100 and total_count > 0:
             warnings.append(f"Amostra pequena: {total_count} linhas")
 
         return ColumnProfile(
