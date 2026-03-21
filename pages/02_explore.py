@@ -935,6 +935,45 @@ except Exception as e:
     st.error(f"Falha na conexao: {e}")
     st.stop()
 
+# --- Cost guardrail check ---
+from infra.cost_guard import CostGuardrailTriggered
+
+def _handle_cost_guardrail(e: CostGuardrailTriggered):
+    """Exibe UI de bloqueio por custo com opcao de bypass."""
+    st.error(
+        f"Custo acumulado da sessao: **${e.cost_usd:.4f}** "
+        f"(limiar: ${e.threshold_usd:.2f})"
+    )
+    _qs = client.logger.get_session_summary()
+    st.caption(
+        f"{_qs['total_queries']} queries · "
+        f"{_qs['total_elapsed_ms'] / 1000:.1f}s · "
+        f"${_qs['estimated_cost_usd']:.4f}"
+    )
+    # Ultimas queries
+    with st.expander("Queries da sessao"):
+        for _e in reversed(client.logger.entries[-10:]):
+            _bs = _e.bytes_scanned or 0
+            _cost = _e.estimated_cost_usd
+            st.caption(
+                f"**{_e.query_name}** — {_e.rows_returned} rows, "
+                f"{_bs:,} bytes, ${_cost:.6f}"
+            )
+    if st.button(
+        "Entendo o custo. Continuar executando queries.",
+        type="primary",
+        key="cost_guardrail_bypass",
+    ):
+        client.bypass_cost_guardrail()
+        st.rerun()
+    st.stop()
+
+# Verificar se custo ja foi excedido antes de qualquer query
+try:
+    client._check_cost_guardrail("explore_page_load")
+except CostGuardrailTriggered as e:
+    _handle_cost_guardrail(e)
+
 analysis_svc = _get_analysis_service(client)
 proposal_svc = _get_proposal_service()
 proposal_svc.set_grain_policy(dataset_config.grain_policy)
@@ -1368,6 +1407,8 @@ with tab_numericas:
 
         try:
             history_df = fetch_numeric_history(config_dict, selected_col)
+        except CostGuardrailTriggered as e:
+            _handle_cost_guardrail(e)
         except Exception as e:
             st.error(f"Erro ao consultar historico: {e}")
             st.stop()
@@ -1722,6 +1763,8 @@ with tab_categoricas:
         # --- Fetch data (domain sempre, distribution e distinct sob demanda) ---
         try:
             cat_domain_df = fetch_categorical_domain(config_dict, selected_cat_col)
+        except CostGuardrailTriggered as e:
+            _handle_cost_guardrail(e)
         except Exception as e:
             st.error(f"Erro ao consultar dominio categorico: {e}")
             st.stop()
@@ -2183,6 +2226,8 @@ with tab_tabela:
 
     try:
         rc_history_df = fetch_row_count_history(config_dict)
+    except CostGuardrailTriggered as e:
+        _handle_cost_guardrail(e)
     except Exception as e:
         st.error(f"Erro ao consultar historico de volume: {e}")
         st.stop()
