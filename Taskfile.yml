@@ -1,0 +1,148 @@
+version: "3"
+
+tasks:
+  setup:
+    desc: Instala dependencias locais
+    cmds:
+      - python3 -m venv .venv
+      - .venv/bin/pip install --upgrade pip
+      - .venv/bin/pip install -r requirements.txt
+
+  lint:
+    desc: Executa lint
+    cmds:
+      - echo "Lint not configured yet for gdq-proposer"
+
+  typecheck:
+    desc: Executa type-check
+    cmds:
+      - echo "Type-check not configured yet for gdq-proposer"
+
+  test:
+    desc: Executa testes unitarios e de integracao local
+    cmds:
+      - .venv/bin/pytest tests/ -v -m "not athena"
+
+  coverage:
+    desc: Executa cobertura minima
+    cmds:
+      - .venv/bin/pytest tests/ -v --tb=short --cov=core --cov=infra --cov=services --cov=strategies --cov=pages --cov-report=term-missing -m "not athena"
+
+  gate1:
+    desc: Portao 1
+    cmds:
+      - /home/aalbertoni/.config/homelab/scripts/gate1-validate .
+
+  plan-check:
+    desc: Exige plano revisado e atualizado antes de seguir
+    cmds:
+      - /home/aalbertoni/.config/homelab/scripts/require-plan-review .
+
+  snapshot:
+    desc: Cria um commit local para habilitar release por SHA
+    deps: [plan-check]
+    cmds:
+      - git add -A
+      - /home/aalbertoni/.config/homelab/scripts/snapshot-commit .
+
+  plan-write:
+    desc: Cria o template canonico do plano tecnico em reviews/latest/plan.md
+    cmds:
+      - /home/aalbertoni/.config/homelab/scripts/prepare-plan-bundle .
+
+  project-context:
+    desc: Gera o contexto curado do projeto para reviews do Codex
+    cmds:
+      - /home/aalbertoni/.config/homelab/scripts/prepare-project-context .
+
+  plan-review-codex:
+    desc: Submete o plano tecnico ao review independente do Codex
+    cmds:
+      - /home/aalbertoni/.config/homelab/scripts/review-plan .
+
+  plan-consensus:
+    desc: Gera ou valida o plano e exige veredito do Codex antes da implementacao
+    cmds:
+      - task: plan-write
+      - task: project-context
+      - task: plan-review-codex
+
+  review-agents:
+    desc: Executa os 4 agentes e consolida o veredito
+    deps: [plan-check]
+    cmds:
+      - /home/aalbertoni/.config/homelab/scripts/review-agents .
+
+  review-agents-consensus:
+    desc: Executa Gate 2 com Claude + Codex e consolida o veredito conjunto
+    deps: [plan-check]
+    cmds:
+      - env CODEX_REVIEW_ENABLED=true /home/aalbertoni/.config/homelab/scripts/review-agents .
+
+  build-release:
+    desc: Portao 3, exige pelo menos um commit
+    deps: [plan-check]
+    cmds:
+      - sudo /usr/local/bin/release-build .
+
+  sync-deploy:
+    desc: Sincroniza metadados do source para o deploy
+    cmds:
+      - /home/aalbertoni/.config/homelab/stacks/gdq-proposer/scripts/sync-source-to-stack
+
+  deploy-staging:
+    desc: Portao 4
+    deps: [gate1, review-agents-consensus, build-release]
+    cmds:
+      - sudo /usr/local/bin/deploy-staging gdq-proposer
+
+  smoke-staging:
+    desc: Smoke interno do staging
+    cmds:
+      - sudo /usr/local/bin/stack-status gdq-proposer-staging
+      - sudo /usr/local/bin/stack-health gdq-proposer-staging 60
+      - scripts/smoke.sh "http://localhost:18501"
+
+  smoke-staging-public:
+    desc: Smoke publico do staging
+    cmds:
+      - cmd: 'echo "Skipping public staging smoke: app interno"'
+
+  promote-prod:
+    desc: Portao 5
+    cmds:
+      - sudo /usr/local/bin/deploy-prod gdq-proposer
+
+  verify-prod:
+    desc: Valida a producao internamente
+    cmds:
+      - sudo /usr/local/bin/stack-status gdq-proposer
+      - sudo /usr/local/bin/stack-health gdq-proposer 60
+      - sudo /usr/local/bin/stack-logs gdq-proposer 50
+
+  verify-prod-public:
+    desc: Valida a producao via URL publica
+    cmds:
+      - cmd: 'echo "Skipping public production smoke: app interno"'
+
+  rollback-last:
+    desc: Faz rollback para a ultima release saudavel
+    cmds:
+      - sudo /usr/local/bin/stack-rollback gdq-proposer
+
+  pipeline-staging:
+    desc: Executa gates ate staging interno
+    cmds:
+      - task: gate1
+      - task: snapshot
+      - task: review-agents-consensus
+      - task: build-release
+      - task: deploy-staging
+      - task: smoke-staging
+
+  pipeline-prod:
+    desc: Executa gates, staging e verificacao interna de producao
+    cmds:
+      - task: pipeline-staging
+      - task: promote-prod
+      - task: verify-prod

@@ -1,0 +1,60 @@
+name: gdq-proposer
+tier: candidate
+stack_profile: python-api
+port: 8501
+health_path: /_stcore/health
+
+source_path: /home/claude-deploy/projects/gdq-proposer
+workspace_path: /home/claude-deploy/workspaces/gdq-proposer
+deploy_path: /home/aalbertoni/.config/homelab/stacks/gdq-proposer
+runtime_path: /home/aalbertoni/.config/appdata/gdq-proposer
+release_path: /home/aalbertoni/.config/homelab/releases/gdq-proposer
+
+public_url: ""
+
+has_database: false
+database_type: none
+requires_migrations: false
+has_background_jobs: false
+
+test:
+  command: ".venv/bin/pytest tests/ -v -m 'not athena'"
+  coverage_command: ".venv/bin/pytest tests/ -v --tb=short --cov=core --cov=infra --cov=services --cov=strategies --cov=pages --cov-report=term-missing -m 'not athena'"
+
+lint:
+  command: ""
+
+typecheck:
+  command: ""
+
+security:
+  secret_scan_command: "gitleaks detect --no-banner --source ."
+  sast_command: ""
+  dependency_scan_command: "pip-audit -r requirements.txt"
+
+build:
+  dockerfile: Dockerfile
+  context: .
+  image_name: homelab/gdq-proposer
+
+smoke:
+  local_command: "curl -fsS http://localhost:8501/_stcore/health"
+  staging_command: "curl -fsS http://localhost:18501/_stcore/health"
+  public_command: "echo no-public-smoke-configured"
+
+review_agents:
+  - architecture
+  - security
+  - tests
+  - release-ops
+
+deploy:
+  stack_name: gdq-proposer
+  staging_stack_name: gdq-proposer-staging
+  requires_staging: true
+  requires_manual_prod_approval: true
+  allow_rollback: true
+  traefik_enabled: false
+  authelia_enabled: false
+
+secrets: []
