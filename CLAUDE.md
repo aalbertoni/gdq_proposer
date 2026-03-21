@@ -63,6 +63,76 @@ ambos dialetos para que os testes unitarios rodem com DuckDB sem precisar de Ath
 
 ---
 
+## Governanca de Deploy
+
+Este projeto usa governanca obrigatoria de deploy. O agente nao pode improvisar fluxo com `git push`, `sudo /usr/local/bin/deploy-prod`, `stack-deploy` ou comandos ad hoc fora do `Taskfile`.
+
+Regras obrigatorias:
+
+1. Nunca seguir para deploy sem passar por `task gate1`, `task snapshot`, `task review-agents-consensus` e `task build-release`.
+2. Nunca promover para producao sem staging aprovado.
+3. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
+4. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
+5. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
+
+Arquivos obrigatorios de evidencia:
+
+Staging: `reviews/latest/deploy-staging-check.md`
+
+```text
+commit_sha: <sha atual>
+environment: staging
+gate1: <pass|fail>
+snapshot_commit: <sha do snapshot>
+gate2: <pass|warning|fail>
+release_build: <pass|fail>
+staging_deploy: <pass|fail>
+staging_smoke: <pass|fail>
+verdict: <ok|warning|fail>
+```
+
+Producao: `reviews/latest/deploy-prod-check.md`
+
+```text
+commit_sha: <sha atual>
+environment: prod
+staging_governance: <pass|fail>
+prod_approval: explicit
+prod_deploy: <pass|fail>
+prod_verify: <pass|fail>
+verdict: <ok|warning|fail>
+```
+
+Fluxo obrigatorio daqui pra frente:
+
+1. Rodar `task gate1`.
+2. Rodar `task snapshot`.
+3. Rodar `task review-agents-consensus`.
+4. Rodar `task build-release`.
+5. Rodar `task deploy-staging`.
+6. Rodar `task smoke-staging`.
+7. Gravar `reviews/latest/deploy-staging-check.md`.
+8. Rodar `task verify-staging-governance-proof`.
+9. So depois disso considerar staging apto.
+10. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
+11. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
+12. Rodar `task verify-prod`.
+13. Rodar `task verify-prod-governance-proof`.
+
+Quando o usuario disser “segue com o fluxo de deploy”, o agente deve responder executando ou orientando exatamente essa sequencia. Nao pode pular direto para `git status`, `git diff`, `git push` ou deploy.
+
+Prompts operacionais canônicos:
+
+```text
+Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico e valide com task verify-staging-governance-proof.
+```
+
+```text
+Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof.
+```
+
+---
+
 ## Principios de Desenvolvimento
 
 ### 1. Fatias verticais pequenas

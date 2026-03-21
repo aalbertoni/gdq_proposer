@@ -1,0 +1,16 @@
+
+
+```json
+{
+  "status": "ATENCAO",
+  "blockers": [],
+  "warnings": [
+    "Arquivo .coverage binario incluido no diff — deve ser adicionado ao .gitignore, nao commitado",
+    "Dockerfile CMD usa sh -lc com interpolacao de variavel sem aspas internas no PORT — risco baixo pois ENV ja define default",
+    "Taskfile.yml referencia paths absolutos de usuario (/home/aalbertoni/) — nao portavel entre ambientes",
+    "Nenhum teste novo foi adicionado neste diff — aceitavel pois as mudancas sao infra/deploy (Dockerfile, Taskfile, scripts) sem logica de negocio",
+    "scripts/smoke.sh e scripts/healthcheck.sh nao tem testes automatizados — considerar smoke test no CI para validar scripts"
+  ],
+  "summary": "Diff de infraestrutura (Docker, CI pipeline, scripts) sem codigo de negocio — nao requer testes unitarios, mas .coverage nao deve ser commitado."
+}
+```

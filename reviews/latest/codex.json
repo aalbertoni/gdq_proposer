@@ -1,0 +1,13 @@
+{
+  "status": "ATENCAO",
+  "blockers": [],
+  "warnings": [
+    "`.coverage` binario foi commitado no repo; isso nao quebra o deploy por si so, mas polui o snapshot de release e indica falta de higiene minima de artefatos gerados.",
+    "O `Dockerfile` sobe o app com `streamlit run app.py` e ignora o fluxo descrito no projeto via `run.py`/`launcher.py` e `preflight_check.py`; se esse bootstrap e necessario para carregar `.env` ou validar AWS/SSL antes da subida, o comportamento em container pode divergir do uso suportado.",
+    "O smoke cobre apenas `/_stcore/health`; isso valida processo vivo, mas nao exercita a jornada real do Streamlit nem detecta regressao de carregamento inicial, falha de configuracao AWS ou erro funcional na tela principal.",
+    "`scripts/smoke.sh` usa `curl -k`, desabilitando verificacao TLS; para staging interno em HTTP nao agrega valor e vira padrao perigoso se o script for reaproveitado contra endpoint HTTPS.",
+    "`Taskfile.yml` e `app.yaml` dependem de paths absolutos do host (`/home/aalbertoni/...`); no contexto homelab isso pode ser aceitavel, mas aumenta acoplamento operacional e reduz portabilidade/diagnostico fora desse host.",
+    "`pytest-cov` foi adicionado em `requirements.txt` de producao; nao e risco de seguranca imediato, mas aumenta a imagem final com dependencia de teste desnecessaria."
+  ],
+  "summary": "O diff mantem a separacao de release/deploy e nao introduz violacao clara de secrets, sudo docker direto ou side effects irreversiveis, entao nao vejo motivo para BLOQUEADO. Ainda assim, ha riscos moderados de operacao e confiabilidade: artefato de cobertura commitado, container possivelmente divergindo do bootstrap oficial do app e smoke superficial demais para dar confianca de release."
+}

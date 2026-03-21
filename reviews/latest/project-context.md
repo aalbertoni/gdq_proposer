@@ -1,7 +1,7 @@
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-21T02:10:09Z`
+- Generated at: `2026-03-21T02:11:55Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -461,22 +461,20 @@ tasks:
 ## Status
 
 ```text
- M requirements.txt
-?? .coverage
-?? .dockerignore
-?? Dockerfile
-?? Taskfile.yml
-?? app.yaml
-?? reviews/
-?? scripts/healthcheck.sh
-?? scripts/smoke.sh
+ M reviews/latest/project-context.md
+?? reviews/latest/README.md
+?? reviews/latest/architecture.prompt.md
+?? reviews/latest/diff.patch
+?? reviews/latest/release-ops.prompt.md
+?? reviews/latest/security.prompt.md
+?? reviews/latest/tests.prompt.md
 
 ```
 
 ## Diff Stat vs HEAD
 
 ```text
- requirements.txt | 1 +
- 1 file changed, 1 insertion(+)
+ reviews/latest/project-context.md | 22 ++++++++--------------
+ 1 file changed, 8 insertions(+), 14 deletions(-)
 
 ```

@@ -1,0 +1,15 @@
+{
+  "status": "ATENCAO",
+  "blockers": [],
+  "warnings": [
+    "Arquivo .coverage (binario) incluido no diff \u2014 deve ser adicionado ao .gitignore para nao ser commitado",
+    "Dockerfile usa COPY seletivo mas nao copia preflight_check.py \u2014 se o app depende dele no startup, falhara em runtime",
+    "Dockerfile nao copia scripts/ para dentro da imagem \u2014 healthcheck.sh so funciona se montado externamente ou via compose",
+    "Nao ha docker-compose.yml no diff \u2014 deploy via compose depende de artefato externo nao visivel aqui",
+    "Taskfile.yml referencia paths absolutos do usuario (/home/aalbertoni/.config/...) \u2014 quebra em outro host sem esses scripts",
+    "smoke.sh usa apenas health endpoint (_stcore/health) \u2014 nao valida funcionalidade do app (ex: pagina principal carrega)",
+    "Nao ha logging estruturado adicionado \u2014 diagnostico pos-deploy depende apenas dos logs nativos do Streamlit",
+    "pytest-cov adicionado em requirements.txt principal (nao separado em requirements-dev.txt) \u2014 sera instalado na imagem de producao"
+  ],
+  "summary": "Containerizacao inicial solida com health check valido e rollback previsto, mas .coverage commitado, paths absolutos no Taskfile e ausencia de compose.yml no diff requerem atencao antes de prod."
+}

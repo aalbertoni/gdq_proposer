@@ -1,0 +1,13 @@
+{
+  "status": "ATENCAO",
+  "blockers": [],
+  "warnings": [
+    "`.coverage` binary file committed \u2014 should be in `.gitignore`",
+    "`Taskfile.yml` references hardcoded user home paths (`/home/aalbertoni/...`) \u2014 leaks username and internal directory structure",
+    "`app.yaml` exposes absolute filesystem paths (`source_path`, `deploy_path`, `runtime_path`, `release_path`) with username",
+    "`smoke.sh` uses `curl -k` which disables TLS certificate verification \u2014 acceptable for internal staging but risky if reused against external endpoints",
+    "`Dockerfile` CMD uses shell expansion (`${PORT:-8501}`) via `sh -lc` \u2014 login shell (`-l`) loads profile files which is unnecessary and could introduce unexpected behavior",
+    "`app.yaml` shows `authelia_enabled: false` and `traefik_enabled: false` \u2014 confirm the app is truly internal-only with no external exposure"
+  ],
+  "summary": "No secrets or injection risks found; minor hygiene issues with committed `.coverage`, hardcoded paths leaking usernames, and `curl -k` in smoke test."
+}

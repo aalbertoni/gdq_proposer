@@ -108,9 +108,63 @@ tasks:
     cmds:
       - cmd: 'echo "Skipping public staging smoke: app interno"'
 
+  guide-governed-deploy:
+    desc: Exibe o fluxo obrigatorio de governanca para staging e producao
+    cmds:
+      - |
+        cat <<'EOF'
+        Fluxo obrigatorio deste projeto:
+
+        1. task gate1
+        2. task snapshot
+        3. task review-agents-consensus
+        4. task build-release
+        5. task deploy-staging
+        6. task smoke-staging
+        7. Gerar reviews/latest/deploy-staging-check.md
+        8. task verify-staging-governance-proof
+
+        Para producao:
+        9. Revisar staging aprovado
+        10. Gerar reviews/latest/deploy-prod-check.md
+        11. ALLOW_PROD_DEPLOY=true task promote-prod
+        12. task verify-prod
+        13. task verify-prod-governance-proof
+
+        Deploy por comando ad hoc fora do Taskfile e proibido.
+        EOF
+
+  verify-staging-governance-proof:
+    desc: Bloqueia sem evidencia obrigatoria de staging governado
+    cmds:
+      - |
+        test -f reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^environment: staging$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
+
   promote-prod:
     desc: Portao 5
     cmds:
+      - bash -lc 'test "${ALLOW_PROD_DEPLOY:-false}" = "true" || { echo "Refusing production deploy without ALLOW_PROD_DEPLOY=true." >&2; exit 1; }'
+      - task: verify-staging-governance-proof
       - sudo /usr/local/bin/deploy-prod gdq-proposer
 
   verify-prod:
@@ -124,6 +178,28 @@ tasks:
     desc: Valida a producao via URL publica
     cmds:
       - cmd: 'echo "Skipping public production smoke: app interno"'
+
+  verify-prod-governance-proof:
+    desc: Bloqueia sem evidencia obrigatoria da producao governada
+    cmds:
+      - |
+        test -f reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^environment: prod$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
+      - |
+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
 
   rollback-last:
     desc: Faz rollback para a ultima release saudavel
@@ -139,6 +215,7 @@ tasks:
       - task: build-release
       - task: deploy-staging
       - task: smoke-staging
+      - task: verify-staging-governance-proof
 
   pipeline-prod:
     desc: Executa gates, staging e verificacao interna de producao
@@ -146,3 +223,4 @@ tasks:
       - task: pipeline-staging
       - task: promote-prod
       - task: verify-prod
+      - task: verify-prod-governance-proof
