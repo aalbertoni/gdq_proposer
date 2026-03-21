@@ -121,10 +121,12 @@ class TestGetDateRange:
         assert "2026-01-01" in result["min_date"]
         assert "2026-01-30" in result["max_date"]
 
-    def test_with_base_filter(self, service, base_config):
+    def test_with_base_filter_metadata_ignores_filter(self, service, base_config):
+        """Metadata-first retorna range fisico, sem aplicar base_filter."""
         base_config.base_filter_sql = "COD_PRODUTO = 'A'"
         result = service.get_date_range(base_config)
-        assert result["n_periods"] == 10  # 30 dias / 3 produtos = 10 por produto
+        # Metadata retorna todas as particoes (30), nao filtra por COD_PRODUTO
+        assert result["n_periods"] == 30
 
     def test_metadata_first_no_reference_date(self, service, base_config):
         """Sem reference_date, metadata-first descobre range corretamente."""
@@ -196,7 +198,13 @@ class TestGetVolumeByPeriod:
 # ---------------------------------------------------------------------------
 
 class TestGetPartitions:
-    def test_returns_empty_on_error(self, service):
-        # Tabela sem coluna partition_0 → erro → retorna []
-        result = service.get_partitions("mock_db", "tb_teste")
-        assert result == []
+    def test_raises_on_invalid_column(self, service):
+        """Coluna de particao inexistente → PartitionMetadataError."""
+        from infra.cost_guard import PartitionMetadataError
+        with pytest.raises(PartitionMetadataError):
+            service.get_partitions("mock_db", "tb_teste", "nonexistent_col")
+
+    def test_returns_values_with_correct_column(self, service):
+        """Coluna existente → retorna valores."""
+        result = service.get_partitions("mock_db", "tb_teste", "dt_ref")
+        assert len(result) > 0

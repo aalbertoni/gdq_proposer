@@ -932,3 +932,78 @@ class TestSummaryReport:
         print("\n" + "=" * 70)
         print("  ALL TESTS PASSED")
         print("=" * 70)
+
+
+# ===========================================================================
+# Partition metadata tests
+# ===========================================================================
+
+class TestPartitionMetadata:
+    """Testa SHOW PARTITIONS e metadata-first date_range no Athena real."""
+
+    def test_show_partitions_returns_values(self, client, builder):
+        """SHOW PARTITIONS deve retornar lista de particoes sem erro."""
+        from services.dataset_service import DatasetService
+
+        svc = DatasetService(client=client, builder=builder)
+        partitions = svc.get_partitions(SCHEMA, TABLE)
+
+        print(f"\n  SHOW PARTITIONS: {len(partitions)} particoes")
+        if partitions:
+            print(f"    Primeiras 5: {partitions[:5]}")
+            print(f"    Ultimas 5: {partitions[-5:]}")
+
+        assert len(partitions) > 0, "SHOW PARTITIONS deve retornar pelo menos 1 particao"
+
+    def test_date_range_metadata_first(self, client, builder):
+        """get_date_range deve usar metadata (zero scan) para tabelas particionadas."""
+        from services.dataset_service import DatasetService
+
+        svc = DatasetService(client=client, builder=builder)
+        config = make_config()
+        config.partition_format = "%Y-%m-%d"  # dt_ref e string yyyy-mm-dd
+
+        result = svc.get_date_range(config)
+
+        print(f"\n  Date range (metadata-first):")
+        print(f"    min_date: {result['min_date']}")
+        print(f"    max_date: {result['max_date']}")
+        print(f"    n_periods: {result['n_periods']}")
+
+        assert result["min_date"] is not None
+        assert result["max_date"] is not None
+        assert result["n_periods"] > 0
+
+    def test_date_range_bytes_scanned_zero(self, client, builder):
+        """Metadata-first date_range deve scannear 0 bytes."""
+        from services.dataset_service import DatasetService
+
+        svc = DatasetService(client=client, builder=builder)
+        config = make_config()
+        config.partition_format = "%Y-%m-%d"
+
+        # Limpar log de queries anteriores para isolar
+        initial_entries = len(client.logger.entries)
+
+        svc.get_date_range(config)
+
+        # Verificar queries executadas apos o date_range
+        new_entries = client.logger.entries[initial_entries:]
+        metadata_queries = [
+            e for e in new_entries
+            if "show_partitions" in e.query_name
+        ]
+
+        print(f"\n  Queries do date_range: {len(new_entries)}")
+        for e in new_entries:
+            bs = e.bytes_scanned or 0
+            print(f"    {e.query_name}: {e.rows_returned} rows, {bs} bytes scanned")
+
+        # SHOW PARTITIONS no Athena deve reportar 0 bytes (metadata-only)
+        if metadata_queries:
+            for mq in metadata_queries:
+                # bytes_scanned pode ser None (metadata) ou 0
+                assert (mq.bytes_scanned or 0) == 0, (
+                    f"SHOW PARTITIONS deveria scannear 0 bytes, "
+                    f"mas scanneou {mq.bytes_scanned}"
+                )

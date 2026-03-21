@@ -68,24 +68,27 @@ class ProfilingService:
             partition_is_integer=config.partition_is_integer,
         )
 
-        # Tentativa batch: 1 query para todas as colunas
-        try:
-            return self._batch_profile_columns(
-                config=config,
-                columns=columns,
-                temporal_col=temporal_col,
-                base_filter=base_filter,
-                partition_filter=partition_filter,
-                sample_periods=sample_periods,
-            )
-        except Exception as e:
-            logger.warning(
-                "Batch profiling failed for %s.%s: %s. "
-                "Falling back to individual column profiling.",
-                config.schema, config.table, e,
-            )
+        # Batch profiling: 1 query para todas as colunas.
+        # Fail-closed: se batch falha, NAO cair para N queries individuais.
+        return self._batch_profile_columns(
+            config=config,
+            columns=columns,
+            temporal_col=temporal_col,
+            base_filter=base_filter,
+            partition_filter=partition_filter,
+            sample_periods=sample_periods,
+        )
 
-        # Fallback: 1 query por coluna
+    def _profile_columns_per_column(
+        self,
+        config: DatasetConfig,
+        columns: list[dict],
+        temporal_col: str,
+        base_filter: str,
+        partition_filter: str,
+        sample_periods: int,
+    ) -> list[ColumnProfile]:
+        """Profiling por coluna individual. Usado apenas para tabelas > BATCH_THRESHOLD."""
         profiles = []
         for col_info in columns:
             col_name = col_info["name"]

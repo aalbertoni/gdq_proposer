@@ -125,6 +125,10 @@ class AthenaClient:
         self.dialect = SQLDialect.ATHENA
         self._conn = None
         self._query_timeout: int = config.athena.query_timeout_seconds
+        self._cost_hard_limit: float = getattr(
+            config.athena, "cost_hard_limit_usd", 3.0
+        )
+        self._cost_guardrail_bypassed: bool = False
         self._init_connection()
 
     def _init_connection(self):
@@ -212,6 +216,31 @@ class AthenaClient:
             )
             raise ConnectionError(friendly) from e
 
+    def _check_cost_guardrail(self, query_name: str = "") -> None:
+        """Verifica custo acumulado antes de executar query.
+
+        Raises:
+            CostGuardrailTriggered: Se custo >= threshold e bypass nao ativo.
+        """
+        if self._cost_guardrail_bypassed:
+            return
+        summary = self.logger.get_session_summary()
+        if summary["estimated_cost_usd"] >= self._cost_hard_limit:
+            from infra.cost_guard import CostGuardrailTriggered
+            raise CostGuardrailTriggered(
+                summary["estimated_cost_usd"],
+                self._cost_hard_limit,
+                query_name,
+            )
+
+    def bypass_cost_guardrail(self) -> None:
+        """Desbloqueia guardrail de custo (confirmacao explicita do usuario)."""
+        self._cost_guardrail_bypassed = True
+
+    def reset_cost_guardrail(self) -> None:
+        """Reseta bypass (ex: ao trocar configuracao)."""
+        self._cost_guardrail_bypassed = False
+
     def execute_df(
         self,
         sql: str,
@@ -220,6 +249,7 @@ class AthenaClient:
         column: str = "",
     ) -> pd.DataFrame:
         """Executa query e retorna DataFrame. Loga metricas."""
+        self._check_cost_guardrail(query_name)
         start = time.time()
         rows = 0
         exception_type = None
@@ -319,6 +349,7 @@ class AthenaClient:
         Returns:
             Lista de dicts, um por linha retornada.
         """
+        self._check_cost_guardrail(query_name)
         start = time.time()
         rows = 0
         exception_type = None

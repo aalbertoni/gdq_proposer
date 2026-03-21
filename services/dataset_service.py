@@ -11,6 +11,7 @@ from typing import Optional
 
 from core.models.dataset_config import DatasetConfig
 from infra.athena_client import AthenaClient
+from infra.cost_guard import PartitionMetadataError, ExpensiveFallbackBlocked
 from infra.query_builder import QueryBuilder
 from infra.query_safety import validate_identifier, sanitize_filter
 
@@ -71,34 +72,52 @@ class DatasetService:
         validate_identifier(table)
         return self.client.get_columns_with_partitions(schema, table)
 
-    def get_partitions(self, schema: str, table: str) -> list[str]:
-        """Retorna partições disponíveis (se particionada).
+    def get_partitions(
+        self, schema: str, table: str, partition_column: str = "partition_0",
+    ) -> list[str]:
+        """Retorna particoes disponiveis (se particionada).
 
-        No mock, retorna valores distintos da coluna de partição
-        via metadata. No Athena real, usa SHOW PARTITIONS.
+        No DuckDB (testes), usa SELECT DISTINCT.
+        No Athena, usa SHOW PARTITIONS (zero scan).
 
-        Args:
-            schema: Nome do schema/database.
-            table: Nome da tabela.
-
-        Returns:
-            Lista de strings com valores de partição.
+        Raises:
+            PartitionMetadataError: Se a descoberta de particoes falhar.
         """
         validate_identifier(schema)
         validate_identifier(table)
-        # Para MVP, delega ao client; expansível para SHOW PARTITIONS
+
         try:
-            sql = self.builder.build_show_partitions(schema, table)
-            df = self.client.execute_df(
-                sql,
-                query_name="show_partitions",
-                dataset=f"{schema}.{table}",
-            )
-            if df.empty:
-                return []
-            return df.iloc[:, 0].astype(str).tolist()
-        except Exception:
-            return []
+            if self.builder.dialect.value == "duckdb":
+                sql = self.builder.build_show_partitions(
+                    schema, table, partition_col=partition_column,
+                )
+                df = self.client.execute_df(
+                    sql,
+                    query_name="show_partitions",
+                    dataset=f"{schema}.{table}",
+                )
+                if df.empty:
+                    return []
+                return df.iloc[:, 0].astype(str).tolist()
+            else:
+                # Athena: SHOW PARTITIONS (zero bytes scanned)
+                sql = f'SHOW PARTITIONS "{schema}"."{table}"'
+                rows = self.client.execute(
+                    sql,
+                    query_name="show_partitions_metadata",
+                    dataset=f"{schema}.{table}",
+                )
+                result = []
+                for row in rows:
+                    val = list(row.values())[0]
+                    if "=" in str(val):
+                        val = str(val).split("=", 1)[1]
+                    result.append(str(val).strip())
+                return result
+        except Exception as e:
+            raise PartitionMetadataError(
+                f"Falha ao descobrir particoes de {schema}.{table}: {e}"
+            ) from e
 
     def get_date_range(self, config: DatasetConfig) -> dict:
         """Retorna min/max da coluna temporal e contagem de periodos.
@@ -121,51 +140,35 @@ class DatasetService:
 
         # --- Caminho A: metadata de particoes (zero scan no Athena) ---
         if config.partition_column:
-            try:
-                result = self._get_date_range_from_partitions(config)
-                if result and result["n_periods"] > 0:
-                    return result
-            except Exception:
-                pass  # fallback para SQL
+            # Fail-closed: se metadata falha, NAO cair para SQL (full scan)
+            result = self._get_date_range_from_partitions(config)
+            if result and result["n_periods"] > 0:
+                return result
+            raise PartitionMetadataError(
+                f"Metadata de particoes retornou 0 periodos para "
+                f"{config.schema}.{config.table}. "
+                f"Verifique se a coluna de particao '{config.partition_column}' "
+                f"e o formato '{config.partition_format}' estao corretos."
+            )
 
-        # --- Caminho C: SQL sem pruning (fallback) ---
+        # --- Tabela nao particionada: SQL sem pruning (unico caminho) ---
         return self._get_date_range_sql(config)
 
     def _get_date_range_from_partitions(self, config: DatasetConfig) -> dict | None:
         """Descobre range via lista de particoes (metadata-first).
 
-        Usa SHOW PARTITIONS no Athena (zero scan) ou SELECT DISTINCT no DuckDB.
-        Faz parsing dos valores de particao e deriva min/max/count em Python.
+        Usa get_partitions() que faz SHOW PARTITIONS no Athena (zero scan)
+        ou SELECT DISTINCT no DuckDB. Erros propagam como PartitionMetadataError.
         """
         from datetime import datetime
 
         partition_col = config.partition_column
         validate_identifier(partition_col)
 
-        # Obter lista de particoes
-        if self.builder.dialect.value == "duckdb":
-            # DuckDB: SELECT DISTINCT (teste-only)
-            raw_values = self.get_partitions(config.schema, config.table)
-        else:
-            # Athena: SHOW PARTITIONS (zero scan)
-            try:
-                sql = f'SHOW PARTITIONS "{config.schema}"."{config.table}"'
-                rows = self.client.execute(
-                    sql,
-                    query_name="show_partitions_metadata",
-                    dataset=f"{config.schema}.{config.table}",
-                )
-                # SHOW PARTITIONS retorna rows como {"partition": "col=value"}
-                raw_values = []
-                for row in rows:
-                    val = list(row.values())[0]  # primeiro campo
-                    # Parse "col=value" ou valor direto
-                    if "=" in str(val):
-                        val = str(val).split("=", 1)[1]
-                    raw_values.append(str(val))
-            except Exception:
-                # Fallback para SELECT DISTINCT
-                raw_values = self.get_partitions(config.schema, config.table)
+        # get_partitions() levanta PartitionMetadataError se falhar
+        raw_values = self.get_partitions(
+            config.schema, config.table, partition_column=partition_col,
+        )
 
         if not raw_values:
             return None

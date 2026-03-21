@@ -719,7 +719,19 @@ if st.button("Validar Eixo Temporal", type="primary"):
         st.session_state["setup_date_range"] = date_range
         st.session_state["setup_config"] = dataset_config
     except Exception as e:
-        st.error(f"Erro ao consultar range temporal: {e}")
+        from infra.cost_guard import PartitionMetadataError, CostGuardrailTriggered
+        if isinstance(e, PartitionMetadataError):
+            st.error(
+                f"Erro ao descobrir particoes: {e}\n\n"
+                "Verifique:\n"
+                "- Se a coluna de particao e formato estao corretos\n"
+                "- Se voce tem permissao `glue:GetPartitions` no AWS\n"
+                "- Se a tabela esta registrada no Glue Catalog"
+            )
+        elif isinstance(e, CostGuardrailTriggered):
+            st.error(f"Custo excedido: {e}")
+        else:
+            st.error(f"Erro ao consultar range temporal: {e}")
         st.stop()
 
     if date_range["n_periods"] == 0:
@@ -871,32 +883,44 @@ if st.button("Executar Profiling", type="primary"):
     _MAX_PROFILING_SAMPLE = 30
     _profiling_sample = min(lookback_value, _MAX_PROFILING_SAMPLE)
 
-    if n_profiling <= _BATCH_THRESHOLD:
-        # Batch: 1 query para todas as colunas
-        with st.spinner(f"Profiling {n_profiling} colunas (batch)..."):
-            _col_names = tuple(c["name"] for c in profiling_cols_selected)
-            _col_types = tuple(c["type"] for c in profiling_cols_selected)
-            profiles = _cached_batch_profile(
-                client_id, config_dict,
-                _col_names, _col_types,
-                _profiling_sample,
+    try:
+        if n_profiling <= _BATCH_THRESHOLD:
+            # Batch: 1 query para todas as colunas
+            with st.spinner(f"Profiling {n_profiling} colunas (batch)..."):
+                _col_names = tuple(c["name"] for c in profiling_cols_selected)
+                _col_types = tuple(c["type"] for c in profiling_cols_selected)
+                profiles = _cached_batch_profile(
+                    client_id, config_dict,
+                    _col_names, _col_types,
+                    _profiling_sample,
+                )
+        else:
+            # Per-column: progress bar individual (tabelas grandes)
+            profiles = []
+            progress = st.progress(0, text="Classificando colunas...")
+            for i, col_info in enumerate(profiling_cols_selected):
+                progress.progress(
+                    (i + 1) / n_profiling,
+                    text=f"Classificando {col_info['name']}...",
+                )
+                profile_list = _cached_profile_column(
+                    client_id, config_dict,
+                    col_info["name"], col_info["type"],
+                    _profiling_sample,
+                )
+                profiles.extend(profile_list)
+            progress.empty()
+    except Exception as e:
+        from infra.cost_guard import CostGuardrailTriggered
+        if isinstance(e, CostGuardrailTriggered):
+            st.error(f"Custo excedido: {e}")
+        else:
+            st.error(
+                f"Erro no profiling: {e}\n\n"
+                "O profiling falhou. Verifique a configuracao da tabela, "
+                "eixo temporal e permissoes no Athena."
             )
-    else:
-        # Per-column: progress bar individual (tabelas grandes)
-        profiles = []
-        progress = st.progress(0, text="Classificando colunas...")
-        for i, col_info in enumerate(profiling_cols_selected):
-            progress.progress(
-                (i + 1) / n_profiling,
-                text=f"Classificando {col_info['name']}...",
-            )
-            profile_list = _cached_profile_column(
-                client_id, config_dict,
-                col_info["name"], col_info["type"],
-                _profiling_sample,
-            )
-            profiles.extend(profile_list)
-        progress.empty()
+        st.stop()
 
     st.session_state["setup_profiles"] = profiles
     st.success(f"Profiling concluido — {len(profiles)} colunas classificadas")
