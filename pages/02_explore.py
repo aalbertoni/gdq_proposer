@@ -1330,6 +1330,7 @@ if numeric_profiles:
                         _bbl = BaselineStrategy(
                             n_periods=_bbest["n_periods"], n_sigma=_bbest["n_sigma"],
                             margin_pct=_bbest["margin_pct"], margin_enabled=_bbest["margin_enabled"],
+                            min_history_points=_grain_policy.min_history,
                         )
                         _bprops = proposal_svc.propose_numeric_rules(
                             history=_bh, column=_bc,
@@ -1490,6 +1491,7 @@ with tab_numericas:
                 n_sigma=mean_k,
                 margin_pct=mean_margin,
                 margin_enabled=mean_margin_on,
+                min_history_points=_grain_policy.min_history,
             )
 
             mean_cache_key = f"proposal_mean_{selected_col}_{mean_n}_{mean_k}_{mean_margin}_{mean_margin_on}_{effective_lookback}"
@@ -1524,7 +1526,7 @@ with tab_numericas:
                     )
 
                 # Metricas do backtest (ocultar se auto-tune ja exibe metricas)
-                if f"autotune_mean_{selected_col}" not in st.session_state:
+                if f"autotune_{_fp}_mean_{selected_col}" not in st.session_state:
                     _render_backtest_metrics(proposal)
                 _render_add_to_cart(
                     proposal, "Mean",
@@ -1549,6 +1551,7 @@ with tab_numericas:
                 n_sigma=std_k,
                 margin_pct=std_margin,
                 margin_enabled=std_margin_on,
+                min_history_points=_grain_policy.min_history,
             )
 
             std_cache_key = f"proposal_stddev_{selected_col}_{std_n}_{std_k}_{std_margin}_{std_margin_on}_{effective_lookback}"
@@ -1582,7 +1585,7 @@ with tab_numericas:
                         f"{_fp}_stddev_{selected_col}", metric_kind="numeric",
                     )
 
-                if f"autotune_stddev_{selected_col}" not in st.session_state:
+                if f"autotune_{_fp}_stddev_{selected_col}" not in st.session_state:
                     _render_backtest_metrics(proposal)
                 _render_add_to_cart(
                     proposal, "StdDev",
@@ -1626,6 +1629,7 @@ with tab_numericas:
                     n_sigma=pct_k,
                     margin_pct=pct_margin,
                     margin_enabled=pct_margin_on,
+                    min_history_points=_grain_policy.min_history,
                 )
 
                 pct_levels = [pct_options[p] for p in selected_pcts]
@@ -1924,6 +1928,7 @@ with tab_categoricas:
                 n_sigma=cat_n_sigma,
                 margin_pct=cat_margin_pct / 100.0,
                 margin_enabled=cat_freq_mode != "static",
+                min_history_points=_grain_policy.min_history,
             )
 
             cat_cache_key = (
@@ -2285,6 +2290,7 @@ with tab_tabela:
             n_sigma=rc_k,
             margin_pct=rc_margin,
             margin_enabled=rc_margin_on,
+            min_history_points=_grain_policy.min_history,
         )
 
         rc_cache_key = f"proposal_rc_{rc_n}_{rc_k}_{rc_margin}_{rc_margin_on}_{effective_lookback}"
