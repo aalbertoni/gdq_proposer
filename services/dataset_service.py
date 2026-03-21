@@ -78,7 +78,7 @@ class DatasetService:
         """Retorna particoes disponiveis (se particionada).
 
         No DuckDB (testes), usa SELECT DISTINCT.
-        No Athena, usa SHOW PARTITIONS (zero scan).
+        No Athena, usa Glue API get_partitions (zero scan, metadata-only).
 
         Raises:
             PartitionMetadataError: Se a descoberta de particoes falhar.
@@ -100,24 +100,59 @@ class DatasetService:
                     return []
                 return df.iloc[:, 0].astype(str).tolist()
             else:
-                # Athena: SHOW PARTITIONS (zero bytes scanned)
-                sql = f'SHOW PARTITIONS "{schema}"."{table}"'
-                rows = self.client.execute(
-                    sql,
-                    query_name="show_partitions_metadata",
-                    dataset=f"{schema}.{table}",
-                )
-                result = []
-                for row in rows:
-                    val = list(row.values())[0]
-                    if "=" in str(val):
-                        val = str(val).split("=", 1)[1]
-                    result.append(str(val).strip())
-                return result
+                # Athena: Glue API get_partitions (zero bytes scanned)
+                return self._get_partitions_via_glue(schema, table, partition_column)
+        except PartitionMetadataError:
+            raise
         except Exception as e:
             raise PartitionMetadataError(
                 f"Falha ao descobrir particoes de {schema}.{table}: {e}"
             ) from e
+
+    def _get_partitions_via_glue(
+        self, schema: str, table: str, partition_column: str,
+    ) -> list[str]:
+        """Descobre particoes via Glue API (boto3). Zero bytes scanned."""
+        import logging
+        _logger = logging.getLogger(__name__)
+
+        # Obter sessao boto3 do client Athena
+        session = None
+        if hasattr(self.client, 'config') and self.client.config.athena.aws_profile:
+            from infra.aws_session import create_session
+            session = create_session(self.client.config.athena.aws_profile)
+        else:
+            import boto3
+            session = boto3.Session()
+
+        glue = session.client("glue")
+
+        result = []
+        next_token = None
+        while True:
+            kwargs = {
+                "DatabaseName": schema,
+                "TableName": table,
+            }
+            if next_token:
+                kwargs["NextToken"] = next_token
+
+            response = glue.get_partitions(**kwargs)
+
+            for partition in response.get("Partitions", []):
+                values = partition.get("Values", [])
+                if values:
+                    result.append(str(values[0]))
+
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+
+        _logger.info(
+            "Glue get_partitions: %s.%s → %d particoes",
+            schema, table, len(result),
+        )
+        return result
 
     def get_date_range(self, config: DatasetConfig) -> dict:
         """Retorna min/max da coluna temporal e contagem de periodos.
