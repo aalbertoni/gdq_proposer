@@ -282,7 +282,10 @@ class AthenaClient:
 
         except Exception as e:
             exception_type = type(e).__name__
-            raise
+            # Enriquecer erro com contexto da query
+            raise type(e)(
+                f"[{query_name}] {e}\n\nSQL:\n{sql[:500]}"
+            ) from e
 
         finally:
             elapsed = int((time.time() - start) * 1000)
@@ -407,7 +410,9 @@ class AthenaClient:
 
         except Exception as e:
             exception_type = type(e).__name__
-            raise
+            raise type(e)(
+                f"[{query_name}] {e}\n\nSQL:\n{sql[:500]}"
+            ) from e
 
         finally:
             elapsed = int((time.time() - start) * 1000)
