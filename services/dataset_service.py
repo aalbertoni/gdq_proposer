@@ -100,8 +100,22 @@ class DatasetService:
                     return []
                 return df.iloc[:, 0].astype(str).tolist()
             else:
-                # Athena: Glue API get_partitions (zero bytes scanned)
-                return self._get_partitions_via_glue(schema, table, partition_column)
+                # Athena: SHOW PARTITIONS (zero bytes scanned, metadata-only)
+                # Sintaxe sem aspas: SHOW PARTITIONS schema.table
+                sql = f"SHOW PARTITIONS {schema}.{table}"
+                rows = self.client.execute(
+                    sql,
+                    query_name="show_partitions_metadata",
+                    dataset=f"{schema}.{table}",
+                )
+                result = []
+                for row in rows:
+                    val = list(row.values())[0]
+                    # Parse "col=value" formato retornado pelo SHOW PARTITIONS
+                    if "=" in str(val):
+                        val = str(val).split("=", 1)[1]
+                    result.append(str(val).strip())
+                return result
         except PartitionMetadataError:
             raise
         except Exception as e:
