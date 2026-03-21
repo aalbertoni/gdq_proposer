@@ -108,14 +108,20 @@ class DatasetService:
                     query_name="show_partitions_metadata",
                     dataset=f"{schema}.{table}",
                 )
-                result = []
+                # SHOW PARTITIONS retorna "col1=val1/col2=val2" por row.
+                # Extrair apenas o valor da partition_column desejada.
+                result = set()
                 for row in rows:
-                    val = list(row.values())[0]
-                    # Parse "col=value" formato retornado pelo SHOW PARTITIONS
-                    if "=" in str(val):
-                        val = str(val).split("=", 1)[1]
-                    result.append(str(val).strip())
-                return result
+                    raw = str(list(row.values())[0])
+                    # Separar pares "col=value" por "/"
+                    for part in raw.split("/"):
+                        part = part.strip()
+                        if "=" not in part:
+                            continue
+                        col_name, col_val = part.split("=", 1)
+                        if col_name.strip() == partition_column:
+                            result.add(col_val.strip())
+                return sorted(result)
         except PartitionMetadataError:
             raise
         except Exception as e:
