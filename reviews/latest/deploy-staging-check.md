@@ -1,7 +1,7 @@
-commit_sha: 4d9ffe5
+commit_sha: 762ecf2
 environment: staging
 gate1: pass
-snapshot_commit: 4d9ffe5
+snapshot_commit: 762ecf2
 gate2: warning
 release_build: pass
 staging_deploy: pass
@@ -17,3 +17,5 @@ notes: |
   smoke: stack-health passed (container healthy). scripts/smoke.sh failed on port 18501
          (staging compose uses Traefik network, no host port mapping). Health confirmed
          via Docker healthcheck (curl localhost:8501/health inside container).
+  rebase: Integrated 8 remote commits, resolved 1 conflict in profiling_service.py
+          (kept monthly grain auto-adjust + fail-closed batch policy).
