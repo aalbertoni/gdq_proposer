@@ -5,11 +5,10 @@
   "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Apenas 1 teste atualizado (test_allowed_values_string_column). Faltam testes para casos de borda: strings com aspas duplas internas (ex: valor 'foo\"bar'), mix de numericos+strings+NULL na mesma lista, e string vazia.",
-    "Nao ha teste de regressao explicito que valide que aspas simples NAO sao mais geradas — um teste parametrizado com assert '\\'' not in syntax blindaria contra reintroducao do bug.",
-    "O teste existente foi apenas atualizado para refletir a nova sintaxe, mas nao foi adicionado nenhum teste novo para _format_column_value cobrindo o escape de aspas duplas dentro de strings.",
-    "Verificar se CustomSql continua usando aspas simples conforme documentacao (Valores string em CustomSql: 'com aspas simples') — a mudanca e apenas para ColumnValues, mas seria prudente ter teste contratual confirmando essa separacao."
+    "Teste test_hybrid_no_constraint_when_full_range usa logica OR (`or`) na asserção, tornando-o fraco — sempre passa se qualquer lado for verdadeiro. Deveria verificar que NENHUMA cláusula absoluta aparece no resultado.",
+    "Não há teste unitário dedicado para a mudança de precisão de 2 para 4 casas decimais em _build_static_frequency (gdq_rule_generator.py). Os testes existentes cobrem indiretamente via assertions de string, mas um teste explícito de arredondamento seria mais robusto.",
+    "Nenhum teste de regressão verifica que a sintaxe antiga com 'between' NÃO aparece mais na saída — apenas verificam a presença da nova sintaxe. Um assert negativo ('between' not in syntax) preveniria regressão."
   ],
-  "summary": "Mudanca correta de aspas simples para duplas em ColumnValues, mas cobertura de testes insuficiente para casos de borda e regressao."
+  "summary": "Mudança de 'between' para '>= / <=' consistente entre renderer, generator, docs e testes; sem blockers, mas asserção fraca em test_hybrid_no_constraint e ausência de asserts negativos reduzem confiança contra regressão."
 }
 ```

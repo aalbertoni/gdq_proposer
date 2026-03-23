@@ -5,8 +5,9 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Mudanca de aspas simples para duplas em ColumnValues e uma correcao de sintaxe GDQ — confirmar que o runtime GDQ real aceita aspas duplas em valores string antes de promover para producao."
+    "CustomSql expression is repeated twice in >= / <= form (sigma_lower + sigma_upper, margin_lower + margin_upper, floor_ceil), increasing rendered rule length — acceptable trade-off for GDQ compatibility but worth monitoring if rule size limits exist.",
+    "test_hybrid_no_constraint_when_full_range uses OR logic (`assert '>= 0.0000) AND' not in result or '<= 100.0000)' not in result`) which always passes if either clause is absent — consider using AND to ensure neither clause is present."
   ],
-  "summary": "Correcao consistente de sintaxe GDQ (aspas simples → duplas em ColumnValues) aplicada em codigo, docs, UI e testes sem violacao de separacao de camadas."
+  "summary": "Refactoring puro de sintaxe GDQ: substitui 'between X and Y' por '>= X AND <= Y' em renderer, generator, docs e testes — sem impacto em separacao de camadas, secrets ou runtime."
 }
 ```

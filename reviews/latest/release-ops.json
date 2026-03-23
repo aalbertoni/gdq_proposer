@@ -2,7 +2,9 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Diff vazio: nenhuma alteracao material para revisar."
+    "Mudanca de sintaxe GDQ (between -> >= AND <=) altera output de todas as regras CustomSql \u2014 confirmar compatibilidade com o parser do AWS Glue Data Quality antes de prod.",
+    "Precisao aumentada de 2 para 4 casas decimais (.2f -> .4f) nas regras estaticas \u2014 verificar se regras existentes em producao precisam ser regeneradas.",
+    "Testes atualizados cobrem os novos formatos, mas nao ha teste de contrato validando que o GDQ engine da AWS aceita a nova sintaxe com >= e <= separados."
   ],
-  "summary": "No-op review: nenhum diff material foi gerado para avaliacao."
+  "summary": "Refatoracao de sintaxe CustomSql de 'between X and Y' para '>= X AND <= Y' com 4 casas decimais \u2014 codigo, testes e docs consistentes, sem risco de deploy, mas requer validacao de compatibilidade com o GDQ engine real."
 }

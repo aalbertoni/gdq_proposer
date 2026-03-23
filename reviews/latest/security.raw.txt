@@ -5,6 +5,6 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [],
-  "summary": "Mudanca cosmética de aspas simples para duplas em valores string da sintaxe GDQ ColumnValues — sem impacto de seguranca."
+  "summary": "Refatoracao sintatica de 'between X and Y' para '>= X AND <= Y' em regras GDQ, sem impacto de seguranca."
 }
 ```

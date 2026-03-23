@@ -5,9 +5,10 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Mudanca de aspas simples para duplas em ColumnValues e uma alteracao de comportamento em regras GDQ geradas — confirmar que o motor GDQ em producao aceita aspas duplas em valores string antes de promover.",
-    "Apenas 1 teste unitario atualizado (test_categorical). Verificar se existem outros testes que validam a formatacao de strings em ColumnValues (ex: testes de integracao, testes de export/Thundera payload)."
+    "Mudanca de sintaxe GDQ (between -> >= AND <=) altera output de todas as regras CustomSql — confirmar compatibilidade com o parser do AWS Glue Data Quality antes de prod.",
+    "Precisao aumentada de 2 para 4 casas decimais (.2f -> .4f) nas regras estaticas — verificar se regras existentes em producao precisam ser regeneradas.",
+    "Testes atualizados cobrem os novos formatos, mas nao ha teste de contrato validando que o GDQ engine da AWS aceita a nova sintaxe com >= e <= separados."
   ],
-  "summary": "Mudanca pontual e coesa de formatacao de strings em ColumnValues (aspas simples → duplas), com docs e help atualizados; sem impacto em infra, compose, healthcheck ou migracao."
+  "summary": "Refatoracao de sintaxe CustomSql de 'between X and Y' para '>= X AND <= Y' com 4 casas decimais — codigo, testes e docs consistentes, sem risco de deploy, mas requer validacao de compatibilidade com o GDQ engine real."
 }
 ```

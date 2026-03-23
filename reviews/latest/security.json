@@ -1,8 +1,6 @@
 {
   "status": "APROVADO",
   "blockers": [],
-  "warnings": [
-    "Diff vazio: nenhuma alteracao material para revisar."
-  ],
-  "summary": "No-op review: nenhum diff material foi gerado para avaliacao."
+  "warnings": [],
+  "summary": "Refatoracao sintatica de 'between X and Y' para '>= X AND <= Y' em regras GDQ, sem impacto de seguranca."
 }

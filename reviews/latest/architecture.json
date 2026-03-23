@@ -2,7 +2,8 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Diff vazio: nenhuma alteracao material para revisar."
+    "CustomSql expression is repeated twice in >= / <= form (sigma_lower + sigma_upper, margin_lower + margin_upper, floor_ceil), increasing rendered rule length \u2014 acceptable trade-off for GDQ compatibility but worth monitoring if rule size limits exist.",
+    "test_hybrid_no_constraint_when_full_range uses OR logic (`assert '>= 0.0000) AND' not in result or '<= 100.0000)' not in result`) which always passes if either clause is absent \u2014 consider using AND to ensure neither clause is present."
   ],
-  "summary": "No-op review: nenhum diff material foi gerado para avaliacao."
+  "summary": "Refactoring puro de sintaxe GDQ: substitui 'between X and Y' por '>= X AND <= Y' em renderer, generator, docs e testes \u2014 sem impacto em separacao de camadas, secrets ou runtime."
 }
