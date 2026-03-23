@@ -1,9 +1,10 @@
 {
-  "status": "APROVADO",
+  "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage (binario) incluido no diff \u2014 deve estar no .gitignore para evitar vazamento de paths locais ou metricas de cobertura.",
-    "Precos hardcoded em ATHENA_PRICE_PER_TB podem ficar desatualizados \u2014 considerar validacao periodica contra AWS Pricing API."
+    "Arquivo .coverage (binario) incluido no diff \u2014 contem metadados de execucao de testes que nao devem ser commitados. Adicionar ao .gitignore.",
+    "Etapa 4 (validate_with_backtest) captura Exception generica com `except Exception as e` e inclui `str(e)` na justificativa retornada ao usuario. Se a excecao contiver detalhes internos (paths, credenciais de conexao), eles podem vazar na UI do Streamlit.",
+    "Broad `except Exception: continue` em find_best_sigma, add_margin_if_needed e validate_with_backtest engole silenciosamente erros, dificultando diagnostico. Nao e blocker de seguranca, mas pode mascarar falhas inesperadas."
   ],
-  "summary": "Diff seguro: promove regras de experimental para validated, adiciona pricing por regiao sem segredos ou inputs inseguros."
+  "summary": "Codigo puro sem I/O, sem SQL, sem segredos \u2014 risco baixo; atentar para .coverage no repositorio e possivel vazamento de detalhes de excecao na UI."
 }

@@ -5,9 +5,10 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Arquivo binario .coverage incluido no diff — nao deveria ser commitado (adicionar ao .gitignore se ausente)",
-    "Tabela ATHENA_PRICE_PER_TB hardcoded em query_logger.py — se precos mudarem, requer deploy para atualizar"
+    "Arquivo .coverage (binario) incluido no diff — nao deveria ser commitado (adicionar ao .gitignore se ausente)",
+    "core/calibration_advisor.py importa funcao privada _filter_valid de core.statistical_engine — acoplamento a API interna que pode quebrar sem aviso",
+    "ProposalService.calibrate_params e um thin wrapper que apenas faz import + forward — util como facade mas pode ser dead code se UI ja chama calibrate() diretamente"
   ],
-  "summary": "Promocao de regras CustomSql de experimental para validated com pricing regional no query_logger — separacao source/deploy/runtime preservada, sem acoplamento excessivo."
+  "summary": "Novo modulo de calibracao explicavel (core/) com testes unitarios, substituindo grid search na UI — separacao source/deploy/runtime preservada, sem acesso a secrets ou I/O."
 }
 ```

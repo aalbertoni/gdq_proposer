@@ -1,15 +1,16 @@
-
-
 ```json
 {
-  "status": "APROVADO",
+  "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage binario incluido no diff — nao deveria ser commitado (adicionar ao .gitignore se ausente)",
-    "QueryLogEntry._price_per_tb com valor default DEFAULT_ATHENA_PRICE_PER_TB (5.00) diverge do default do QueryLogger (sa-east-1 = 9.00) — entries criadas fora do logger terao preco incorreto ate log_query() injetar o valor",
-    "Tabela ATHENA_PRICE_PER_TB hardcoded — se precos AWS mudarem, requer deploy para atualizar",
-    "Teste test_dynamic_frequency_excluded_from_minimal valida que STRONG e excluido do minimal set, mas o motivo (by design) merece comentario no codigo de producao (select_minimal_set) alem do teste"
+    "Funcao `_build_recommendation` (publica via underscore mas chamada internamente) nao tem teste unitario isolado — apenas coberta indiretamente via `calibrate()`. Testar paths de regime (ZERO_INFLATED, SPARSE, TRENDING) diretamente.",
+    "Testes usam `random.seed(42)` dentro de cada fixture mas nao isolam o estado global do random — se a ordem de execucao mudar (pytest-randomly), seeds podem interagir. Considerar usar `random.Random(42)` local.",
+    "Nenhum teste cobre o path de ajuste na etapa 4 onde `margin_enabled=True` e sigma e incrementado em 0.5 (branch de 'Tentar aumentar sigma'). O teste `test_adjusts_when_recent_fps` nao asserta que o ajuste de fato ocorreu.",
+    "Nenhum teste para `_render_calibration` na UI (02_explore.py) — o branch de legado (`del st.session_state[cache_key]; return`) que limpa cache antigo de dict nao tem cobertura.",
+    "Explainer `_append_regime_detail` nao tem teste isolado — coberta apenas indiretamente via `explain_calibration` com serie volatil. Regimes como ZERO_INFLATED, SPARSE, TRENDING nao sao exercitados.",
+    "`calibrate()` com `metric_kind='frequency'` e structural_break nao tem teste combinado — paths de `backtest_frequency_dual_guard` com N reduzido ficam sem cobertura.",
+    "Arquivo `.coverage` binario esta no diff — nao deveria ser commitado (adicionar ao .gitignore)."
   ],
-  "summary": "Mudancas consistentes: promocao experimental→validated com testes atualizados, pricing regional bem coberto com 12 novos testes deterministicos."
+  "summary": "Boa cobertura do core e orquestrador com 560 linhas de testes, mas faltam testes isolados para _build_recommendation, path de ajuste de sigma na etapa 4, e combinacoes de metric_kind com regimes especificos."
 }
 ```

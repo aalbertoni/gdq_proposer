@@ -1,7 +1,7 @@
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-23T02:33:39Z`
+- Generated at: `2026-03-23T04:06:18Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -935,13 +935,10 @@ def _load_dotenv(path: Path):
 ## Status
 
 ```text
- M infra/query_logger.py
  M reviews/latest/architecture.json
  M reviews/latest/architecture.prompt.md
  M reviews/latest/architecture.raw.txt
- M reviews/latest/codex.json
  M reviews/latest/codex.prompt.md
- M reviews/latest/codex.raw.txt
  M reviews/latest/diff.patch
  M reviews/latest/project-context.md
  M reviews/latest/release-ops.json
@@ -950,7 +947,6 @@ def _load_dotenv(path: Path):
  M reviews/latest/security.json
  M reviews/latest/security.prompt.md
  M reviews/latest/security.raw.txt
- M reviews/latest/summary.json
  M reviews/latest/tests.json
  M reviews/latest/tests.prompt.md
  M reviews/latest/tests.raw.txt
@@ -960,25 +956,21 @@ def _load_dotenv(path: Path):
 ## Diff Stat vs HEAD
 
 ```text
- infra/query_logger.py                 |    2 +-
- reviews/latest/architecture.json      |   10 +-
- reviews/latest/architecture.prompt.md | 1027 ++++++++++++++++++++------------
- reviews/latest/architecture.raw.txt   |   10 +-
- reviews/latest/codex.json             |   11 +-
- reviews/latest/codex.prompt.md        | 1060 ++++++++++++++++++++-------------
- reviews/latest/codex.raw.txt          |    2 +-
- reviews/latest/diff.patch             | 1027 ++++++++++++++++++++------------
- reviews/latest/project-context.md     |   24 +-
- reviews/latest/release-ops.json       |    7 +-
- reviews/latest/release-ops.prompt.md  | 1027 ++++++++++++++++++++------------
- reviews/latest/release-ops.raw.txt    |    7 +-
+ reviews/latest/architecture.json      |   12 +-
+ reviews/latest/architecture.prompt.md | 2671 ++++++++++++++++++++++++--------
+ reviews/latest/architecture.raw.txt   |   14 +-
+ reviews/latest/codex.prompt.md        | 2732 +++++++++++++++++++++++++--------
+ reviews/latest/diff.patch             | 2671 ++++++++++++++++++++++++--------
+ reviews/latest/project-context.md     |   28 +-
+ reviews/latest/release-ops.json       |    9 +-
+ reviews/latest/release-ops.prompt.md  | 2671 ++++++++++++++++++++++++--------
+ reviews/latest/release-ops.raw.txt    |    9 +-
  reviews/latest/security.json          |    9 +-
- reviews/latest/security.prompt.md     | 1027 ++++++++++++++++++++------------
- reviews/latest/security.raw.txt       |    9 +-
- reviews/latest/summary.json           |   57 +-
- reviews/latest/tests.json             |   13 +-
- reviews/latest/tests.prompt.md        | 1027 ++++++++++++++++++++------------
- reviews/latest/tests.raw.txt          |   13 +-
- 19 files changed, 3852 insertions(+), 2517 deletions(-)
+ reviews/latest/security.prompt.md     | 2671 ++++++++++++++++++++++++--------
+ reviews/latest/security.raw.txt       |   11 +-
+ reviews/latest/tests.json             |   15 +-
+ reviews/latest/tests.prompt.md        | 2671 ++++++++++++++++++++++++--------
+ reviews/latest/tests.raw.txt          |   17 +-
+ 15 files changed, 12449 insertions(+), 3762 deletions(-)
 
 ```
