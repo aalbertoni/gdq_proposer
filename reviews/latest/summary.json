@@ -37,7 +37,7 @@
       "summary": "Diff de higiene de reposit\u00f3rio: remove o artefato bin\u00e1rio `.coverage` versionado e passa a ignor\u00e1-lo em `.gitignore`. N\u00e3o altera c\u00f3digo de aplica\u00e7\u00e3o, arquitetura, fluxo de deploy, secrets, testes executados, nem jornada/UX. N\u00e3o h\u00e1 risco concreto de regress\u00e3o funcional, seguran\u00e7a ou release."
     }
   },
-  "reviewed_commit": "85a51643f6b424de1f9d73818ba3bfafc60656f7",
-  "reviewed_tree": "c5c246fa69fddcd1ccfadd3bc7d73de16319398d",
+  "reviewed_commit": "7aec774feca0fd678af76516162f494d96773427",
+  "reviewed_tree": "b93cdf173a990cd52870574f71deb0e2d22c590b",
   "generated_at": "2026-03-23T04:08:46.885622Z"
 }
