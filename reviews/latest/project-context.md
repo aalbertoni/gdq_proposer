@@ -1,7 +1,7 @@
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-23T23:26:38Z`
+- Generated at: `2026-03-23T23:28:27Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -947,12 +947,12 @@ def _load_dotenv(path: Path):
 ## Diff Stat vs HEAD
 
 ```text
- reviews/latest/architecture.prompt.md | 768 +++++++++++++++++++++++-----------
- reviews/latest/diff.patch             | 768 +++++++++++++++++++++++-----------
+ reviews/latest/architecture.prompt.md | 530 +---------------------------------
+ reviews/latest/diff.patch             | 530 +---------------------------------
  reviews/latest/project-context.md     |  11 +-
- reviews/latest/release-ops.prompt.md  | 768 +++++++++++++++++++++++-----------
- reviews/latest/security.prompt.md     | 768 +++++++++++++++++++++++-----------
- reviews/latest/tests.prompt.md        | 768 +++++++++++++++++++++++-----------
- 6 files changed, 2641 insertions(+), 1210 deletions(-)
+ reviews/latest/release-ops.prompt.md  | 530 +---------------------------------
+ reviews/latest/security.prompt.md     | 530 +---------------------------------
+ reviews/latest/tests.prompt.md        | 530 +---------------------------------
+ 6 files changed, 31 insertions(+), 2630 deletions(-)
 
 ```

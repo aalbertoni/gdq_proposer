@@ -1,11 +1,10 @@
+
+
 ```json
 {
   "status": "APROVADO",
   "blockers": [],
-  "warnings": [
-    "Remocao de _render_diagnostics_panel (~200 linhas) e uma mudanca significativa de UX — confirmar que os diagnosticos (change-point, sazonalidade, IQR/MAD, cobertura ponderada) continuam acessiveis por outra via ou foram intencionalmente descontinuados.",
-    "evaluate_proposal() agora e chamado incondicionalmente quando profile != None, mesmo que o resultado nao seja usado (has_trade_off=False) — custo computacional marginal mas desnecessario nesses casos."
-  ],
-  "summary": "Refatoracao de UI (explainer condicional por margin_enabled, layout de calibracao side-by-side, remocao de diagnostics panel) confinada a camadas corretas (core/explainer, pages/UI, tests) sem violacao de boundaries."
+  "warnings": [],
+  "summary": "Teste unitario puro adicionado ao modulo de explicabilidade, sem impacto em source, deploy, runtime ou secrets."
 }
 ```

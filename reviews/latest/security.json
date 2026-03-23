@@ -2,5 +2,5 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [],
-  "summary": "Refatoracao de UI e logica de explicacao sem impacto de seguranca \u2014 nenhum segredo, input externo, SQL ou endpoint alterado."
+  "summary": "Teste unitario puro sem impacto de seguranca \u2014 apenas adiciona asser\u00e7\u00e3o para regra com margem desabilitada."
 }

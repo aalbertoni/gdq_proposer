@@ -1,12 +1,12 @@
+
+
 ```json
 {
-  "status": "ATENCAO",
+  "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "_explain_percentile foi modificada com a mesma logica de margin_enabled mas nao ganhou teste para margin_disabled (mean, stddev e rowcount tem, percentile nao)",
-    "_render_diagnostics_panel removida (~200 linhas) sem verificacao de que nenhum outro modulo a importa ou referencia",
-    "Logica de apply_clicked no 02_explore.py depende de has_result e apply_enabled mas nao ha teste de integracao cobrindo o fluxo Calibrar->Aplicar com o novo layout de botoes side-by-side"
+    "Considerar adicionar caso onde margin_enabled=True para contraste explícito com o novo teste"
   ],
-  "summary": "Testes cobrem 3 de 4 funcoes explain modificadas; falta teste para _explain_percentile com margin_disabled e verificacao de dead code na remocao do diagnostics panel."
+  "summary": "Teste unitário simples e determinístico para caso de borda de percentile com margem desabilitada."
 }
 ```

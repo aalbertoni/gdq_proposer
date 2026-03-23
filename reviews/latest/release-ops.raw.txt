@@ -1,12 +1,10 @@
+
+
 ```json
 {
   "status": "APROVADO",
   "blockers": [],
-  "warnings": [
-    "Funcao _render_diagnostics_panel removida (~200 linhas de UI) — confirmar que diagnosticos de calibragem nao sao mais necessarios ou foram movidos para outro local.",
-    "Expander 'O que e o dual guard?' removido — perda de contexto educativo para o usuario; verificar se ha alternativa in-app.",
-    "Botao 'Aplicar parametros sugeridos' movido para fora do bloco condicional de resultado — testar que o estado disabled funciona corretamente no Streamlit quando nao ha calibracao."
-  ],
-  "summary": "Refatoracao de UI (explore) e explainer: margem condicional, layout de botoes side-by-side, remocao de painel de diagnosticos; sem impacto em infra, deploy ou rollback."
+  "warnings": [],
+  "summary": "Adição de teste unitário puro sem impacto em deploy, infraestrutura ou artefatos de produção."
 }
 ```

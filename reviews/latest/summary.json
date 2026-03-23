@@ -1,44 +1,45 @@
 {
-  "overall_status": "ATENCAO",
-  "combined_status": "ATENCAO",
+  "overall_status": "APROVADO",
+  "combined_status": "APROVADO",
   "agents": {
     "architecture": {
       "status": "APROVADO",
       "blockers": [],
-      "warnings": [
-        "Remocao de _render_diagnostics_panel (~200 linhas) e uma mudanca significativa de UX \u2014 confirmar que os diagnosticos (change-point, sazonalidade, IQR/MAD, cobertura ponderada) continuam acessiveis por outra via ou foram intencionalmente descontinuados.",
-        "evaluate_proposal() agora e chamado incondicionalmente quando profile != None, mesmo que o resultado nao seja usado (has_trade_off=False) \u2014 custo computacional marginal mas desnecessario nesses casos."
-      ],
-      "summary": "Refatoracao de UI (explainer condicional por margin_enabled, layout de calibracao side-by-side, remocao de diagnostics panel) confinada a camadas corretas (core/explainer, pages/UI, tests) sem violacao de boundaries."
+      "warnings": [],
+      "summary": "Teste unitario puro adicionado ao modulo de explicabilidade, sem impacto em source, deploy, runtime ou secrets."
     },
     "security": {
       "status": "APROVADO",
       "blockers": [],
       "warnings": [],
-      "summary": "Refatoracao de UI e logica de explicacao sem impacto de seguranca \u2014 nenhum segredo, input externo, SQL ou endpoint alterado."
+      "summary": "Teste unitario puro sem impacto de seguranca \u2014 apenas adiciona asser\u00e7\u00e3o para regra com margem desabilitada."
     },
     "tests": {
-      "status": "ATENCAO",
+      "status": "APROVADO",
       "blockers": [],
       "warnings": [
-        "_explain_percentile foi modificada com a mesma logica de margin_enabled mas nao ganhou teste para margin_disabled (mean, stddev e rowcount tem, percentile nao)",
-        "_render_diagnostics_panel removida (~200 linhas) sem verificacao de que nenhum outro modulo a importa ou referencia",
-        "Logica de apply_clicked no 02_explore.py depende de has_result e apply_enabled mas nao ha teste de integracao cobrindo o fluxo Calibrar->Aplicar com o novo layout de botoes side-by-side"
+        "Considerar adicionar caso onde margin_enabled=True para contraste expl\u00edcito com o novo teste"
       ],
-      "summary": "Testes cobrem 3 de 4 funcoes explain modificadas; falta teste para _explain_percentile com margin_disabled e verificacao de dead code na remocao do diagnostics panel."
+      "summary": "Teste unit\u00e1rio simples e determin\u00edstico para caso de borda de percentile com margem desabilitada."
     },
     "release-ops": {
       "status": "APROVADO",
       "blockers": [],
-      "warnings": [
-        "Funcao _render_diagnostics_panel removida (~200 linhas de UI) \u2014 confirmar que diagnosticos de calibragem nao sao mais necessarios ou foram movidos para outro local.",
-        "Expander 'O que e o dual guard?' removido \u2014 perda de contexto educativo para o usuario; verificar se ha alternativa in-app.",
-        "Botao 'Aplicar parametros sugeridos' movido para fora do bloco condicional de resultado \u2014 testar que o estado disabled funciona corretamente no Streamlit quando nao ha calibracao."
-      ],
-      "summary": "Refatoracao de UI (explore) e explainer: margem condicional, layout de botoes side-by-side, remocao de painel de diagnosticos; sem impacto em infra, deploy ou rollback."
+      "warnings": [],
+      "summary": "Adi\u00e7\u00e3o de teste unit\u00e1rio puro sem impacto em deploy, infraestrutura ou artefatos de produ\u00e7\u00e3o."
     }
   },
-  "reviewed_commit": "075a6235cd0190aa657a6eeab3d917b30343b25f",
-  "reviewed_tree": "d1b9588ba9b0a38bf70fe080c90a87b2a3cc8241",
-  "generated_at": "2026-03-23T23:27:28.572435Z"
+  "peer_reviews": {
+    "codex": {
+      "status": "APROVADO",
+      "blockers": [],
+      "warnings": [
+        "O diff cobre apenas o ramo com margin_enabled=False; falta contraste explicito com margin_enabled=True no mesmo bloco para reduzir ambiguidade futura de regressao de texto."
+      ],
+      "summary": "O diff adiciona um teste unitario puro e deterministico para RuleType.NUMERIC_PERCENTILE_BAND com margem desabilitada, sem alterar codigo de producao, deploy, secrets, wrappers, jornada do hisbras-site ou comportamento operacional de release. Nao ha risco concreto de seguranca, regressao funcional importante ou quebra de deploy; o impacto fica restrito ao aumento de cobertura de um caso de borda na explicacao textual da regra."
+    }
+  },
+  "reviewed_commit": "bf7c79ce037d221978e32e086871ae33a889db13",
+  "reviewed_tree": "162d7d57740c027e9376fa29b916a0b2e054b445",
+  "generated_at": "2026-03-23T23:29:03.481044Z"
 }
