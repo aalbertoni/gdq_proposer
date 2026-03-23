@@ -152,6 +152,30 @@ class TestExplainRule:
         text = explain_rule(p)
         assert "20%" in text
 
+    def test_mean_margin_disabled_no_margin_text(self):
+        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
+        p.margin_enabled = False
+        text = explain_rule(p)
+        assert "**ou**" not in text
+        assert "% da media" not in text
+        assert "duas bandas" not in text
+
+    def test_stddev_margin_disabled_no_margin_text(self):
+        p = _make_proposal(RuleType.STDDEV_DUAL_GUARD)
+        p.margin_enabled = False
+        text = explain_rule(p)
+        assert "**ou**" not in text
+        assert "% da media" not in text
+        assert "duas bandas" not in text
+
+    def test_rowcount_margin_disabled_no_margin_text(self):
+        p = _make_proposal(RuleType.ROW_COUNT_DUAL_GUARD, column=None, table="tb_ops")
+        p.margin_enabled = False
+        text = explain_rule(p)
+        assert "**ou**" not in text
+        assert "% do volume" not in text
+        assert "duas bandas" not in text
+
 
 # ---------------------------------------------------------------------------
 # Tests: explain_rule_detail

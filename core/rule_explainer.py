@@ -92,45 +92,66 @@ def _explain_mean(p: RuleProposal) -> str:
     col = p.target_column
     n = p.baseline_window or 30
     k = p.baseline_n_sigma or 2.0
-    margin = (p.baseline_margin_pct or 0.10) * 100
 
-    return (
+    base = (
         f"Verifica se a **media** da coluna `{col}` esta dentro do esperado. "
         f"A regra calcula a media dos ultimos **{n} periodos** e aceita o valor se estiver "
-        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica, "
-        f"**ou** dentro de **{margin:.0f}%** da media historica. "
-        f"Se qualquer uma das duas bandas for atendida, a regra passa."
+        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica"
     )
+
+    if p.margin_enabled:
+        margin = (p.baseline_margin_pct or 0.10) * 100
+        return (
+            f"{base}, "
+            f"**ou** dentro de **{margin:.0f}%** da media historica. "
+            f"Se qualquer uma das duas bandas for atendida, a regra passa."
+        )
+
+    return f"{base}."
 
 
 def _explain_stddev(p: RuleProposal) -> str:
     col = p.target_column
     n = p.baseline_window or 30
     k = p.baseline_n_sigma or 2.0
-    margin = (p.baseline_margin_pct or 0.10) * 100
 
-    return (
+    base = (
         f"Verifica se o **desvio padrao** da coluna `{col}` esta dentro do esperado. "
         f"A regra calcula o desvio padrao medio dos ultimos **{n} periodos** e aceita se estiver "
-        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica, "
-        f"**ou** dentro de **{margin:.0f}%** da media historica. "
-        f"Detecta se a dispersao dos dados mudou significativamente."
+        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica"
     )
+
+    if p.margin_enabled:
+        margin = (p.baseline_margin_pct or 0.10) * 100
+        return (
+            f"{base}, "
+            f"**ou** dentro de **{margin:.0f}%** da media historica. "
+            f"Detecta se a dispersao dos dados mudou significativamente."
+        )
+
+    return f"{base}. Detecta se a dispersao dos dados mudou significativamente."
 
 
 def _explain_rowcount(p: RuleProposal) -> str:
     table = p.target_table
     n = p.baseline_window or 30
     k = p.baseline_n_sigma or 2.0
-    margin = (p.baseline_margin_pct or 0.10) * 100
 
-    return (
+    base = (
         f"Verifica se o **volume de linhas** da tabela `{table}` esta dentro do esperado. "
         f"A regra calcula a quantidade media de linhas dos ultimos **{n} periodos** e aceita se estiver "
-        f"dentro de **{_fmt_k(k)} desvios padrao** do volume historico, "
-        f"**ou** dentro de **{margin:.0f}%** do volume historico. "
-        f"Detecta cargas com volume anomalo (muito acima ou abaixo)."
+        f"dentro de **{_fmt_k(k)} desvios padrao** do volume historico"
     )
+
+    if p.margin_enabled:
+        margin = (p.baseline_margin_pct or 0.10) * 100
+        return (
+            f"{base}, "
+            f"**ou** dentro de **{margin:.0f}%** do volume historico. "
+            f"Detecta cargas com volume anomalo (muito acima ou abaixo)."
+        )
+
+    return f"{base}. Detecta cargas com volume anomalo (muito acima ou abaixo)."
 
 
 def _explain_completeness(p: RuleProposal) -> str:
@@ -207,15 +228,22 @@ def _explain_percentile(p: RuleProposal) -> str:
     pct_label = p.metric_name.upper() if p.metric_name else "P50"
     n = p.baseline_window or 30
     k = p.baseline_n_sigma or 2.0
-    margin = (p.baseline_margin_pct or 0.10) * 100
 
-    return (
+    base = (
         f"Verifica se o **{pct_label}** da coluna `{col}` esta dentro do esperado. "
         f"A regra calcula o percentil historico dos ultimos **{n} periodos** e aceita se estiver "
-        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica, "
-        f"**ou** dentro de **{margin:.0f}%** da media historica. "
-        f"Detecta mudancas na distribuicao dos dados (caudas)."
+        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica"
     )
+
+    if p.margin_enabled:
+        margin = (p.baseline_margin_pct or 0.10) * 100
+        return (
+            f"{base}, "
+            f"**ou** dentro de **{margin:.0f}%** da media historica. "
+            f"Detecta mudancas na distribuicao dos dados (caudas)."
+        )
+
+    return f"{base}. Detecta mudancas na distribuicao dos dados (caudas)."
 
 
 def _explain_category_frequency(p: RuleProposal) -> str:
