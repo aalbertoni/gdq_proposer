@@ -141,7 +141,7 @@ Verificar que a **proporção de uma categoria específica** em uma coluna está
 ### Sintaxe
 
 ```
-CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" between {LOWER} and {UPPER}
+(CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= {LOWER}) AND (CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= {UPPER})
 ```
 
 ### Parâmetros
@@ -150,16 +150,16 @@ CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as dou
 |-----------|-----------|
 | `{COL}` | Nome da coluna (sem aspas, uppercase) — dentro do SQL |
 | `{VALUE}` | Valor da categoria (com aspas simples dentro do SQL) |
-| `{LOWER}` | Percentual mínimo esperado (pode ser negativo como buffer) |
-| `{UPPER}` | Percentual máximo esperado |
+| `{LOWER}` | Percentual mínimo esperado (4 casas decimais, pode ser negativo como buffer) |
+| `{UPPER}` | Percentual máximo esperado (4 casas decimais) |
 | `"from primary"` | Referência à tabela sendo avaliada (sempre `primary`) |
 
 ### Exemplos Reais
 
 ```
-CustomSql "select cast(sum(case when COD_SITU_OPCR = '1' then 1 else 0 end) as double) * 100.0 / count(*) from primary" between 85.61 and 97.66
-CustomSql "select cast(sum(case when COD_SITU_OPCR = '2' then 1 else 0 end) as double) * 100.0 / count(*) from primary" between 2.31 and 14.35
-CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as double) * 100.0 / count(*) from primary" between -0.01 and 5.04
+(CustomSql "select cast(sum(case when COD_SITU_OPCR = '1' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= 85.6100) AND (CustomSql "select cast(sum(case when COD_SITU_OPCR = '1' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= 97.6600)
+(CustomSql "select cast(sum(case when COD_SITU_OPCR = '2' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= 2.3100) AND (CustomSql "select cast(sum(case when COD_SITU_OPCR = '2' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= 14.3500)
+(CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= -0.0100) AND (CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= 5.0400)
 ```
 
 ### Notas Importantes
@@ -167,10 +167,11 @@ CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as d
 - O SQL inteiro fica entre **aspas duplas**
 - Valores de string dentro do SQL usam **aspas simples**: `= '1'`
 - O resultado é em **percentual (0-100)**, não proporção (0-1)
-- `LOWER` pode ser negativo (ex: `-0.01`) como buffer para categorias muito raras
+- `LOWER` pode ser negativo (ex: `-0.0100`) como buffer para categorias muito raras
 - `from primary` é a referência fixa à tabela sendo avaliada
 - O `cast(... as double)` é obrigatório para evitar divisão inteira
-- Valores de LOWER/UPPER são **estáticos** (calculados pela ferramenta), não dinâmicos
+- Valores de LOWER/UPPER são **estáticos** (calculados pela ferramenta) com **4 casas decimais**
+- Usa `>=` e `<=` (não `between`)
 
 ---
 
@@ -210,15 +211,15 @@ A regra passa se: (dentro da banda dinamica) **AND** (entre floor e ceiling).
 ### Sintaxe
 
 ```
-((DUAL_GUARD_EXPRESSION) AND (CustomSql "..." between {FLOOR} and {CEILING}))
+((DUAL_GUARD_EXPRESSION) AND ((CustomSql "..." >= {FLOOR}) AND (CustomSql "..." <= {CEILING})))
 ```
 
 Onde `DUAL_GUARD_EXPRESSION` e a mesma expressao da secao 4b (sigma OR margem).
 
 ### Parametros adicionais
 
-- `{FLOOR}`: Limite inferior absoluto (percentual 0-100). Ex: `5.0`
-- `{CEILING}`: Limite superior absoluto (percentual 0-100). Ex: `50.0`
+- `{FLOOR}`: Limite inferior absoluto (percentual 0-100, 4 casas decimais). Ex: `5.0000`
+- `{CEILING}`: Limite superior absoluto (percentual 0-100, 4 casas decimais). Ex: `50.0000`
 
 ### Quando usar
 

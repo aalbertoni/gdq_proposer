@@ -210,7 +210,8 @@ class TestGDQGeneratorCategorical:
         assert 'CustomSql' in syntax
         assert 'STATUS' in syntax and "'A'" in syntax
         assert '"STATUS"' not in syntax  # sem aspas no nome da coluna
-        assert 'between 25.00 and 35.00' in syntax
+        assert '>= 25.0000' in syntax
+        assert '<= 35.0000' in syntax
         assert 'from primary' in syntax
 
     def test_distinct_count_range(self):

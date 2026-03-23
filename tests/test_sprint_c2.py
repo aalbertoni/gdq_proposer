@@ -136,13 +136,15 @@ class TestRendererCustomSqlHybrid:
         spec = self._make_spec(floor_pct=0.0, ceiling_pct=5.0)
         result = self.renderer.render(spec)
         assert 'AND' in result
-        assert 'between 0.0 and 5.0' in result
+        assert '>= 0.0000' in result
+        assert '<= 5.0000' in result
 
     def test_hybrid_has_dual_guard_and_absolute(self):
         spec = self._make_spec(floor_pct=1.0, ceiling_pct=10.0)
         result = self.renderer.render(spec)
         assert 'OR' in result  # dual guard
-        assert 'between 1.0 and 10.0' in result  # absolute
+        assert '>= 1.0000' in result  # absolute lower
+        assert '<= 10.0000' in result  # absolute upper
 
     def test_hybrid_balanced_parentheses(self):
         spec = self._make_spec()
@@ -153,18 +155,20 @@ class TestRendererCustomSqlHybrid:
         """floor=0 and ceiling=100 means no effective constraint — pure dynamic."""
         spec = self._make_spec(floor_pct=0.0, ceiling_pct=100.0)
         result = self.renderer.render(spec)
-        # Should be pure dynamic (no AND with between 0.0 and 100.0)
-        assert 'between 0.0 and 100.0' not in result
+        # Should be pure dynamic (no >= 0.0000 AND <= 100.0000 absolute clause)
+        assert '>= 0.0000) AND' not in result or '<= 100.0000)' not in result
 
     def test_hybrid_floor_only(self):
         spec = self._make_spec(floor_pct=1.0, ceiling_pct=100.0)
         result = self.renderer.render(spec)
-        assert 'between 1.0 and 100.0' in result
+        assert '>= 1.0000' in result
+        assert '<= 100.0000' in result
 
     def test_hybrid_ceiling_only(self):
         spec = self._make_spec(floor_pct=0.0, ceiling_pct=50.0)
         result = self.renderer.render(spec)
-        assert 'between 0.0 and 50.0' in result
+        assert '>= 0.0000' in result
+        assert '<= 50.0000' in result
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +237,8 @@ class TestGeneratorDynamic:
             floor_pct=0.0, ceiling_pct=5.0,
         )
         syntax = self.gen.generate(p)
-        assert 'between 0.0 and 5.0' in syntax
+        assert '>= 0.0000' in syntax
+        assert '<= 5.0000' in syntax
         assert 'avg(last(30))' in syntax
         assert 'OR' in syntax
 
@@ -247,7 +252,8 @@ class TestGeneratorDynamic:
         )
         overrides = UserOverride(custom_floor_pct=1.0, custom_ceiling_pct=10.0)
         syntax = self.gen.generate(p, overrides)
-        assert 'between 1.0 and 10.0' in syntax
+        assert '>= 1.0000' in syntax
+        assert '<= 10.0000' in syntax
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +442,8 @@ class TestProposalServiceFreqMode:
         freq_proposals = [p for p in proposals if p.rule_type == RuleType.CATEGORY_FREQUENCY_HYBRID]
         assert len(freq_proposals) > 0
         for p in freq_proposals:
-            assert 'between 0.0 and 80.0' in p.gdq_syntax_preview
+            assert '>= 0.0000' in p.gdq_syntax_preview
+            assert '<= 80.0000' in p.gdq_syntax_preview
             assert p.floor_pct == 0.0
             assert p.ceiling_pct == 80.0
 

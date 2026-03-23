@@ -71,20 +71,28 @@ class DualGuardRenderer:
         lo_margin = round(1 - margin, 2)
         hi_margin = round(1 + margin, 2)
 
-        sigma_part = (
-            f'(CustomSql "{sql_expr}" between '
-            f"(avg(last({n})) - ({k} * std(last({n}))) - {buffer}) "
-            f"and (avg(last({n})) + ({k} * std(last({n}))) + {buffer}))"
+        sigma_lower = (
+            f'(CustomSql "{sql_expr}" >= '
+            f"(avg(last({n})) - ({k} * std(last({n}))) - {buffer}))"
         )
+        sigma_upper = (
+            f'(CustomSql "{sql_expr}" <= '
+            f"(avg(last({n})) + ({k} * std(last({n}))) + {buffer}))"
+        )
+        sigma_part = f"({sigma_lower} AND {sigma_upper})"
 
         if not spec.margin_enabled:
             return sigma_part
 
-        margin_part = (
-            f'(CustomSql "{sql_expr}" between '
-            f"(avg(last({n})) * {lo_margin} - {buffer}) "
-            f"and (avg(last({n})) * {hi_margin} + {buffer}))"
+        margin_lower = (
+            f'(CustomSql "{sql_expr}" >= '
+            f"(avg(last({n})) * {lo_margin} - {buffer}))"
         )
+        margin_upper = (
+            f'(CustomSql "{sql_expr}" <= '
+            f"(avg(last({n})) * {hi_margin} + {buffer}))"
+        )
+        margin_part = f"({margin_lower} AND {margin_upper})"
 
         dual_guard = f"({sigma_part} OR {margin_part})"
 
@@ -92,10 +100,12 @@ class DualGuardRenderer:
         is_hybrid = spec.floor_pct > 0.0 or spec.ceiling_pct < 100.0
         if is_hybrid:
             floor_ceil = (
-                f'(CustomSql "{sql_expr}" between '
-                f"{spec.floor_pct} and {spec.ceiling_pct})"
+                f'(CustomSql "{sql_expr}" >= '
+                f"{spec.floor_pct:.4f}) AND "
+                f'(CustomSql "{sql_expr}" <= '
+                f"{spec.ceiling_pct:.4f})"
             )
-            return f"({dual_guard} AND {floor_ceil})"
+            return f"({dual_guard} AND ({floor_ceil}))"
 
         return dual_guard
 

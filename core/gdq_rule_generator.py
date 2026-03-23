@@ -169,7 +169,11 @@ class GDQRuleGenerator:
                 upper = overrides.custom_upper
         athena_type = proposal.target_column_type or "string"
         sql_inner = self._build_custom_sql_expression(col, value, athena_type)
-        return f'CustomSql "{sql_inner}" between {lower:.2f} and {upper:.2f}'
+        return (
+            f'(CustomSql "{sql_inner}" >= {lower:.4f})'
+            f' AND '
+            f'(CustomSql "{sql_inner}" <= {upper:.4f})'
+        )
 
     def _build_custom_sql_expression(
         self, col: str, value: str, athena_type: str = "string",
