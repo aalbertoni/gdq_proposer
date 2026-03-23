@@ -1373,6 +1373,50 @@ class ProposalService:
         best["recommendation"] = recommendation
         return best
 
+    def calibrate_params(
+        self,
+        values: list[float],
+        dates: list[str],
+        metric_kind: str = "numeric",
+        grain: "GrainType | None" = None,
+        seasonality_enabled: bool = True,
+        profile: "SeriesProfile | None" = None,
+    ) -> "CalibrationResult":
+        """Calibracao explicavel de parametros (substitui find_best_params).
+
+        Executa logica sequencial em 5 etapas:
+        1. Escolher N baseado no grao e dados disponiveis
+        2. Testar sigma sozinho — se suficiente, sem margem
+        3. Adicionar margem somente se necessario
+        4. Validar com backtest e ajustar FPs recentes
+        5. Gerar relatorio de justificativa
+
+        Args:
+            values: Serie temporal de valores.
+            dates: Datas correspondentes.
+            metric_kind: "numeric" ou "frequency".
+            grain: Granularidade (daily/monthly). Default: daily.
+            seasonality_enabled: Se deve considerar sazonalidade.
+            profile: Perfil de regime pre-computado (opcional).
+
+        Returns:
+            CalibrationResult com parametros, justificativas e backtest.
+        """
+        from core.calibration_advisor import calibrate
+        from core.models.enums import GrainType
+
+        if grain is None:
+            grain = GrainType.DAILY
+
+        return calibrate(
+            values=values,
+            dates=dates,
+            grain=grain,
+            metric_kind=metric_kind,
+            seasonality_enabled=seasonality_enabled,
+            profile=profile,
+        )
+
     def _build_completeness_proposal(
         self,
         history: pd.DataFrame,

@@ -1,7 +1,7 @@
-commit_sha: fcb5808
+commit_sha: c16c3a4
 environment: staging
 gate1: pass
-snapshot_commit: fcb5808
+snapshot_commit: c16c3a4
 gate2: warning
 release_build: pass
 staging_deploy: pass

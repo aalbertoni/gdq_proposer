@@ -55,7 +55,7 @@
       "summary": "O diff parece seguro do ponto de vista funcional principal: a promocao de capacidades para `validated` esta coerente com os testes e nao ha sinal de regressao de deploy, segredos ou fronteiras de infra. Ainda assim, ha lacunas operacionais no logging de custo e um artefato `.coverage` indevido no commit, entao o mais adequado e seguir com `ATENCAO`."
     }
   },
-  "reviewed_commit": "e92692773ccd009de1dd2f073546644f09b6ca6e",
+  "reviewed_commit": "c16c3a43cb72c5365afea553afde2ef77b8379c4",
   "reviewed_tree": "974800d1e754b6c63307cab19788b46da9a5b935",
   "generated_at": "2026-03-23T02:34:37.651001Z"
 }

@@ -19,6 +19,8 @@ from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, Semanti
 from core.models.rule_selection import RuleSelection
 from core.backtest_analysis import analyze_backtest, summarize_backtest_analysis
 from core.gdq_capability import capability_warning
+from core.calibration_advisor import calibrate, CalibrationResult
+from core.calibration_explainer import explain_calibration, explain_calibration_short, explain_step_detail
 from core.rule_explainer import explain_rule, explain_rule_detail, explain_regime_context, explain_trade_offs
 from core.rule_scoring import evaluate_proposal
 from core.series_regime import classify_series
@@ -568,99 +570,70 @@ def _render_diagnostics_panel(proposal):
                 )
 
 
-def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeric"):
-    """Renderiza botao de auto-tuning, exibe resultado com justificativa e aplica parametros.
+def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="numeric",
+                        grain=None, series_profile=None):
+    """Renderiza botao de calibracao explicavel, exibe resultado com justificativa e aplica parametros.
 
-    Alem de mostrar os parametros recomendados, exibe um breakdown detalhado
-    do score composto e uma comparacao antes/depois quando possivel.
+    Substitui o antigo auto-tune (grid search) por logica sequencial em 5 etapas:
+    1. Escolher N pelo grao
+    2. Testar sigma sozinho — se suficiente, sem margem
+    3. Adicionar margem somente se necessario
+    4. Validar com backtest
+    5. Gerar justificativa
+
+    Cada decisao e explicada ao usuario.
     """
+    from core.models.enums import GrainType
     cache_key = f"autotune_{rule_key}"
 
-    # Captura parametros atuais dos sliders para comparacao antes/depois
-    current_n = st.session_state.get(f"n_{rule_key}")
-    current_k = st.session_state.get(f"k_{rule_key}")
-    current_margin_pct_int = st.session_state.get(f"margin_{rule_key}")
-    current_margin_on = st.session_state.get(f"margin_on_{rule_key}")
+    if grain is None:
+        grain = GrainType.DAILY
 
     if st.button(
-        "Sugerir melhor combinacao",
+        "Calibrar parametros",
         key=f"btn_autotune_{rule_key}",
-        help="Testa diversas combinacoes de N, sigma e margem para encontrar "
-             "a que maximiza cobertura com menos falsos positivos.",
+        help="Analisa a serie e sugere a melhor combinacao de N, sigma e margem, "
+             "explicando cada decisao.",
     ):
-        with st.spinner("Avaliando combinacoes..."):
-            result = proposal_svc.find_best_params(
-                values=values, dates=dates, metric_kind=metric_kind,
+        with st.spinner("Calibrando..."):
+            result = calibrate(
+                values=values, dates=dates,
+                grain=grain, metric_kind=metric_kind,
+                profile=series_profile,
             )
-            # Captura tambem o backtest com parametros atuais para comparacao
-            current_snapshot = None
-            if current_n is not None and current_k is not None:
-                try:
-                    current_margin = (current_margin_pct_int or 10) / 100.0
-                    current_margin_enabled = current_margin_on if current_margin_on is not None else True
-                    current_snapshot = proposal_svc.find_best_params(
-                        values=values, dates=dates, metric_kind=metric_kind,
-                        n_range=[current_n],
-                        sigma_range=[current_k],
-                        margin_range=[current_margin],
-                    )
-                except Exception:
-                    current_snapshot = None
             st.session_state[cache_key] = result
-            st.session_state[f"{cache_key}_before"] = current_snapshot
 
     if cache_key in st.session_state:
         result = st.session_state[cache_key]
-        before = st.session_state.get(f"{cache_key}_before")
-        confidence = result["confidence"]
+        if not isinstance(result, CalibrationResult):
+            # Legado: se cache contem AutoTuneResult dict antigo, limpar e recalibrar
+            del st.session_state[cache_key]
+            return
+
+        confidence = result.confidence
         badge = _confidence_badge(confidence)
 
-        if result["viable"]:
-            st.success(
-                f"{badge} {result['recommendation']}"
-            )
+        if result.viable:
+            st.success(f"{badge} {result.recommendation}")
         else:
-            st.error(
-                f"{badge} {result['recommendation']}"
-            )
+            st.error(f"{badge} {result.recommendation}")
 
         # -- Metricas-chave em colunas --
-        m_c1, m_c2, m_c3, m_c4 = st.columns(4)
+        m_c1, m_c2, m_c3 = st.columns(3)
         with m_c1:
-            cov_delta = None
-            if before and before.get("coverage_pct", 0) > 0:
-                cov_delta = f"{result['coverage_pct'] - before['coverage_pct']:+.1f}%"
             st.metric(
                 "Cobertura",
-                f"{result['coverage_pct']:.1f}%",
-                delta=cov_delta,
-                help="Porcentagem de periodos historicos que passariam na regra com os parametros sugeridos.",
+                f"{result.coverage_pct:.1f}%",
+                help="Porcentagem de periodos historicos que passariam na regra.",
             )
         with m_c2:
-            fp_delta = None
-            if before and "false_positives" in before:
-                fp_diff = result["false_positives"] - before["false_positives"]
-                if fp_diff != 0:
-                    fp_delta = f"{fp_diff:+d}"
             st.metric(
                 "Falsos Positivos",
-                f"~{result['false_positives']}",
-                delta=fp_delta,
+                f"~{result.false_positives}",
                 delta_color="inverse",
-                help="Estimativa de periodos normais que seriam reprovados indevidamente.",
+                help="Periodos normais que seriam reprovados indevidamente.",
             )
         with m_c3:
-            score_delta = None
-            if before and before.get("score_total", 0) > 0:
-                score_delta = f"{result['score_total'] - before['score_total']:+.4f}"
-            st.metric(
-                "Score Total",
-                f"{result['score_total']:.4f}",
-                delta=score_delta,
-                help="Score composto do grid search. Maior = melhor. "
-                     "Combina cobertura, FP, estabilidade, largura da banda e drift.",
-            )
-        with m_c4:
             st.metric(
                 "Confianca",
                 badge,
@@ -670,146 +643,62 @@ def _render_auto_tune(proposal_svc, values, dates, rule_key, metric_kind="numeri
         # -- Parametros recomendados --
         p_c1, p_c2, p_c3, p_c4 = st.columns(4)
         with p_c1:
-            st.caption(f"**N:** {result['n_periods']} periodos")
+            st.caption(f"**N:** {result.n_periods} periodos")
         with p_c2:
-            st.caption(f"**Sigma:** {result['n_sigma']}")
+            sigma_str = str(int(result.n_sigma)) if result.n_sigma == int(result.n_sigma) else f"{result.n_sigma:.1f}"
+            st.caption(f"**Sigma:** {sigma_str}")
         with p_c3:
-            st.caption(f"**Margem:** {result['margin_pct']*100:.0f}%")
+            st.caption(f"**Margem:** {result.margin_pct*100:.0f}%")
         with p_c4:
-            st.caption(f"**Margem:** {'ativada' if result['margin_enabled'] else 'desativada'}")
+            st.caption(f"**Margem:** {'ativada' if result.margin_enabled else 'desativada'}")
 
-        # -- Expander com detalhes do score e comparacao --
-        with st.expander("Detalhes do auto-tune", expanded=False):
-            # Score breakdown table
-            st.markdown("**Decomposicao do Score**")
-            st.caption(
-                "O score total e a soma dos componentes abaixo. "
-                "Valores positivos contribuem, negativos penalizam."
-            )
+        # -- Expander com justificativas passo a passo --
+        with st.expander("Justificativa da calibracao", expanded=False):
+            for step in result.steps:
+                if step.step == 5:
+                    continue  # Relatorio consolidado nao precisa ser repetido
+                st.markdown(f"**Etapa {step.step}: {step.name}**")
+                st.caption(f"Decisao: {step.decision}")
+                st.caption(f"Justificativa: {step.justification}")
 
-            breakdown_items = [
-                ("Cobertura normal", result.get("normal_coverage", 0), "+", "pontos normais cobertos / total normais"),
-                ("Penalidade outliers", result.get("outlier_penalty", 0), "-", "outliers cobertos * 0.15"),
-                ("Penalidade FP", result.get("fp_penalty", 0), "-", "FP * 0.05"),
-                ("Bonus estabilidade", result.get("stability_bonus", 0), "+", "stability * 0.10"),
-                ("Penalidade largura", result.get("width_penalty", 0), "-", "(width_ratio - 0.20)^2 * 0.5"),
-                ("Bonus/penalidade drift", result.get("drift_bonus", 0), "+/-", "+0.05 sem drift, -0.05 com drift"),
-                ("Penalidade N curto", result.get("n_penalty", 0), "-", "0.05 se N < 15"),
-                ("Preferencia sigma", result.get("sigma_preference", 0), "-", "sigma * 0.02"),
-                ("Preferencia margem", result.get("margin_preference", 0), "-", "margem * 0.10"),
-                ("Bonus recencia", result.get("recency_bonus", 0), "+", "(weighted_cov - flat_cov)/100 * 0.10"),
-            ]
+                # Detalhes extras por etapa
+                if step.step == 2 and step.data.get("results_by_sigma"):
+                    results = step.data["results_by_sigma"]
+                    items = [f"sigma={s}: {c:.1%}" for s, c in sorted(results.items())]
+                    st.caption(f"Cobertura por sigma: {' | '.join(items)}")
 
-            # Build markdown table
-            md_rows = ["| Componente | Valor | Sinal | Formula |", "|---|---|---|---|"]
-            for name, value, sign, formula in breakdown_items:
-                if sign == "-" and value > 0:
-                    md_rows.append(f"| {name} | :red[-{value:.4f}] | {sign} | `{formula}` |")
-                elif sign == "+/-":
-                    if value >= 0:
-                        md_rows.append(f"| {name} | :green[+{value:.4f}] | {sign} | `{formula}` |")
-                    else:
-                        md_rows.append(f"| {name} | :red[{value:.4f}] | {sign} | `{formula}` |")
-                else:
-                    md_rows.append(f"| {name} | :green[+{value:.4f}] | {sign} | `{formula}` |")
-            md_rows.append(f"| **Score Total** | **{result['score_total']:.4f}** | = | soma |")
-            st.markdown("\n".join(md_rows))
+                if step.step == 3 and step.data.get("results_by_margin"):
+                    results = step.data["results_by_margin"]
+                    items = [f"margem={m:.0%}: {c:.1%}" for m, c in sorted(results.items())]
+                    st.caption(f"Cobertura por margem: {' | '.join(items)}")
 
-            # Largura da banda
-            bwr = result.get("band_width_ratio", 0)
-            if bwr > 0:
-                st.caption(
-                    f"Largura relativa da banda: {bwr:.4f} "
-                    f"({'estreita' if bwr < 0.2 else 'moderada' if bwr < 0.5 else 'larga'}). "
-                    f"Penalidade quadratica quando > 0.20."
-                )
-            n_outliers = result.get("outliers_detected", 0)
-            if n_outliers > 0:
-                n_covered = result.get("outliers_covered", 0)
-                st.caption(
-                    f"Outliers detectados (IQR 2.5x): {n_outliers}, "
-                    f"excluidos da banda: {n_outliers - n_covered}."
-                )
+                st.caption("")  # spacer
 
             # Weighted coverage insight
-            weighted_cov = result.get("weighted_coverage_pct", 0)
-            flat_cov = result.get("coverage_pct", 0)
-            if abs(weighted_cov - flat_cov) > 1.0:
-                if weighted_cov > flat_cov:
+            if abs(result.weighted_coverage_pct - result.coverage_pct) > 1.0:
+                if result.weighted_coverage_pct > result.coverage_pct:
                     st.caption(
-                        f":green[Cobertura recente ({weighted_cov:.1f}%) e melhor que historica ({flat_cov:.1f}%).] "
-                        f"Os periodos mais recentes estao mais estaveis."
+                        f":green[Cobertura recente ({result.weighted_coverage_pct:.1f}%) melhor que historica ({result.coverage_pct:.1f}%).] "
+                        f"Periodos mais recentes estao mais estaveis."
                     )
                 else:
                     st.caption(
-                        f":orange[Cobertura recente ({weighted_cov:.1f}%) e pior que historica ({flat_cov:.1f}%).] "
-                        f"Os periodos mais recentes estao mais instaveis."
+                        f":orange[Cobertura recente ({result.weighted_coverage_pct:.1f}%) pior que historica ({result.coverage_pct:.1f}%).] "
+                        f"Periodos mais recentes estao mais instaveis."
                     )
-
-            # Comparacao antes vs depois
-            if before and before.get("score_total", 0) > 0:
-                st.divider()
-                st.markdown("**Comparacao: parametros atuais vs sugeridos**")
-
-                cmp_c1, cmp_c2 = st.columns(2)
-                with cmp_c1:
-                    st.markdown("**Antes** (parametros atuais)")
-                    st.caption(
-                        f"N={before['n_periods']}, "
-                        f"sigma={before['n_sigma']}, "
-                        f"margem={before['margin_pct']*100:.0f}%"
-                        f"{' (ativada)' if before['margin_enabled'] else ' (desativada)'}"
-                    )
-                    st.caption(
-                        f"Cobertura: {before['coverage_pct']:.1f}% | "
-                        f"FP: ~{before['false_positives']} | "
-                        f"Score: {before['score_total']:.4f}"
-                    )
-                with cmp_c2:
-                    st.markdown("**Depois** (parametros sugeridos)")
-                    st.caption(
-                        f"N={result['n_periods']}, "
-                        f"sigma={result['n_sigma']}, "
-                        f"margem={result['margin_pct']*100:.0f}%"
-                        f"{' (ativada)' if result['margin_enabled'] else ' (desativada)'}"
-                    )
-                    st.caption(
-                        f"Cobertura: {result['coverage_pct']:.1f}% | "
-                        f"FP: ~{result['false_positives']} | "
-                        f"Score: {result['score_total']:.4f}"
-                    )
-
-                # Highlight improvements
-                improvements = []
-                cov_diff = result["coverage_pct"] - before["coverage_pct"]
-                fp_diff = result["false_positives"] - before["false_positives"]
-                score_diff = result["score_total"] - before["score_total"]
-
-                if cov_diff > 0:
-                    improvements.append(f"cobertura +{cov_diff:.1f}pp")
-                if fp_diff < 0:
-                    improvements.append(f"FP {fp_diff:+d}")
-                if score_diff > 0:
-                    improvements.append(f"score +{score_diff:.4f}")
-
-                if improvements:
-                    st.caption(f"Ganhos: {', '.join(improvements)}")
-                elif score_diff == 0 and cov_diff == 0:
-                    st.caption("Os parametros atuais ja sao otimos para esta metrica.")
 
         # Botao para aplicar parametros sugeridos nos sliders.
-        # Armazena em _pending_autotune para aplicar ANTES dos widgets no proximo rerun.
-        if result["viable"] and st.button(
+        if result.viable and st.button(
             "Aplicar parametros sugeridos",
             key=f"apply_autotune_{rule_key}",
             help="Atualiza os sliders com os parametros recomendados.",
         ):
             st.session_state["_pending_autotune"] = {
                 "rule_key": rule_key,
-                "n_periods": result["n_periods"],
-                "n_sigma": result["n_sigma"],
-                "margin_pct": int(result["margin_pct"] * 100),
-                "margin_enabled": result["margin_enabled"],
+                "n_periods": result.n_periods,
+                "n_sigma": result.n_sigma,
+                "margin_pct": int(result.margin_pct * 100),
+                "margin_enabled": result.margin_enabled,
             }
             st.rerun()
 
@@ -979,6 +868,7 @@ proposal_svc = _get_proposal_service()
 proposal_svc.set_grain_policy(dataset_config.grain_policy)
 
 _grain_policy = dataset_config.grain_policy
+_grain_type = dataset_config.grain_type
 
 config_dict = {
     "schema": dataset_config.schema,
@@ -1274,9 +1164,9 @@ if _has_details:
 # ---------------------------------------------------------------------------
 
 if numeric_profiles:
-    with st.expander("Calibracao em lote (auto-tune)", expanded=False):
+    with st.expander("Calibracao em lote", expanded=False):
         st.caption(
-            "Executa auto-tune em todas as colunas numericas e adiciona "
+            "Calibra todas as colunas numericas e adiciona "
             "regras de alta confianca ao carrinho automaticamente."
         )
 
@@ -1288,7 +1178,7 @@ if numeric_profiles:
             help="HIGH: apenas regras muito confiaveis. MEDIUM: inclui regras que precisam revisao.",
         )
 
-        if st.button("Auto-calibrar todas", key="btn_batch_calibrate_top", type="primary"):
+        if st.button("Calibrar todas", key="btn_batch_calibrate_top", type="primary"):
             _batch_cols = [p.column_name for p in numeric_profiles]
             if not _batch_cols:
                 st.warning("Nenhuma coluna numerica encontrada.")
@@ -1299,7 +1189,7 @@ if numeric_profiles:
                 for _bi, _bc in enumerate(_batch_cols):
                     _batch_progress.progress(
                         (_bi + 1) / len(_batch_cols),
-                        text=f"Analisando {_bc} ({_bi + 1}/{len(_batch_cols)})...",
+                        text=f"Calibrando {_bc} ({_bi + 1}/{len(_batch_cols)})...",
                     )
                     try:
                         _bh = fetch_numeric_history(config_dict, _bc)
@@ -1309,24 +1199,22 @@ if numeric_profiles:
 
                         _bvals = _bh["mean"].tolist()
                         _bdates = _bh["period"].astype(str).tolist()
-                        _b_n_range = [n for n in _grain_policy.n_range if n <= len(_bvals) - _grain_policy.min_history]
-                        _bbest = proposal_svc.find_best_params(
+                        _bbest = calibrate(
                             values=_bvals, dates=_bdates,
-                            n_range=_b_n_range or [_grain_policy.slider_n_min],
+                            grain=_grain_type,
                             seasonality_enabled=_grain_policy.seasonality_enabled,
-                            n_penalty_threshold=_grain_policy.n_penalty_threshold,
                         )
 
-                        if _bbest["confidence"].value == "LOW":
+                        if _bbest.confidence == ConfidenceLevel.LOW:
                             _batch_results.append({"column": _bc, "status": "skip", "reason": "confianca LOW"})
                             continue
-                        if _batch_min == "HIGH" and _bbest["confidence"] != ConfidenceLevel.HIGH:
-                            _batch_results.append({"column": _bc, "status": "skip", "reason": f"confianca {_bbest['confidence'].value}"})
+                        if _batch_min == "HIGH" and _bbest.confidence != ConfidenceLevel.HIGH:
+                            _batch_results.append({"column": _bc, "status": "skip", "reason": f"confianca {_bbest.confidence.value}"})
                             continue
 
                         _bbl = BaselineStrategy(
-                            n_periods=_bbest["n_periods"], n_sigma=_bbest["n_sigma"],
-                            margin_pct=_bbest["margin_pct"], margin_enabled=_bbest["margin_enabled"],
+                            n_periods=_bbest.n_periods, n_sigma=_bbest.n_sigma,
+                            margin_pct=_bbest.margin_pct, margin_enabled=_bbest.margin_enabled,
                             min_history_points=_grain_policy.min_history,
                         )
                         _bprops = proposal_svc.propose_numeric_rules(
@@ -1350,9 +1238,9 @@ if numeric_profiles:
                         st.session_state["rule_cart"] = _bcart
                         _batch_results.append({
                             "column": _bc, "status": "added" if _badded > 0 else "exists",
-                            "confidence": _bbest["confidence"].value,
-                            "coverage": _bbest["coverage_pct"],
-                            "n": _bbest["n_periods"], "sigma": _bbest["n_sigma"],
+                            "confidence": _bbest.confidence.value,
+                            "coverage": _bbest.coverage_pct,
+                            "n": _bbest.n_periods, "sigma": _bbest.n_sigma,
                             "added": _badded,
                         })
                     except Exception as e:
@@ -1439,41 +1327,37 @@ with tab_numericas:
             # Show regime badge
             _render_regime_panel(series_profile)
 
-            # Auto-tune automatico na primeira visita a coluna
+            # Calibracao automatica na primeira visita a coluna
             _at_key = f"autotune_{_fp}_mean_{selected_col}"
             _at_min = _grain_policy.min_history + 1  # precisa de min_history + pelo menos 1 ponto
             if _at_key not in st.session_state and _mean_vals and len(_mean_vals) >= _at_min:
-                _at_n_range = [n for n in _grain_policy.n_range if n <= len(_mean_vals) - _grain_policy.min_history]
-                with st.spinner(f"Auto-tune {selected_col}..."):
-                    _at_result = proposal_svc.find_best_params(
+                with st.spinner(f"Calibrando {selected_col}..."):
+                    _at_result = calibrate(
                         values=_mean_vals, dates=_mean_dates,
-                        n_range=_at_n_range or [_grain_policy.slider_n_min],
+                        grain=_grain_type,
                         seasonality_enabled=_grain_policy.seasonality_enabled,
-                        n_penalty_threshold=_grain_policy.n_penalty_threshold,
+                        profile=series_profile,
                     )
                     st.session_state[_at_key] = _at_result
-                    if _at_result["viable"]:
+                    if _at_result.viable:
                         _rk = f"{_fp}_mean_{selected_col}"
-                        st.session_state[f"n_{_rk}"] = _at_result["n_periods"]
-                        st.session_state[f"k_{_rk}"] = _at_result["n_sigma"]
-                        st.session_state[f"margin_{_rk}"] = int(_at_result["margin_pct"] * 100)
-                        st.session_state[f"margin_on_{_rk}"] = _at_result["margin_enabled"]
+                        st.session_state[f"n_{_rk}"] = _at_result.n_periods
+                        st.session_state[f"k_{_rk}"] = _at_result.n_sigma
+                        st.session_state[f"margin_{_rk}"] = int(_at_result.margin_pct * 100)
+                        st.session_state[f"margin_on_{_rk}"] = _at_result.margin_enabled
                         # Tambem aplicar ao StdDev
                         _rk_std = f"{_fp}_stddev_{selected_col}"
-                        st.session_state[f"n_{_rk_std}"] = _at_result["n_periods"]
-                        st.session_state[f"k_{_rk_std}"] = _at_result["n_sigma"]
-                        st.session_state[f"margin_{_rk_std}"] = int(_at_result["margin_pct"] * 100)
-                        st.session_state[f"margin_on_{_rk_std}"] = _at_result["margin_enabled"]
+                        st.session_state[f"n_{_rk_std}"] = _at_result.n_periods
+                        st.session_state[f"k_{_rk_std}"] = _at_result.n_sigma
+                        st.session_state[f"margin_{_rk_std}"] = int(_at_result.margin_pct * 100)
+                        st.session_state[f"margin_on_{_rk_std}"] = _at_result.margin_enabled
                     st.rerun()
 
             _at_cached = st.session_state.get(_at_key)
-            if _at_cached and _at_cached.get("viable"):
+            if _at_cached and isinstance(_at_cached, CalibrationResult) and _at_cached.viable:
                 st.caption(
-                    f"Parametros sugeridos pelo auto-tune: "
-                    f"N={_at_cached['n_periods']}, sigma={_at_cached['n_sigma']}, "
-                    f"margem={_at_cached['margin_pct']*100:.0f}% — "
-                    f"cobertura {_at_cached['coverage_pct']:.0f}%, "
-                    f"{_confidence_badge(_at_cached['confidence'])}"
+                    f"Calibracao automatica: {explain_calibration_short(_at_cached)} — "
+                    f"{_confidence_badge(_at_cached.confidence)}"
                 )
 
             # ---- Mean ----
@@ -1531,12 +1415,13 @@ with tab_numericas:
                     # Diagnostics panel (seasonality, change-point, outliers, recency)
                     _render_diagnostics_panel(proposal)
 
-                    _render_auto_tune(
+                    _render_calibration(
                         proposal_svc, values, dates,
                         f"{_fp}_mean_{selected_col}", metric_kind="numeric",
+                        grain=_grain_type, series_profile=series_profile,
                     )
 
-                # Metricas do backtest (ocultar se auto-tune ja exibe metricas)
+                # Metricas do backtest (ocultar se calibracao ja exibe metricas)
                 if f"autotune_{_fp}_mean_{selected_col}" not in st.session_state:
                     _render_backtest_metrics(proposal)
                 _render_add_to_cart(
@@ -1591,9 +1476,10 @@ with tab_numericas:
                     # Diagnostics panel (outliers, recency — seasonality/change-point already shown in Mean)
                     _render_diagnostics_panel(proposal)
 
-                    _render_auto_tune(
+                    _render_calibration(
                         proposal_svc, values, dates,
                         f"{_fp}_stddev_{selected_col}", metric_kind="numeric",
+                        grain=_grain_type, series_profile=series_profile,
                     )
 
                 if f"autotune_{_fp}_stddev_{selected_col}" not in st.session_state:
@@ -2259,33 +2145,29 @@ with tab_tabela:
         _rc_vals = rc_history_df["row_count"].tolist() if "row_count" in rc_history_df.columns else []
         _rc_dates = rc_history_df["period"].astype(str).tolist() if "period" in rc_history_df.columns else []
 
-        # Auto-tune automatico para RowCount
+        # Calibracao automatica para RowCount
         _at_rc_key = f"autotune_{_fp}_rowcount"
         _at_rc_min = _grain_policy.min_history + 1
         if _at_rc_key not in st.session_state and _rc_vals and len(_rc_vals) >= _at_rc_min:
-            _at_rc_n_range = [n for n in _grain_policy.n_range if n <= len(_rc_vals) - _grain_policy.min_history]
-            with st.spinner("Auto-tune RowCount..."):
-                _at_rc = proposal_svc.find_best_params(
+            with st.spinner("Calibrando RowCount..."):
+                _at_rc = calibrate(
                     values=_rc_vals, dates=_rc_dates,
-                    n_range=_at_rc_n_range or [_grain_policy.slider_n_min],
+                    grain=_grain_type,
                     seasonality_enabled=_grain_policy.seasonality_enabled,
-                    n_penalty_threshold=_grain_policy.n_penalty_threshold,
                 )
                 st.session_state[_at_rc_key] = _at_rc
-                if _at_rc["viable"]:
-                    st.session_state[f"n_{_fp}_rowcount"] = _at_rc["n_periods"]
-                    st.session_state[f"k_{_fp}_rowcount"] = _at_rc["n_sigma"]
-                    st.session_state[f"margin_{_fp}_rowcount"] = int(_at_rc["margin_pct"] * 100)
-                    st.session_state[f"margin_on_{_fp}_rowcount"] = _at_rc["margin_enabled"]
+                if _at_rc.viable:
+                    st.session_state[f"n_{_fp}_rowcount"] = _at_rc.n_periods
+                    st.session_state[f"k_{_fp}_rowcount"] = _at_rc.n_sigma
+                    st.session_state[f"margin_{_fp}_rowcount"] = int(_at_rc.margin_pct * 100)
+                    st.session_state[f"margin_on_{_fp}_rowcount"] = _at_rc.margin_enabled
                 st.rerun()
 
         _at_rc_cached = st.session_state.get(_at_rc_key)
-        if _at_rc_cached and _at_rc_cached.get("viable"):
+        if _at_rc_cached and isinstance(_at_rc_cached, CalibrationResult) and _at_rc_cached.viable:
             st.caption(
-                f"Auto-tune: N={_at_rc_cached['n_periods']}, sigma={_at_rc_cached['n_sigma']}, "
-                f"margem={_at_rc_cached['margin_pct']*100:.0f}% — "
-                f"cobertura {_at_rc_cached['coverage_pct']:.0f}%, "
-                f"{_confidence_badge(_at_rc_cached['confidence'])}"
+                f"Calibracao automatica: {explain_calibration_short(_at_rc_cached)} — "
+                f"{_confidence_badge(_at_rc_cached.confidence)}"
             )
         rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params(
             f"{_fp}_rowcount",
@@ -2328,9 +2210,10 @@ with tab_tabela:
                     values, dates, rc_n, rc_k, rc_margin, "Row Count",
                     margin_enabled=rc_margin_on,
                 )
-                _render_auto_tune(
+                _render_calibration(
                     proposal_svc, values, dates,
                     f"{_fp}_rowcount", metric_kind="numeric",
+                    grain=_grain_type, series_profile=rc_series_profile,
                 )
 
             if "autotune_rowcount" not in st.session_state:
