@@ -2,10 +2,9 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage binario incluido no diff \u2014 nao deve ser commitado (adicionar ao .gitignore se ausente).",
-    "Nova pagina 07_query_log.py depende de client.logger.entries e client.logger.get_session_summary() \u2014 confirmar que esses atributos existem no AthenaClient atual.",
-    "Taskfile troca rg por grep -nE nas validacoes de governance proof \u2014 funcionalmente equivalente, mas confirmar que grep esta disponivel no ambiente de deploy (containers Alpine podem precisar de pacote extra).",
-    "Task cleanup-staging-after-prod referencia path hardcoded /home/aalbertoni/.config/homelab/scripts/stack-down \u2014 verificar se path existe no ambiente de deploy."
+    "Arquivo .coverage binario incluido no diff \u2014 nao deve ser commitado (adicionar ao .gitignore se ausente)",
+    "QueryLogger default region mudou para sa-east-1 ($9/TB) \u2014 confirmar que testes existentes nao assumiam $5/TB em assercoes fora deste diff",
+    "Pricing hardcoded no codigo (ATHENA_PRICE_PER_TB) \u2014 se precos AWS mudarem, requer novo deploy para atualizar"
   ],
-  "summary": "Mudancas de governanca (push-after-staging, cleanup-staging-after-prod), migracao rg->grep no Taskfile e nova pagina Query Log \u2014 sem bloqueios, apenas verificacoes menores recomendadas."
+  "summary": "Promocao de regras CustomSql de experimental para validated, pricing Athena por regiao no query_logger, e limpeza de UI \u2014 mudancas seguras, sem migracao, sem impacto em deploy/compose/healthcheck."
 }

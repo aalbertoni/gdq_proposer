@@ -126,7 +126,7 @@ class QueryLogger:
         total_rows = sum(e.rows_returned for e in self.entries)
         errors = sum(1 for e in self.entries if e.exception_type)
         total_bytes = sum(e.bytes_scanned or 0 for e in self.entries)
-        # Athena pricing varies by region (e.g. $5.00/TB us-east-1, $6.25/TB sa-east-1)
+        # Athena pricing varies by region (e.g. $5.00/TB us-east-1, $9.00/TB sa-east-1)
         estimated_cost = (total_bytes / (1024 ** 4)) * self.price_per_tb
 
         return {

@@ -2,14 +2,12 @@
 
 ```json
 {
-  "status": "ATENCAO",
+  "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Arquivo binario .coverage incluido no diff — nao deveria ser commitado (adicionar ao .gitignore).",
-    "cleanup-staging-after-prod executa `sudo /home/aalbertoni/.config/homelab/scripts/stack-down` — path hardcoded com usuario especifico e uso de sudo; considerar wrapper no Taskfile ou variavel de ambiente.",
-    "push-after-staging faz `git push` sem especificar remote/branch — pode empurrar para branch errada se tracking nao estiver configurado.",
-    "pages/07_query_log.py acessa `client.logger.entries` e `client.logger.export_json()` — contrato do logger nao visivel no diff; se logger ainda nao expoe esses atributos, vai quebrar em runtime."
+    "Arquivo binario .coverage incluido no diff — nao deveria ser commitado (adicionar ao .gitignore se ausente)",
+    "Tabela ATHENA_PRICE_PER_TB hardcoded em query_logger.py — se precos mudarem, requer deploy para atualizar"
   ],
-  "summary": "Mudancas de governanca (push-after-staging, cleanup-staging) e nova pagina query_log sao coerentes com a arquitetura; nenhum bloqueio, mas .coverage no diff e path hardcoded com sudo merecem atencao."
+  "summary": "Promocao de regras CustomSql de experimental para validated com pricing regional no query_logger — separacao source/deploy/runtime preservada, sem acoplamento excessivo."
 }
 ```

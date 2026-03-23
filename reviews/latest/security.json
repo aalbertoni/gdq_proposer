@@ -1,10 +1,9 @@
 {
-  "status": "ATENCAO",
+  "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "O arquivo .coverage (binario) esta no diff e nao deveria ser commitado \u2014 adicionar ao .gitignore se ainda nao estiver.",
-    "pages/07_query_log.py exibe SQL completo via st.code(entry.sql) \u2014 verificar que o SQL nao contem credenciais ou tokens inline antes de exibir ao usuario.",
-    "Taskfile.yml cleanup-staging-after-prod executa sudo com path hardcoded (/home/aalbertoni/.config/homelab/scripts/stack-down) \u2014 path especifico de usuario pode ser um risco de path traversal se o script for modificavel por outros usuarios."
+    "Arquivo .coverage (binario) incluido no diff \u2014 deve estar no .gitignore para evitar vazamento de paths locais ou metricas de cobertura.",
+    "Precos hardcoded em ATHENA_PRICE_PER_TB podem ficar desatualizados \u2014 considerar validacao periodica contra AWS Pricing API."
   ],
-  "summary": "Mudancas de governanca e query log sem bloqueadores criticos; atentar ao .coverage no versionamento e ao SQL exibido no log."
+  "summary": "Diff seguro: promove regras de experimental para validated, adiciona pricing por regiao sem segredos ou inputs inseguros."
 }

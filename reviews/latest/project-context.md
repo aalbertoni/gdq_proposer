@@ -1,7 +1,7 @@
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-23T01:24:30Z`
+- Generated at: `2026-03-23T02:33:39Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -935,6 +935,7 @@ def _load_dotenv(path: Path):
 ## Status
 
 ```text
+ M infra/query_logger.py
  M reviews/latest/architecture.json
  M reviews/latest/architecture.prompt.md
  M reviews/latest/architecture.raw.txt
@@ -959,24 +960,25 @@ def _load_dotenv(path: Path):
 ## Diff Stat vs HEAD
 
 ```text
- reviews/latest/architecture.json      |    9 +-
- reviews/latest/architecture.prompt.md |  558 +++++++++++-----
- reviews/latest/architecture.raw.txt   |    9 +-
- reviews/latest/codex.json             |   18 +-
- reviews/latest/codex.prompt.md        | 1130 +++++++++++++++++++++++++--------
+ infra/query_logger.py                 |    2 +-
+ reviews/latest/architecture.json      |   10 +-
+ reviews/latest/architecture.prompt.md | 1027 ++++++++++++++++++++------------
+ reviews/latest/architecture.raw.txt   |   10 +-
+ reviews/latest/codex.json             |   11 +-
+ reviews/latest/codex.prompt.md        | 1060 ++++++++++++++++++++-------------
  reviews/latest/codex.raw.txt          |    2 +-
- reviews/latest/diff.patch             |  558 +++++++++++-----
- reviews/latest/project-context.md     |  529 ++++++++++++---
- reviews/latest/release-ops.json       |   12 +-
- reviews/latest/release-ops.prompt.md  |  558 +++++++++++-----
- reviews/latest/release-ops.raw.txt    |   12 +-
+ reviews/latest/diff.patch             | 1027 ++++++++++++++++++++------------
+ reviews/latest/project-context.md     |   24 +-
+ reviews/latest/release-ops.json       |    7 +-
+ reviews/latest/release-ops.prompt.md  | 1027 ++++++++++++++++++++------------
+ reviews/latest/release-ops.raw.txt    |    7 +-
  reviews/latest/security.json          |    9 +-
- reviews/latest/security.prompt.md     |  558 +++++++++++-----
+ reviews/latest/security.prompt.md     | 1027 ++++++++++++++++++++------------
  reviews/latest/security.raw.txt       |    9 +-
- reviews/latest/summary.json           |   62 +-
- reviews/latest/tests.json             |   12 +-
- reviews/latest/tests.prompt.md        |  558 +++++++++++-----
- reviews/latest/tests.raw.txt          |   12 +-
- 18 files changed, 3339 insertions(+), 1276 deletions(-)
+ reviews/latest/summary.json           |   57 +-
+ reviews/latest/tests.json             |   13 +-
+ reviews/latest/tests.prompt.md        | 1027 ++++++++++++++++++++------------
+ reviews/latest/tests.raw.txt          |   13 +-
+ 19 files changed, 3852 insertions(+), 2517 deletions(-)
 
 ```
