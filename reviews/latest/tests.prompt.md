@@ -21,339 +21,197 @@ Formato esperado:
 
 Diff:
 diff --git a/.coverage b/.coverage
-new file mode 100644
-index 0000000..3f6d8aa
-Binary files /dev/null and b/.coverage differ
-diff --git a/.dockerignore b/.dockerignore
-new file mode 100644
-index 0000000..806e3a2
---- /dev/null
-+++ b/.dockerignore
-@@ -0,0 +1,22 @@
-+.git
-+.gitignore
-+.venv
-+.pytest_cache
-+__pycache__
-+*.pyc
-+*.pyo
-+*.pyd
-+.env
-+.env.local
-+.env.dev
-+.env.prod
-+.vscode
-+.idea
-+tests
-+aws_test_data
-+mock_data
-+logs
-+presets
-+run_app.bat
-+run_app.sh
-+launcher.py
-diff --git a/Dockerfile b/Dockerfile
-new file mode 100644
-index 0000000..b75fb77
---- /dev/null
-+++ b/Dockerfile
-@@ -0,0 +1,38 @@
-+FROM python:3.12-slim
-+
-+ENV PYTHONDONTWRITEBYTECODE=1
-+ENV PYTHONUNBUFFERED=1
-+ENV PIP_NO_CACHE_DIR=1
-+ENV STREAMLIT_SERVER_HEADLESS=true
-+ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-+ENV PORT=8501
-+
-+WORKDIR /app
-+
-+RUN apt-get update \
-+    && apt-get install -y --no-install-recommends curl \
-+    && rm -rf /var/lib/apt/lists/*
-+
-+COPY requirements.txt .
-+RUN pip install --no-cache-dir -r requirements.txt
-+
-+COPY app.py .
-+COPY run.py .
-+COPY config.py .
-+COPY core ./core
-+COPY infra ./infra
-+COPY services ./services
-+COPY strategies ./strategies
-+COPY pages ./pages
-+COPY queries ./queries
-+COPY docs ./docs
-+COPY .env.example ./.env.example
-+
-+RUN useradd --create-home --uid 1000 appuser \
-+    && mkdir -p /app/logs /app/presets /app/mock_data /app/aws_test_data \
-+    && chown -R appuser:appuser /app
-+
-+USER appuser
-+EXPOSE 8501
-+
-+CMD ["sh", "-lc", "python -m streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT:-8501} --server.headless=true --browser.gatherUsageStats=false"]
-diff --git a/Taskfile.yml b/Taskfile.yml
-new file mode 100644
-index 0000000..341cd74
---- /dev/null
-+++ b/Taskfile.yml
-@@ -0,0 +1,148 @@
-+version: "3"
-+
-+tasks:
-+  setup:
-+    desc: Instala dependencias locais
-+    cmds:
-+      - python3 -m venv .venv
-+      - .venv/bin/pip install --upgrade pip
-+      - .venv/bin/pip install -r requirements.txt
-+
-+  lint:
-+    desc: Executa lint
-+    cmds:
-+      - echo "Lint not configured yet for gdq-proposer"
-+
-+  typecheck:
-+    desc: Executa type-check
-+    cmds:
-+      - echo "Type-check not configured yet for gdq-proposer"
-+
-+  test:
-+    desc: Executa testes unitarios e de integracao local
-+    cmds:
-+      - .venv/bin/pytest tests/ -v -m "not athena"
-+
-+  coverage:
-+    desc: Executa cobertura minima
-+    cmds:
-+      - .venv/bin/pytest tests/ -v --tb=short --cov=core --cov=infra --cov=services --cov=strategies --cov=pages --cov-report=term-missing -m "not athena"
-+
-+  gate1:
-+    desc: Portao 1
-+    cmds:
-+      - /home/aalbertoni/.config/homelab/scripts/gate1-validate .
-+
-+  plan-check:
-+    desc: Exige plano revisado e atualizado antes de seguir
-+    cmds:
-+      - /home/aalbertoni/.config/homelab/scripts/require-plan-review .
-+
-+  snapshot:
-+    desc: Cria um commit local para habilitar release por SHA
-+    deps: [plan-check]
-+    cmds:
-+      - git add -A
-+      - /home/aalbertoni/.config/homelab/scripts/snapshot-commit .
-+
-+  plan-write:
-+    desc: Cria o template canonico do plano tecnico em reviews/latest/plan.md
-+    cmds:
-+      - /home/aalbertoni/.config/homelab/scripts/prepare-plan-bundle .
-+
-+  project-context:
-+    desc: Gera o contexto curado do projeto para reviews do Codex
-+    cmds:
-+      - /home/aalbertoni/.config/homelab/scripts/prepare-project-context .
-+
-+  plan-review-codex:
-+    desc: Submete o plano tecnico ao review independente do Codex
-+    cmds:
-+      - /home/aalbertoni/.config/homelab/scripts/review-plan .
-+
-+  plan-consensus:
-+    desc: Gera ou valida o plano e exige veredito do Codex antes da implementacao
-+    cmds:
-+      - task: plan-write
-+      - task: project-context
-+      - task: plan-review-codex
-+
-+  review-agents:
-+    desc: Executa os 4 agentes e consolida o veredito
-+    deps: [plan-check]
-+    cmds:
-+      - /home/aalbertoni/.config/homelab/scripts/review-agents .
-+
-+  review-agents-consensus:
-+    desc: Executa Gate 2 com Claude + Codex e consolida o veredito conjunto
-+    deps: [plan-check]
-+    cmds:
-+      - env CODEX_REVIEW_ENABLED=true /home/aalbertoni/.config/homelab/scripts/review-agents .
-+
-+  build-release:
-+    desc: Portao 3, exige pelo menos um commit
-+    deps: [plan-check]
-+    cmds:
-+      - sudo /usr/local/bin/release-build .
-+
-+  sync-deploy:
-+    desc: Sincroniza metadados do source para o deploy
-+    cmds:
-+      - /home/aalbertoni/.config/homelab/stacks/gdq-proposer/scripts/sync-source-to-stack
-+
-+  deploy-staging:
-+    desc: Portao 4
-+    deps: [gate1, review-agents-consensus, build-release]
-+    cmds:
-+      - sudo /usr/local/bin/deploy-staging gdq-proposer
-+
-+  smoke-staging:
-+    desc: Smoke interno do staging
-+    cmds:
-+      - sudo /usr/local/bin/stack-status gdq-proposer-staging
-+      - sudo /usr/local/bin/stack-health gdq-proposer-staging 60
-+      - scripts/smoke.sh "http://localhost:18501"
-+
-+  smoke-staging-public:
-+    desc: Smoke publico do staging
-+    cmds:
-+      - cmd: 'echo "Skipping public staging smoke: app interno"'
-+
-+  promote-prod:
-+    desc: Portao 5
-+    cmds:
-+      - sudo /usr/local/bin/deploy-prod gdq-proposer
-+
-+  verify-prod:
-+    desc: Valida a producao internamente
-+    cmds:
-+      - sudo /usr/local/bin/stack-status gdq-proposer
-+      - sudo /usr/local/bin/stack-health gdq-proposer 60
-+      - sudo /usr/local/bin/stack-logs gdq-proposer 50
-+
-+  verify-prod-public:
-+    desc: Valida a producao via URL publica
-+    cmds:
-+      - cmd: 'echo "Skipping public production smoke: app interno"'
-+
-+  rollback-last:
-+    desc: Faz rollback para a ultima release saudavel
-+    cmds:
-+      - sudo /usr/local/bin/stack-rollback gdq-proposer
-+
-+  pipeline-staging:
-+    desc: Executa gates ate staging interno
-+    cmds:
-+      - task: gate1
-+      - task: snapshot
-+      - task: review-agents-consensus
-+      - task: build-release
-+      - task: deploy-staging
-+      - task: smoke-staging
-+
-+  pipeline-prod:
-+    desc: Executa gates, staging e verificacao interna de producao
-+    cmds:
-+      - task: pipeline-staging
-+      - task: promote-prod
-+      - task: verify-prod
-diff --git a/app.yaml b/app.yaml
-new file mode 100644
-index 0000000..0dbcd82
---- /dev/null
-+++ b/app.yaml
-@@ -0,0 +1,60 @@
-+name: gdq-proposer
-+tier: candidate
-+stack_profile: python-api
-+port: 8501
-+health_path: /_stcore/health
-+
-+source_path: /home/claude-deploy/projects/gdq-proposer
-+workspace_path: /home/claude-deploy/workspaces/gdq-proposer
-+deploy_path: /home/aalbertoni/.config/homelab/stacks/gdq-proposer
-+runtime_path: /home/aalbertoni/.config/appdata/gdq-proposer
-+release_path: /home/aalbertoni/.config/homelab/releases/gdq-proposer
-+
-+public_url: ""
-+
-+has_database: false
-+database_type: none
-+requires_migrations: false
-+has_background_jobs: false
-+
-+test:
-+  command: ".venv/bin/pytest tests/ -v -m 'not athena'"
-+  coverage_command: ".venv/bin/pytest tests/ -v --tb=short --cov=core --cov=infra --cov=services --cov=strategies --cov=pages --cov-report=term-missing -m 'not athena'"
-+
-+lint:
-+  command: ""
-+
-+typecheck:
-+  command: ""
-+
-+security:
-+  secret_scan_command: "gitleaks detect --no-banner --source ."
-+  sast_command: ""
-+  dependency_scan_command: "pip-audit -r requirements.txt"
-+
-+build:
-+  dockerfile: Dockerfile
-+  context: .
-+  image_name: homelab/gdq-proposer
-+
-+smoke:
-+  local_command: "curl -fsS http://localhost:8501/_stcore/health"
-+  staging_command: "curl -fsS http://localhost:18501/_stcore/health"
-+  public_command: "echo no-public-smoke-configured"
-+
-+review_agents:
-+  - architecture
-+  - security
-+  - tests
-+  - release-ops
-+
-+deploy:
-+  stack_name: gdq-proposer
-+  staging_stack_name: gdq-proposer-staging
-+  requires_staging: true
-+  requires_manual_prod_approval: true
-+  allow_rollback: true
-+  traefik_enabled: false
-+  authelia_enabled: false
-+
-+secrets: []
-diff --git a/requirements.txt b/requirements.txt
-index ce9b541..f595483 100644
---- a/requirements.txt
-+++ b/requirements.txt
-@@ -13,5 +13,6 @@ jinja2>=3.1
+index 3f6d8aa..6baef5f 100644
+Binary files a/.coverage and b/.coverage differ
+diff --git a/CLAUDE.md b/CLAUDE.md
+index f825d8e..5bae87b 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -63,6 +63,76 @@ ambos dialetos para que os testes unitarios rodem com DuckDB sem precisar de Ath
  
- # Testes
- pytest>=8.0
-+pytest-cov>=5.0
- duckdb>=1.0
- pyarrow>=14.0
-diff --git a/scripts/healthcheck.sh b/scripts/healthcheck.sh
-new file mode 100755
-index 0000000..ab52ef0
---- /dev/null
-+++ b/scripts/healthcheck.sh
-@@ -0,0 +1,6 @@
-+#!/usr/bin/env bash
-+set -euo pipefail
+ ---
+ 
++## Governanca de Deploy
 +
-+PORT="${PORT:-8501}"
++Este projeto usa governanca obrigatoria de deploy. O agente nao pode improvisar fluxo com `git push`, `sudo /usr/local/bin/deploy-prod`, `stack-deploy` ou comandos ad hoc fora do `Taskfile`.
 +
-+curl -fsS "http://localhost:${PORT}/_stcore/health"
-diff --git a/scripts/smoke.sh b/scripts/smoke.sh
-new file mode 100755
-index 0000000..1f163e0
---- /dev/null
-+++ b/scripts/smoke.sh
-@@ -0,0 +1,11 @@
-+#!/usr/bin/env bash
-+set -euo pipefail
++Regras obrigatorias:
 +
-+TARGET="${1:-http://localhost:${PORT:-8501}}"
++1. Nunca seguir para deploy sem passar por `task gate1`, `task snapshot`, `task review-agents-consensus` e `task build-release`.
++2. Nunca promover para producao sem staging aprovado.
++3. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
++4. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
++5. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
 +
-+if [[ -z "$TARGET" || "$TARGET" == '""' ]]; then
-+  echo "Skipping smoke: no target configured"
-+  exit 0
-+fi
++Arquivos obrigatorios de evidencia:
 +
-+curl -kfsS "${TARGET%/}/_stcore/health"
++Staging: `reviews/latest/deploy-staging-check.md`
++
++```text
++commit_sha: <sha atual>
++environment: staging
++gate1: <pass|fail>
++snapshot_commit: <sha do snapshot>
++gate2: <pass|warning|fail>
++release_build: <pass|fail>
++staging_deploy: <pass|fail>
++staging_smoke: <pass|fail>
++verdict: <ok|warning|fail>
++```
++
++Producao: `reviews/latest/deploy-prod-check.md`
++
++```text
++commit_sha: <sha atual>
++environment: prod
++staging_governance: <pass|fail>
++prod_approval: explicit
++prod_deploy: <pass|fail>
++prod_verify: <pass|fail>
++verdict: <ok|warning|fail>
++```
++
++Fluxo obrigatorio daqui pra frente:
++
++1. Rodar `task gate1`.
++2. Rodar `task snapshot`.
++3. Rodar `task review-agents-consensus`.
++4. Rodar `task build-release`.
++5. Rodar `task deploy-staging`.
++6. Rodar `task smoke-staging`.
++7. Gravar `reviews/latest/deploy-staging-check.md`.
++8. Rodar `task verify-staging-governance-proof`.
++9. So depois disso considerar staging apto.
++10. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
++11. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
++12. Rodar `task verify-prod`.
++13. Rodar `task verify-prod-governance-proof`.
++
++Quando o usuario disser “segue com o fluxo de deploy”, o agente deve responder executando ou orientando exatamente essa sequencia. Nao pode pular direto para `git status`, `git diff`, `git push` ou deploy.
++
++Prompts operacionais canônicos:
++
++```text
++Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico e valide com task verify-staging-governance-proof.
++```
++
++```text
++Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof.
++```
++
++---
++
+ ## Principios de Desenvolvimento
+ 
+ ### 1. Fatias verticais pequenas
+diff --git a/Taskfile.yml b/Taskfile.yml
+index 341cd74..307dafd 100644
+--- a/Taskfile.yml
++++ b/Taskfile.yml
+@@ -108,9 +108,63 @@ tasks:
+     cmds:
+       - cmd: 'echo "Skipping public staging smoke: app interno"'
+ 
++  guide-governed-deploy:
++    desc: Exibe o fluxo obrigatorio de governanca para staging e producao
++    cmds:
++      - |
++        cat <<'EOF'
++        Fluxo obrigatorio deste projeto:
++
++        1. task gate1
++        2. task snapshot
++        3. task review-agents-consensus
++        4. task build-release
++        5. task deploy-staging
++        6. task smoke-staging
++        7. Gerar reviews/latest/deploy-staging-check.md
++        8. task verify-staging-governance-proof
++
++        Para producao:
++        9. Revisar staging aprovado
++        10. Gerar reviews/latest/deploy-prod-check.md
++        11. ALLOW_PROD_DEPLOY=true task promote-prod
++        12. task verify-prod
++        13. task verify-prod-governance-proof
++
++        Deploy por comando ad hoc fora do Taskfile e proibido.
++        EOF
++
++  verify-staging-governance-proof:
++    desc: Bloqueia sem evidencia obrigatoria de staging governado
++    cmds:
++      - |
++        test -f reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^environment: staging$' reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
++      - |
++        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
++      - |
++        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
++
+   promote-prod:
+     desc: Portao 5
+     cmds:
++      - bash -lc 'test "${ALLOW_PROD_DEPLOY:-false}" = "true" || { echo "Refusing production deploy without ALLOW_PROD_DEPLOY=true." >&2; exit 1; }'
++      - task: verify-staging-governance-proof
+       - sudo /usr/local/bin/deploy-prod gdq-proposer
+ 
+   verify-prod:
+@@ -125,6 +179,28 @@ tasks:
+     cmds:
+       - cmd: 'echo "Skipping public production smoke: app interno"'
+ 
++  verify-prod-governance-proof:
++    desc: Bloqueia sem evidencia obrigatoria da producao governada
++    cmds:
++      - |
++        test -f reviews/latest/deploy-prod-check.md
++      - |
++        rg -n '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
++      - |
++        rg -n '^environment: prod$' reviews/latest/deploy-prod-check.md
++      - |
++        rg -n '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
++      - |
++        rg -n '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
++      - |
++        rg -n '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
++      - |
++        rg -n '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
++      - |
++        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
++      - |
++        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
++
+   rollback-last:
+     desc: Faz rollback para a ultima release saudavel
+     cmds:
+@@ -139,6 +215,7 @@ tasks:
+       - task: build-release
+       - task: deploy-staging
+       - task: smoke-staging
++      - task: verify-staging-governance-proof
+ 
+   pipeline-prod:
+     desc: Executa gates, staging e verificacao interna de producao
+@@ -146,3 +223,4 @@ tasks:
+       - task: pipeline-staging
+       - task: promote-prod
+       - task: verify-prod
++      - task: verify-prod-governance-proof
 

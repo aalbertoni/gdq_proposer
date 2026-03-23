@@ -1,74 +1,61 @@
 {
   "overall_status": "ATENCAO",
-  "combined_status": "ATENCAO",
+  "combined_status": "BLOQUEADO",
   "agents": {
     "architecture": {
       "status": "ATENCAO",
-      "blockers": [
-        ".coverage (arquivo binario de cobertura) commitado no repositorio \u2014 deve ser adicionado ao .gitignore e removido do tracking"
-      ],
+      "blockers": [],
       "warnings": [
-        "Taskfile.yml referencia caminhos absolutos do usuario (/home/aalbertoni/.config/homelab/scripts/*) \u2014 acoplamento com ambiente local, dificulta portabilidade",
-        "app.yaml expoe caminhos absolutos de source_path, workspace_path, deploy_path, runtime_path e release_path \u2014 considerar parametrizacao via variaveis de ambiente",
-        "Dockerfile faz COPY de .env.example mas .dockerignore exclui .env* \u2014 verificar se .env.example nao e filtrado pelo glob (nao e, pois .dockerignore lista .env, .env.local, .env.dev, .env.prod explicitamente, entao .env.example passa \u2014 OK)",
-        "pytest-cov adicionado em requirements.txt junto com dependencias de producao \u2014 considerar separar em requirements-dev.txt para nao incluir no container"
+        "Arquivo binario .coverage incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore)",
+        "verify-staging-governance-proof e verify-prod-governance-proof usam 'bash -lc' com login shell \u2014 pode carregar estado inesperado do ambiente; preferir 'bash -c' simples",
+        "promote-prod executa verify-staging-governance-proof inline antes do deploy, mas tambem e chamado em pipeline-prod apos pipeline-staging que ja verifica \u2014 dupla execucao redundante (nao e bloqueio, apenas ruido)"
       ],
-      "summary": "Infraestrutura de deploy bem estruturada com separacao clara source/deploy/runtime, mas .coverage binario deve ser bloqueado e caminhos absolutos no Taskfile merecem atencao."
+      "summary": "Governanca de deploy bem estruturada: separacao source/deploy/runtime preservada, sem acesso a secrets, sem acoplamento excessivo; apenas .coverage binario e detalhes menores de shell merecem atencao."
     },
     "security": {
-      "status": "ATENCAO",
+      "status": "APROVADO",
       "blockers": [],
       "warnings": [
-        "`.coverage` binary file committed \u2014 should be in `.gitignore`",
-        "`Taskfile.yml` references hardcoded user home paths (`/home/aalbertoni/...`) \u2014 leaks username and internal directory structure",
-        "`app.yaml` exposes absolute filesystem paths (`source_path`, `deploy_path`, `runtime_path`, `release_path`) with username",
-        "`smoke.sh` uses `curl -k` which disables TLS certificate verification \u2014 acceptable for internal staging but risky if reused against external endpoints",
-        "`Dockerfile` CMD uses shell expansion (`${PORT:-8501}`) via `sh -lc` \u2014 login shell (`-l`) loads profile files which is unnecessary and could introduce unexpected behavior",
-        "`app.yaml` shows `authelia_enabled: false` and `traefik_enabled: false` \u2014 confirm the app is truly internal-only with no external exposure"
+        "Arquivo .coverage (binario) incluido no diff \u2014 normalmente deve estar no .gitignore para evitar vazamento de paths locais ou metricas internas.",
+        "promote-prod usa 'sudo /usr/local/bin/deploy-prod' \u2014 garantir que o script destino valida inputs e que sudoers restringe apenas esse comando."
       ],
-      "summary": "No secrets or injection risks found; minor hygiene issues with committed `.coverage`, hardcoded paths leaking usernames, and `curl -k` in smoke test."
+      "summary": "Diff adiciona governanca de deploy com gates obrigatorios, evidencia auditavel e bloqueio de producao sem aprovacao explicita \u2014 sem segredos, injecao ou permissoes excessivas."
     },
     "tests": {
-      "status": "ATENCAO",
+      "status": "APROVADO",
       "blockers": [],
       "warnings": [
-        "Arquivo .coverage binario incluido no diff \u2014 deve ser adicionado ao .gitignore, nao commitado",
-        "Dockerfile CMD usa sh -lc com interpolacao de variavel sem aspas internas no PORT \u2014 risco baixo pois ENV ja define default",
-        "Taskfile.yml referencia paths absolutos de usuario (/home/aalbertoni/) \u2014 nao portavel entre ambientes",
-        "Nenhum teste novo foi adicionado neste diff \u2014 aceitavel pois as mudancas sao infra/deploy (Dockerfile, Taskfile, scripts) sem logica de negocio",
-        "scripts/smoke.sh e scripts/healthcheck.sh nao tem testes automatizados \u2014 considerar smoke test no CI para validar scripts"
+        "Arquivo .coverage binario incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore)",
+        "Tasks de governanca (verify-staging-governance-proof, verify-prod-governance-proof) dependem de `rg` estar instalado no ambiente de deploy \u2014 sem fallback se ausente",
+        "Nenhum teste automatizado valida os novos tasks do Taskfile (ex: testar que promote-prod falha sem ALLOW_PROD_DEPLOY=true)"
       ],
-      "summary": "Diff de infraestrutura (Docker, CI pipeline, scripts) sem codigo de negocio \u2014 nao requer testes unitarios, mas .coverage nao deve ser commitado."
+      "summary": "Mudancas de governanca de deploy via Taskfile e CLAUDE.md \u2014 sem codigo Python novo, sem funcoes publicas adicionadas, sem risco de regressao funcional."
     },
     "release-ops": {
-      "status": "ATENCAO",
+      "status": "APROVADO",
       "blockers": [],
       "warnings": [
-        "Arquivo .coverage (binario) incluido no diff \u2014 deve ser adicionado ao .gitignore para nao ser commitado",
-        "Dockerfile usa COPY seletivo mas nao copia preflight_check.py \u2014 se o app depende dele no startup, falhara em runtime",
-        "Dockerfile nao copia scripts/ para dentro da imagem \u2014 healthcheck.sh so funciona se montado externamente ou via compose",
-        "Nao ha docker-compose.yml no diff \u2014 deploy via compose depende de artefato externo nao visivel aqui",
-        "Taskfile.yml referencia paths absolutos do usuario (/home/aalbertoni/.config/...) \u2014 quebra em outro host sem esses scripts",
-        "smoke.sh usa apenas health endpoint (_stcore/health) \u2014 nao valida funcionalidade do app (ex: pagina principal carrega)",
-        "Nao ha logging estruturado adicionado \u2014 diagnostico pos-deploy depende apenas dos logs nativos do Streamlit",
-        "pytest-cov adicionado em requirements.txt principal (nao separado em requirements-dev.txt) \u2014 sera instalado na imagem de producao"
+        "Arquivo .coverage (binario) incluido no diff \u2014 nao deveria ser commitado; adicionar ao .gitignore.",
+        "Tasks de verificacao (verify-staging-governance-proof, verify-prod-governance-proof) dependem de `rg` (ripgrep) estar instalado no ambiente de deploy \u2014 confirmar presenca na imagem Docker/compose.",
+        "promote-prod agora exige ALLOW_PROD_DEPLOY=true e evidencia de staging antes de executar \u2014 operadores existentes precisam ser informados da mudanca de fluxo."
       ],
-      "summary": "Containerizacao inicial solida com health check valido e rollback previsto, mas .coverage commitado, paths absolutos no Taskfile e ausencia de compose.yml no diff requerem atencao antes de prod."
+      "summary": "Diff adiciona governanca obrigatoria de deploy (gates, evidencia, aprovacao humana) sem alterar codigo de aplicacao \u2014 implantabilidade e health check nao sao afetados; rollback continua disponivel via task rollback-last."
     }
   },
   "peer_reviews": {
     "codex": {
-      "status": "ATENCAO",
-      "blockers": [],
-      "warnings": [
-        "`.coverage` binario foi commitado no repo; isso nao quebra o deploy por si so, mas polui o snapshot de release e indica falta de higiene minima de artefatos gerados.",
-        "O `Dockerfile` sobe o app com `streamlit run app.py` e ignora o fluxo descrito no projeto via `run.py`/`launcher.py` e `preflight_check.py`; se esse bootstrap e necessario para carregar `.env` ou validar AWS/SSL antes da subida, o comportamento em container pode divergir do uso suportado.",
-        "O smoke cobre apenas `/_stcore/health`; isso valida processo vivo, mas nao exercita a jornada real do Streamlit nem detecta regressao de carregamento inicial, falha de configuracao AWS ou erro funcional na tela principal.",
-        "`scripts/smoke.sh` usa `curl -k`, desabilitando verificacao TLS; para staging interno em HTTP nao agrega valor e vira padrao perigoso se o script for reaproveitado contra endpoint HTTPS.",
-        "`Taskfile.yml` e `app.yaml` dependem de paths absolutos do host (`/home/aalbertoni/...`); no contexto homelab isso pode ser aceitavel, mas aumenta acoplamento operacional e reduz portabilidade/diagnostico fora desse host.",
-        "`pytest-cov` foi adicionado em `requirements.txt` de producao; nao e risco de seguranca imediato, mas aumenta a imagem final com dependencia de teste desnecessaria."
+      "status": "BLOQUEADO",
+      "blockers": [
+        "`pipeline-staging` ficou operacionalmente quebrado: ele passou a exigir `task verify-staging-governance-proof`, mas o pr\u00f3prio pipeline nao gera `reviews/latest/deploy-staging-check.md`. Na pratica, o fluxo automatizado falha apos o smoke mesmo com staging saudavel, criando regressao concreta de release.",
+        "`pipeline-prod` tambem ficou quebrado pelo mesmo motivo: exige `task verify-prod-governance-proof`, mas nao existe etapa no Taskfile que gere `reviews/latest/deploy-prod-check.md`. Isso impede a conclusao do fluxo canonico de producao sem intervencao manual fora do pipeline.",
+        "A governanca adicionada depende de evidencia manual em `reviews/latest/`, mas essa escrita nao foi encapsulada em task/script deterministico. Como a condicao minima de release agora depende de artefato nao produzido pelo fluxo, o deploy deixa de ser totalmente executavel e auditavel pelo proprio pipeline."
       ],
-      "summary": "O diff mantem a separacao de release/deploy e nao introduz violacao clara de secrets, sudo docker direto ou side effects irreversiveis, entao nao vejo motivo para BLOQUEADO. Ainda assim, ha riscos moderados de operacao e confiabilidade: artefato de cobertura commitado, container possivelmente divergindo do bootstrap oficial do app e smoke superficial demais para dar confianca de release."
+      "warnings": [
+        "O arquivo binario `.coverage` entrou no diff; alem de ruido de review, nao deveria ser versionado e pode expor paths/metadados locais desnecessarios.",
+        "`verify-staging-governance-proof` e `verify-prod-governance-proof` dependem de `rg` e usam `bash -lc`; isso aumenta fragilidade ambiental e pode introduzir comportamento dependente de shell de login sem necessidade.",
+        "As validacoes conferem formato e SHA do arquivo de evidencia, mas nao validam coerencia entre campos criticos e o resultado real das tasks executadas; isso reduz o valor da prova operacional para auditoria."
+      ],
+      "summary": "A intencao de reforcar governanca de deploy e boa e preserva os limites de seguranca, mas o diff introduz regressao concreta no fluxo de release: staging e producao agora exigem arquivos de evidencia que o Taskfile nao gera. Com isso, os pipelines deixam de ser auto-suficientes e podem falhar mesmo quando o deploy em si esta correto. Para liberar, a geracao dessas evidencias precisa virar etapa explicita e deterministica do fluxo."
     }
   }
 }

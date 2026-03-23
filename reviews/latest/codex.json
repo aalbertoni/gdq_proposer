@@ -1,13 +1,14 @@
 {
-  "status": "ATENCAO",
-  "blockers": [],
-  "warnings": [
-    "`.coverage` binario foi commitado no repo; isso nao quebra o deploy por si so, mas polui o snapshot de release e indica falta de higiene minima de artefatos gerados.",
-    "O `Dockerfile` sobe o app com `streamlit run app.py` e ignora o fluxo descrito no projeto via `run.py`/`launcher.py` e `preflight_check.py`; se esse bootstrap e necessario para carregar `.env` ou validar AWS/SSL antes da subida, o comportamento em container pode divergir do uso suportado.",
-    "O smoke cobre apenas `/_stcore/health`; isso valida processo vivo, mas nao exercita a jornada real do Streamlit nem detecta regressao de carregamento inicial, falha de configuracao AWS ou erro funcional na tela principal.",
-    "`scripts/smoke.sh` usa `curl -k`, desabilitando verificacao TLS; para staging interno em HTTP nao agrega valor e vira padrao perigoso se o script for reaproveitado contra endpoint HTTPS.",
-    "`Taskfile.yml` e `app.yaml` dependem de paths absolutos do host (`/home/aalbertoni/...`); no contexto homelab isso pode ser aceitavel, mas aumenta acoplamento operacional e reduz portabilidade/diagnostico fora desse host.",
-    "`pytest-cov` foi adicionado em `requirements.txt` de producao; nao e risco de seguranca imediato, mas aumenta a imagem final com dependencia de teste desnecessaria."
+  "status": "BLOQUEADO",
+  "blockers": [
+    "`pipeline-staging` ficou operacionalmente quebrado: ele passou a exigir `task verify-staging-governance-proof`, mas o pr\u00f3prio pipeline nao gera `reviews/latest/deploy-staging-check.md`. Na pratica, o fluxo automatizado falha apos o smoke mesmo com staging saudavel, criando regressao concreta de release.",
+    "`pipeline-prod` tambem ficou quebrado pelo mesmo motivo: exige `task verify-prod-governance-proof`, mas nao existe etapa no Taskfile que gere `reviews/latest/deploy-prod-check.md`. Isso impede a conclusao do fluxo canonico de producao sem intervencao manual fora do pipeline.",
+    "A governanca adicionada depende de evidencia manual em `reviews/latest/`, mas essa escrita nao foi encapsulada em task/script deterministico. Como a condicao minima de release agora depende de artefato nao produzido pelo fluxo, o deploy deixa de ser totalmente executavel e auditavel pelo proprio pipeline."
   ],
-  "summary": "O diff mantem a separacao de release/deploy e nao introduz violacao clara de secrets, sudo docker direto ou side effects irreversiveis, entao nao vejo motivo para BLOQUEADO. Ainda assim, ha riscos moderados de operacao e confiabilidade: artefato de cobertura commitado, container possivelmente divergindo do bootstrap oficial do app e smoke superficial demais para dar confianca de release."
+  "warnings": [
+    "O arquivo binario `.coverage` entrou no diff; alem de ruido de review, nao deveria ser versionado e pode expor paths/metadados locais desnecessarios.",
+    "`verify-staging-governance-proof` e `verify-prod-governance-proof` dependem de `rg` e usam `bash -lc`; isso aumenta fragilidade ambiental e pode introduzir comportamento dependente de shell de login sem necessidade.",
+    "As validacoes conferem formato e SHA do arquivo de evidencia, mas nao validam coerencia entre campos criticos e o resultado real das tasks executadas; isso reduz o valor da prova operacional para auditoria."
+  ],
+  "summary": "A intencao de reforcar governanca de deploy e boa e preserva os limites de seguranca, mas o diff introduz regressao concreta no fluxo de release: staging e producao agora exigem arquivos de evidencia que o Taskfile nao gera. Com isso, os pipelines deixam de ser auto-suficientes e podem falhar mesmo quando o deploy em si esta correto. Para liberar, a geracao dessas evidencias precisa virar etapa explicita e deterministica do fluxo."
 }

@@ -70,10 +70,12 @@ Este projeto usa governanca obrigatoria de deploy. O agente nao pode improvisar 
 Regras obrigatorias:
 
 1. Nunca seguir para deploy sem passar por `task gate1`, `task snapshot`, `task review-agents-consensus` e `task build-release`.
-2. Nunca promover para producao sem staging aprovado.
-3. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
-4. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
-5. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
+2. Nunca fazer `git push` da branch de trabalho antes de staging aprovado. O push remoto acontece somente depois de `task verify-staging-governance-proof`, via `task push-after-staging`.
+3. Nunca promover para producao sem staging aprovado.
+4. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
+5. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
+6. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
+7. O staging nao deve ser derrubado logo apos o deploy de producao. So pode ser desligado depois de `task verify-prod`, `task verify-prod-governance-proof` e uma aprovacao explicita via `ALLOW_STAGING_CLEANUP=true`.
 
 Arquivos obrigatorios de evidencia:
 
@@ -113,22 +115,24 @@ Fluxo obrigatorio daqui pra frente:
 6. Rodar `task smoke-staging`.
 7. Gravar `reviews/latest/deploy-staging-check.md`.
 8. Rodar `task verify-staging-governance-proof`.
-9. So depois disso considerar staging apto.
-10. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
-11. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
-12. Rodar `task verify-prod`.
-13. Rodar `task verify-prod-governance-proof`.
+9. Rodar `task push-after-staging`.
+10. So depois disso considerar staging apto e branch remota alinhada.
+11. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
+12. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
+13. Rodar `task verify-prod`.
+14. Rodar `task verify-prod-governance-proof`.
+15. Opcionalmente, so depois de producao estavel, rodar `ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod`.
 
 Quando o usuario disser “segue com o fluxo de deploy”, o agente deve responder executando ou orientando exatamente essa sequencia. Nao pode pular direto para `git status`, `git diff`, `git push` ou deploy.
 
 Prompts operacionais canônicos:
 
 ```text
-Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico e valide com task verify-staging-governance-proof.
+Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico, valide com task verify-staging-governance-proof e faca o push remoto somente via task push-after-staging.
 ```
 
 ```text
-Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof.
+Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente task push-after-staging, ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof. So derrube o staging se houver aprovacao explicita via ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod.
 ```
 
 ---

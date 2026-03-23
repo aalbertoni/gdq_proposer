@@ -2,16 +2,12 @@
 
 ```json
 {
-  "status": "ATENCAO",
+  "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "`.coverage` binary file committed — should be in `.gitignore`",
-    "`Taskfile.yml` references hardcoded user home paths (`/home/aalbertoni/...`) — leaks username and internal directory structure",
-    "`app.yaml` exposes absolute filesystem paths (`source_path`, `deploy_path`, `runtime_path`, `release_path`) with username",
-    "`smoke.sh` uses `curl -k` which disables TLS certificate verification — acceptable for internal staging but risky if reused against external endpoints",
-    "`Dockerfile` CMD uses shell expansion (`${PORT:-8501}`) via `sh -lc` — login shell (`-l`) loads profile files which is unnecessary and could introduce unexpected behavior",
-    "`app.yaml` shows `authelia_enabled: false` and `traefik_enabled: false` — confirm the app is truly internal-only with no external exposure"
+    "Arquivo .coverage (binario) incluido no diff — normalmente deve estar no .gitignore para evitar vazamento de paths locais ou metricas internas.",
+    "promote-prod usa 'sudo /usr/local/bin/deploy-prod' — garantir que o script destino valida inputs e que sudoers restringe apenas esse comando."
   ],
-  "summary": "No secrets or injection risks found; minor hygiene issues with committed `.coverage`, hardcoded paths leaking usernames, and `curl -k` in smoke test."
+  "summary": "Diff adiciona governanca de deploy com gates obrigatorios, evidencia auditavel e bloqueio de producao sem aprovacao explicita — sem segredos, injecao ou permissoes excessivas."
 }
 ```

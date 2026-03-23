@@ -1,13 +1,10 @@
 {
   "status": "ATENCAO",
-  "blockers": [
-    ".coverage (arquivo binario de cobertura) commitado no repositorio \u2014 deve ser adicionado ao .gitignore e removido do tracking"
-  ],
+  "blockers": [],
   "warnings": [
-    "Taskfile.yml referencia caminhos absolutos do usuario (/home/aalbertoni/.config/homelab/scripts/*) \u2014 acoplamento com ambiente local, dificulta portabilidade",
-    "app.yaml expoe caminhos absolutos de source_path, workspace_path, deploy_path, runtime_path e release_path \u2014 considerar parametrizacao via variaveis de ambiente",
-    "Dockerfile faz COPY de .env.example mas .dockerignore exclui .env* \u2014 verificar se .env.example nao e filtrado pelo glob (nao e, pois .dockerignore lista .env, .env.local, .env.dev, .env.prod explicitamente, entao .env.example passa \u2014 OK)",
-    "pytest-cov adicionado em requirements.txt junto com dependencias de producao \u2014 considerar separar em requirements-dev.txt para nao incluir no container"
+    "Arquivo binario .coverage incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore)",
+    "verify-staging-governance-proof e verify-prod-governance-proof usam 'bash -lc' com login shell \u2014 pode carregar estado inesperado do ambiente; preferir 'bash -c' simples",
+    "promote-prod executa verify-staging-governance-proof inline antes do deploy, mas tambem e chamado em pipeline-prod apos pipeline-staging que ja verifica \u2014 dupla execucao redundante (nao e bloqueio, apenas ruido)"
   ],
-  "summary": "Infraestrutura de deploy bem estruturada com separacao clara source/deploy/runtime, mas .coverage binario deve ser bloqueado e caminhos absolutos no Taskfile merecem atencao."
+  "summary": "Governanca de deploy bem estruturada: separacao source/deploy/runtime preservada, sem acesso a secrets, sem acoplamento excessivo; apenas .coverage binario e detalhes menores de shell merecem atencao."
 }

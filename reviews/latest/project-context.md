@@ -1,7 +1,7 @@
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-21T02:11:55Z`
+- Generated at: `2026-03-21T22:28:26Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -71,6 +71,76 @@ ambos dialetos para que os testes unitarios rodem com DuckDB sem precisar de Ath
 | `STDDEV(col)` | `STDDEV_SAMP(col)` | Via template var |
 | `DATE_ADD('day', -N, CURRENT_DATE)` | `CURRENT_DATE - INTERVAL 'N' DAY` | Via template var |
 | `"schema"."table"` | `"table"` (sem schema) | Via TABLE_REF |
+
+---
+
+## Governanca de Deploy
+
+Este projeto usa governanca obrigatoria de deploy. O agente nao pode improvisar fluxo com `git push`, `sudo /usr/local/bin/deploy-prod`, `stack-deploy` ou comandos ad hoc fora do `Taskfile`.
+
+Regras obrigatorias:
+
+1. Nunca seguir para deploy sem passar por `task gate1`, `task snapshot`, `task review-agents-consensus` e `task build-release`.
+2. Nunca promover para producao sem staging aprovado.
+3. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
+4. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
+5. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
+
+Arquivos obrigatorios de evidencia:
+
+Staging: `reviews/latest/deploy-staging-check.md`
+
+```text
+commit_sha: <sha atual>
+environment: staging
+gate1: <pass|fail>
+snapshot_commit: <sha do snapshot>
+gate2: <pass|warning|fail>
+release_build: <pass|fail>
+staging_deploy: <pass|fail>
+staging_smoke: <pass|fail>
+verdict: <ok|warning|fail>
+```
+
+Producao: `reviews/latest/deploy-prod-check.md`
+
+```text
+commit_sha: <sha atual>
+environment: prod
+staging_governance: <pass|fail>
+prod_approval: explicit
+prod_deploy: <pass|fail>
+prod_verify: <pass|fail>
+verdict: <ok|warning|fail>
+```
+
+Fluxo obrigatorio daqui pra frente:
+
+1. Rodar `task gate1`.
+2. Rodar `task snapshot`.
+3. Rodar `task review-agents-consensus`.
+4. Rodar `task build-release`.
+5. Rodar `task deploy-staging`.
+6. Rodar `task smoke-staging`.
+7. Gravar `reviews/latest/deploy-staging-check.md`.
+8. Rodar `task verify-staging-governance-proof`.
+9. So depois disso considerar staging apto.
+10. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
+11. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
+12. Rodar `task verify-prod`.
+13. Rodar `task verify-prod-governance-proof`.
+
+Quando o usuario disser “segue com o fluxo de deploy”, o agente deve responder executando ou orientando exatamente essa sequencia. Nao pode pular direto para `git status`, `git diff`, `git push` ou deploy.
+
+Prompts operacionais canônicos:
+
+```text
+Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico e valide com task verify-staging-governance-proof.
+```
+
+```text
+Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof.
+```
 
 ---
 
@@ -159,76 +229,6 @@ def score_proposal(proposal: RuleProposal) -> RuleScore:
 - Templates SQL: `<proposito>_<contexto>.sql` (ex: `numeric_history.sql`)
 - Testes: `test_<modulo>.py`
 
----
-
-## Dependencias
-
-```
-# requirements.txt
-streamlit>=1.30       # UI
-plotly>=5.18          # graficos
-pyathena>=3.0         # Athena
-boto3>=1.34           # AWS SDK
-pandas>=2.1           # dados
-numpy>=1.26           # estatistica
-jinja2>=3.1           # templates SQL
-
-# Testes
-pytest>=8.0
-duckdb>=1.0           # backend de teste (substitui Athena nos testes)
-pyarrow>=14.0         # leitura de parquet nos testes
-```
-
----
-
-## Referencia Rapida: Modelos
-
-| Modelo | Arquivo | Uso |
-|--------|---------|-----|
-| `DatasetConfig` | `core/models/dataset_config.py` | Config da tabela alvo |
-| `ColumnProfile` | `core/models/column_profile.py` | Resultado da classificacao |
-| `BaselineStrategy` | `core/models/baseline.py` | Como calcular baseline |
-| `DualGuardSpec` | `core/models/dual_guard.py` | Representacao intermediaria do dual guard |
-| `RuleProposal` | `core/models/rule_proposal.py` | Proposta com evidencia |
-| `RuleSelection` | `core/models/rule_selection.py` | Regra no carrinho |
-| `BacktestSummary` | `core/models/rule_proposal.py` | Resultado do backtest |
-| `RuleScore` | `core/rule_scoring.py` | Avaliacao composta da regra |
-| `RuleEvaluation` | `core/models/rule_evaluation.py` | Avaliacao enriquecida com regime (7 dimensoes) |
-| `ComparisonResult` | `core/proposal_comparator.py` | Resultado de comparacao entre 2 propostas |
-| `BacktestAnalysis` | `core/backtest_analysis.py` | Streaks, violation rate, tail risk do backtest |
-| `SemanticType` | `core/models/enums.py` | Tipos de coluna |
-| `RuleType` | `core/models/enums.py` | Tipos de regra |
-| `ThunderaPayload` | `core/models/glue_test.py` | Payload JSON para Glue job Thundera |
-| `GlueTestResult` | `core/models/glue_test.py` | Resultado da execucao do teste |
-| `SeriesProfile` | `core/models/series_profile.py` | Perfil estatistico (regime + flags + metricas) |
-| `SeriesRegime` | `core/models/enums.py` | Regime estatistico da serie |
-| `GDQCapabilityStatus` | `core/models/enums.py` | Status validated/experimental/unknown |
-
----
-
-## Referencia Rapida: Sintaxe GDQ
-
-> **Referencia completa:** `docs/gdq_syntax_reference.md`
-
-**REGRAS CRITICAS DE SINTAXE:**
-- Nomes de coluna **SEM aspas**: `Mean VLR_SALDO` (nao `Mean "VLR_SALDO"`)
-- Nomes de regra em **CamelCase**: `Mean`, `StandardDeviation`, `RowCount`, `CustomSql`
-- Funcoes dinamicas em **lowercase**: `avg(last(30))`, `std(last(30))`
-
-### Regras Dinamicas — Padrao "Dual Guard" (sigma OR margem%)
-
-```
-# Mean (coluna numerica) — com buffer 0.01, K inteiro
-(((Mean {COL} >= (avg(last({N})) - ({K} * std(last({N}))) - 0.01)) AND (Mean {COL} <= (avg(last({N})) + ({K} * std(last({N}))) + 0.01))) OR ((Mean {COL} >= (avg(last({N})) * 0.9) - 0.01) AND (Mean {COL} <= (avg(last({N})) * 1.1) + 0.01)))
-
-# StandardDeviation — mesmo padrao do Mean
-# RowCount — SEM buffer, K como float (2.0), formato de margem diferente
-```
-
-### Regras Estaticas
-
-```
-CustomSql "select ... from primary" between {LOWER} and {UPPER}
 
 ```
 
@@ -411,9 +411,63 @@ tasks:
     cmds:
       - cmd: 'echo "Skipping public staging smoke: app interno"'
 
+  guide-governed-deploy:
+    desc: Exibe o fluxo obrigatorio de governanca para staging e producao
+    cmds:
+      - |
+        cat <<'EOF'
+        Fluxo obrigatorio deste projeto:
+
+        1. task gate1
+        2. task snapshot
+        3. task review-agents-consensus
+        4. task build-release
+        5. task deploy-staging
+        6. task smoke-staging
+        7. Gerar reviews/latest/deploy-staging-check.md
+        8. task verify-staging-governance-proof
+
+        Para producao:
+        9. Revisar staging aprovado
+        10. Gerar reviews/latest/deploy-prod-check.md
+        11. ALLOW_PROD_DEPLOY=true task promote-prod
+        12. task verify-prod
+        13. task verify-prod-governance-proof
+
+        Deploy por comando ad hoc fora do Taskfile e proibido.
+        EOF
+
+  verify-staging-governance-proof:
+    desc: Bloqueia sem evidencia obrigatoria de staging governado
+    cmds:
+      - |
+        test -f reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^environment: staging$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
+      - |
+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
+
   promote-prod:
     desc: Portao 5
     cmds:
+      - bash -lc 'test "${ALLOW_PROD_DEPLOY:-false}" = "true" || { echo "Refusing production deploy without ALLOW_PROD_DEPLOY=true." >&2; exit 1; }'
+      - task: verify-staging-governance-proof
       - sudo /usr/local/bin/deploy-prod gdq-proposer
 
   verify-prod:
@@ -427,6 +481,28 @@ tasks:
     desc: Valida a producao via URL publica
     cmds:
       - cmd: 'echo "Skipping public production smoke: app interno"'
+
+  verify-prod-governance-proof:
+    desc: Bloqueia sem evidencia obrigatoria da producao governada
+    cmds:
+      - |
+        test -f reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^environment: prod$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
+      - |
+        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
+      - |
+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
 
   rollback-last:
     desc: Faz rollback para a ultima release saudavel
@@ -442,13 +518,9 @@ tasks:
       - task: build-release
       - task: deploy-staging
       - task: smoke-staging
+      - task: verify-staging-governance-proof
 
   pipeline-prod:
-    desc: Executa gates, staging e verificacao interna de producao
-    cmds:
-      - task: pipeline-staging
-      - task: promote-prod
-      - task: verify-prod
 
 ```
 
@@ -461,20 +533,48 @@ tasks:
 ## Status
 
 ```text
+ M reviews/latest/architecture.json
+ M reviews/latest/architecture.prompt.md
+ M reviews/latest/architecture.raw.txt
+ M reviews/latest/codex.json
+ M reviews/latest/codex.prompt.md
+ M reviews/latest/codex.raw.txt
+ M reviews/latest/diff.patch
  M reviews/latest/project-context.md
-?? reviews/latest/README.md
-?? reviews/latest/architecture.prompt.md
-?? reviews/latest/diff.patch
-?? reviews/latest/release-ops.prompt.md
-?? reviews/latest/security.prompt.md
-?? reviews/latest/tests.prompt.md
+ M reviews/latest/release-ops.json
+ M reviews/latest/release-ops.prompt.md
+ M reviews/latest/release-ops.raw.txt
+ M reviews/latest/security.json
+ M reviews/latest/security.prompt.md
+ M reviews/latest/security.raw.txt
+ M reviews/latest/summary.json
+ M reviews/latest/tests.json
+ M reviews/latest/tests.prompt.md
+ M reviews/latest/tests.raw.txt
 
 ```
 
 ## Diff Stat vs HEAD
 
 ```text
- reviews/latest/project-context.md | 22 ++++++++--------------
- 1 file changed, 8 insertions(+), 14 deletions(-)
+ reviews/latest/architecture.json      |  13 +-
+ reviews/latest/architecture.prompt.md | 522 +++++++++--------------
+ reviews/latest/architecture.raw.txt   |  13 +-
+ reviews/latest/codex.json             |  19 +-
+ reviews/latest/codex.prompt.md        | 771 +++++++++++++++-------------------
+ reviews/latest/codex.raw.txt          |   2 +-
+ reviews/latest/diff.patch             | 522 +++++++++--------------
+ reviews/latest/project-context.md     | 251 +++++++----
+ reviews/latest/release-ops.json       |  15 +-
+ reviews/latest/release-ops.prompt.md  | 522 +++++++++--------------
+ reviews/latest/release-ops.raw.txt    |  15 +-
+ reviews/latest/security.json          |  11 +-
+ reviews/latest/security.prompt.md     | 522 +++++++++--------------
+ reviews/latest/security.raw.txt       |  11 +-
+ reviews/latest/summary.json           |  72 ++--
+ reviews/latest/tests.json             |  12 +-
+ reviews/latest/tests.prompt.md        | 522 +++++++++--------------
+ reviews/latest/tests.raw.txt          |  12 +-
+ 18 files changed, 1540 insertions(+), 2287 deletions(-)
 
 ```

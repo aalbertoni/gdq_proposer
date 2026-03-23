@@ -35,7 +35,9 @@ def render_sidebar():
     st.sidebar.caption(f"v{__version__}")
     st.sidebar.divider()
 
-    # Diagnostic link
+    # Utility links
+    if st.sidebar.button("Query Log", key="sidebar_qlog", help="Historico de queries da sessao"):
+        st.switch_page("pages/07_query_log.py")
     if st.sidebar.button("Diagnostico", key="sidebar_diag", help="Verificar status do ambiente"):
         st.switch_page("pages/06_diagnostico.py")
 

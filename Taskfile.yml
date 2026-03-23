@@ -123,13 +123,15 @@ tasks:
         6. task smoke-staging
         7. Gerar reviews/latest/deploy-staging-check.md
         8. task verify-staging-governance-proof
+        9. task push-after-staging
 
         Para producao:
-        9. Revisar staging aprovado
-        10. Gerar reviews/latest/deploy-prod-check.md
-        11. ALLOW_PROD_DEPLOY=true task promote-prod
-        12. task verify-prod
-        13. task verify-prod-governance-proof
+        10. Revisar staging aprovado
+        11. Gerar reviews/latest/deploy-prod-check.md
+        12. ALLOW_PROD_DEPLOY=true task promote-prod
+        13. task verify-prod
+        14. task verify-prod-governance-proof
+        15. Opcional: ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod
 
         Deploy por comando ad hoc fora do Taskfile e proibido.
         EOF
@@ -140,25 +142,31 @@ tasks:
       - |
         test -f reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
+        grep -nE '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^environment: staging$' reviews/latest/deploy-staging-check.md
+        grep -nE '^environment: staging$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
+        grep -nE '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); grep -nE "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
+
+  push-after-staging:
+    desc: Faz git push somente apos staging aprovado
+    cmds:
+      - task: verify-staging-governance-proof
+      - git push
 
   promote-prod:
     desc: Portao 5
@@ -185,21 +193,29 @@ tasks:
       - |
         test -f reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
+        grep -nE '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^environment: prod$' reviews/latest/deploy-prod-check.md
+        grep -nE '^environment: prod$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
+        grep -nE '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
+        grep -nE '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
+        grep -nE '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
+        grep -nE '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
+        grep -nE '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
       - |
-        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); grep -nE "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
+
+  cleanup-staging-after-prod:
+    desc: Derruba o staging somente apos producao estavel e validada
+    cmds:
+      - bash -lc 'test "${ALLOW_STAGING_CLEANUP:-false}" = "true" || { echo "Refusing staging cleanup without ALLOW_STAGING_CLEANUP=true." >&2; exit 1; }'
+      - task: verify-prod
+      - task: verify-prod-governance-proof
+      - sudo /home/aalbertoni/.config/homelab/scripts/stack-down gdq-proposer-staging
 
   rollback-last:
     desc: Faz rollback para a ultima release saudavel
@@ -221,6 +237,7 @@ tasks:
     desc: Executa gates, staging e verificacao interna de producao
     cmds:
       - task: pipeline-staging
+      - task: push-after-staging
       - task: promote-prod
       - task: verify-prod
       - task: verify-prod-governance-proof
