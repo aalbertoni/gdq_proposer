@@ -10,7 +10,7 @@ Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2).
 import streamlit as st
 
 from core.models.enums import ConfidenceLevel, get_rule_label
-from core.gdq_capability import capability_warning
+from core.gdq_capability import capability_badge, capability_warning
 from core.rule_explainer import explain_rule, explain_rule_detail
 from services.export_service import ExportService
 
