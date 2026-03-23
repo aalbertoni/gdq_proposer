@@ -18,7 +18,7 @@ from core.models.baseline import BaselineStrategy
 from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, SemanticType, get_rule_label
 from core.models.rule_selection import RuleSelection
 from core.backtest_analysis import analyze_backtest, summarize_backtest_analysis
-from core.gdq_capability import capability_badge, capability_warning, is_experimental
+from core.gdq_capability import capability_warning
 from core.rule_explainer import explain_rule, explain_rule_detail, explain_regime_context, explain_trade_offs
 from core.rule_scoring import evaluate_proposal
 from core.series_regime import classify_series
@@ -293,7 +293,7 @@ def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=N
     st.caption(_cat_badge(proposal))
 
     reasons = getattr(proposal, "recommendation_reasons", [])
-    if cat in (ProposalCategory.NOT_RECOMMENDED, ProposalCategory.EXPERIMENTAL):
+    if cat == ProposalCategory.NOT_RECOMMENDED:
         warning_text = capability_warning(proposal.rule_type)
         if warning_text:
             st.warning(warning_text)
@@ -1228,8 +1228,6 @@ st.caption(
 
 # --- Alertas inline (apenas se houver) ---
 _alerts = []
-if _summary.experimental_in_cart > 0:
-    _alerts.append(f"{_summary.experimental_in_cart} experimental(is) no carrinho")
 if _summary.low_coverage_rules > 0:
     _alerts.append(f"{_summary.low_coverage_rules} com cobertura < 80%")
 for _regime, _cols in _summary.problematic_regimes.items():
@@ -1242,8 +1240,7 @@ from core.models.enums import SEMANTIC_TYPE_LABELS as _STYPE_MAP
 _STYPE_LABELS = {st.value: label for st, label in _STYPE_MAP.items()}
 _CAT_INLINE_BADGES = {
     "strong": ":green[Forte]", "conservative": ":blue[Conservadora]",
-    "experimental": ":orange[Experimental]", "needs_review": ":orange[Revisar]",
-    "not_recommended": ":red[N/R]",
+    "needs_review": ":orange[Revisar]", "not_recommended": ":red[N/R]",
 }
 _has_details = bool(
     _summary.by_semantic_type or _summary.by_proposal_category or _exclusions
@@ -2011,17 +2008,6 @@ with tab_categoricas:
                 }
                 mode_label = mode_labels.get(cat_freq_mode, cat_freq_mode)
                 st.subheader(f"Frequencia por Valor ({mode_label})")
-
-                # Show experimental badge for dynamic/hybrid frequency modes
-                if cat_freq_mode in ("dynamic", "hybrid"):
-                    _exp_rt = (
-                        RuleType.CATEGORY_FREQUENCY_DYNAMIC
-                        if cat_freq_mode == "dynamic"
-                        else RuleType.CATEGORY_FREQUENCY_HYBRID
-                    )
-                    _exp_badge = capability_badge(_exp_rt)
-                    if _exp_badge:
-                        st.caption(_exp_badge)
 
                 st.caption(
                     f"Top {len(freq_proposals)} valores por frequencia. "

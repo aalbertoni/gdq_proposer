@@ -12,6 +12,29 @@ from datetime import datetime, timezone
 from typing import Optional
 
 
+# Athena pricing per TB scanned by region (USD).
+# Source: AWS Pricing API (pricing.us-east-1.amazonaws.com), fetched 2026-03-22.
+# Regions not listed fall back to the us-east-1 price ($5.00).
+ATHENA_PRICE_PER_TB: dict[str, float] = {
+    "us-east-1": 5.00,
+    "us-east-2": 5.00,
+    "us-west-1": 6.75,
+    "us-west-2": 5.00,
+    "eu-west-1": 5.00,
+    "eu-central-1": 5.00,
+    "ap-southeast-1": 5.00,
+    "ap-northeast-1": 5.00,
+    "sa-east-1": 9.00,
+}
+
+DEFAULT_ATHENA_PRICE_PER_TB = 5.00
+
+
+def get_athena_price_per_tb(region: str) -> float:
+    """Retorna o preco por TB para a regiao Athena."""
+    return ATHENA_PRICE_PER_TB.get(region, DEFAULT_ATHENA_PRICE_PER_TB)
+
+
 @dataclass
 class QueryLogEntry:
     """Entrada de log estruturada para cada query executada."""
@@ -26,10 +49,11 @@ class QueryLogEntry:
     bytes_scanned: Optional[int] = None  # se disponível do Athena
     exception_type: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    _price_per_tb: float = field(default=DEFAULT_ATHENA_PRICE_PER_TB, repr=False)
 
     @property
     def estimated_cost_usd(self) -> float:
-        """Custo estimado desta query: $5 per TB scanned.
+        """Custo estimado desta query baseado na regiao.
 
         Athena has a 10MB minimum charge per query.
         """
@@ -37,7 +61,7 @@ class QueryLogEntry:
             return 0.0
         ATHENA_MIN_BYTES = 10 * 1024 * 1024  # 10MB minimum per query
         billable = max(self.bytes_scanned, ATHENA_MIN_BYTES)
-        return (billable / (1024 ** 4)) * 5.0
+        return (billable / (1024 ** 4)) * self._price_per_tb
 
 
 class QueryLogger:
@@ -48,12 +72,15 @@ class QueryLogger:
     e identificação de queries lentas.
     """
 
-    def __init__(self):
+    def __init__(self, region: str = "sa-east-1"):
         self.logger = logging.getLogger("gdq_proposer.queries")
         self.entries: list[QueryLogEntry] = []
+        self.region = region
+        self.price_per_tb = get_athena_price_per_tb(region)
 
     def log_query(self, entry: QueryLogEntry):
         """Registra uma query executada."""
+        entry._price_per_tb = self.price_per_tb
         self.entries.append(entry)
         level = logging.WARNING if entry.exception_type else logging.INFO
 
@@ -99,8 +126,8 @@ class QueryLogger:
         total_rows = sum(e.rows_returned for e in self.entries)
         errors = sum(1 for e in self.entries if e.exception_type)
         total_bytes = sum(e.bytes_scanned or 0 for e in self.entries)
-        # Athena pricing: $5.00 per TB scanned (minimum 10MB per query)
-        estimated_cost = (total_bytes / (1024 ** 4)) * 5.0
+        # Athena pricing varies by region (e.g. $5.00/TB us-east-1, $6.25/TB sa-east-1)
+        estimated_cost = (total_bytes / (1024 ** 4)) * self.price_per_tb
 
         return {
             "total_queries": total,
@@ -121,6 +148,7 @@ class QueryLogger:
         entries = []
         for e in self.entries:
             d = asdict(e)
+            d.pop("_price_per_tb", None)
             d["estimated_cost_usd"] = e.estimated_cost_usd
             entries.append(d)
         return json.dumps(

@@ -1,7 +1,7 @@
-commit_sha: 762ecf2
+commit_sha: ec4cc83
 environment: staging
 gate1: pass
-snapshot_commit: 762ecf2
+snapshot_commit: ec4cc83
 gate2: warning
 release_build: pass
 staging_deploy: pass

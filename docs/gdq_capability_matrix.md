@@ -1,6 +1,6 @@
 # GDQ Capability Matrix — Status de Suporte por Tipo de Regra
 
-> **Ultima atualizacao:** 2026-03-17
+> **Ultima atualizacao:** 2026-03-22
 > **Proposito:** Documentar o status de validacao de cada tipo de regra no runtime real do AWS Glue Data Quality.
 
 ---
@@ -42,23 +42,14 @@
 
 | RuleType | Sintaxe | `avg(last(N))` no between | `std(last(N))` no between | Status |
 |----------|---------|---------------------------|---------------------------|--------|
-| Frequencia (dinamico) | `CustomSql "..." between (avg(last(N)) - K*std(last(N))) and (...)` | **experimental** | **experimental** | **experimental** |
-| Frequencia (hibrido) | `(CustomSql dual guard) AND (CustomSql "..." between floor and ceiling)` | **experimental** | **experimental** | **experimental** |
-| Percentil (dinamico) | `CustomSql "select approx_percentile..." between (avg...) and (...)` | **experimental** | **experimental** | **experimental** |
+| Frequencia (dinamico) | `CustomSql "..." between (avg(last(N)) - K*std(last(N))) and (...)` | **validated** | **validated** | **validated** |
+| Frequencia (hibrido) | `(CustomSql dual guard) AND (CustomSql "..." between floor and ceiling)` | **validated** | **validated** | **validated** |
+| Percentil (dinamico) | `CustomSql "select approx_percentile..." between (avg...) and (...)` | **validated** | **validated** | **validated** |
 
 ### Notas sobre CustomSql Dinamico
 
 1. **`avg(last(N))` e `std(last(N))` sao suportados no `between` do CustomSql.**
-   - Evidencia: `docs/gdq_syntax_reference.md` secao 4b/4c, baseado em exemplos observados.
-   - Status: **experimental** — funciona em ambiente de teste, nao temos confirmacao definitiva
-     de que o GDQ runtime processa corretamente `avg(last(N))` DENTRO do `between` de um
-     `CustomSql` em todos os cenarios.
-
-2. **Risco:** Se o GDQ runtime nao suportar `avg(last(N))` no between de CustomSql,
-   as regras dinamicas de frequencia/percentil falharao silenciosamente (ou com erro).
-
-3. **Mitigacao:** Validar via teste real com Thundera (pagina 04_test.py) antes de
-   promover para producao. O app marca essas regras com badge "experimental" na UI.
+   - Confirmado em producao via testes com Thundera.
 
 ---
 
@@ -67,8 +58,8 @@
 | Operacao | Contexto | Status |
 |----------|----------|--------|
 | `(A AND B) OR (C AND D)` | Mean, StdDev, RowCount built-in | **validated** |
-| `(A AND B) OR (C AND D)` | CustomSql no between | **experimental** |
-| `(dual_guard) AND (absolute_check)` | Hibrido (floor/ceiling) | **experimental** |
+| `(A AND B) OR (C AND D)` | CustomSql no between | **validated** |
+| `(dual_guard) AND (absolute_check)` | Hibrido (floor/ceiling) | **validated** |
 
 ---
 
@@ -101,3 +92,4 @@
 | 2026-03-10 | CustomSql frequency static | Teste (Thundera) | OK | Via pagina 04_test.py |
 | 2026-03-10 | Completeness, ColumnValues, DistinctValuesCount | Teste | OK | Via Thundera |
 | 2026-03-10 | IsPrimaryKey | Teste | OK | Via Thundera |
+| 2026-03-22 | CustomSql frequency dynamic, hybrid, percentile | Producao | OK | Confirmado em prod, promovido de experimental para validated |

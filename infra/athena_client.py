@@ -121,7 +121,7 @@ class AthenaClient:
 
     def __init__(self, config: AppConfig, query_logger: Optional[QueryLogger] = None):
         self.config = config
-        self.logger = query_logger or QueryLogger()
+        self.logger = query_logger or QueryLogger(region=config.athena.region)
         self.dialect = SQLDialect.ATHENA
         self._conn = None
         self._query_timeout: int = config.athena.query_timeout_seconds

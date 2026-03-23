@@ -146,13 +146,13 @@ class TestProposalCategoryDistribution:
         proposals = [
             _make_proposal("A", category=ProposalCategory.STRONG),
             _make_proposal("B", category=ProposalCategory.STRONG),
-            _make_proposal("C", category=ProposalCategory.EXPERIMENTAL),
+            _make_proposal("C", category=ProposalCategory.NEEDS_REVIEW),
             _make_proposal("D", category=ProposalCategory.NOT_RECOMMENDED,
                            tier=RecommendationTier.NOT_RECOMMENDED),
         ]
         s = build_analysis_summary([], proposals, [])
         assert s.by_proposal_category["strong"] == 2
-        assert s.by_proposal_category["experimental"] == 1
+        assert s.by_proposal_category["needs_review"] == 1
         assert s.by_proposal_category["not_recommended"] == 1
 
 
@@ -236,16 +236,17 @@ class TestExcludedColumns:
 
 
 # ---------------------------------------------------------------------------
-# Tests: experimental in cart
+# Tests: experimental in cart (legacy field, always 0 now)
 # ---------------------------------------------------------------------------
 
 class TestExperimentalInCart:
-    def test_counts_experimental(self):
-        p1 = _make_proposal("A", category=ProposalCategory.EXPERIMENTAL)
+    def test_zero_with_validated_rules(self):
+        """No proposals are classified as EXPERIMENTAL anymore."""
+        p1 = _make_proposal("A", category=ProposalCategory.STRONG)
         p2 = _make_proposal("B", category=ProposalCategory.STRONG)
         cart = [_make_selection(p1), _make_selection(p2)]
         s = build_analysis_summary([], [], cart)
-        assert s.experimental_in_cart == 1
+        assert s.experimental_in_cart == 0
 
     def test_zero_if_none(self):
         p1 = _make_proposal("A", category=ProposalCategory.STRONG)

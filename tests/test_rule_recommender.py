@@ -452,30 +452,30 @@ class TestClassifyProposal:
         p.recommendation_tier = RecommendationTier.RECOMMENDED
         assert classify_proposal(p) == ProposalCategory.CONSERVATIVE
 
-    def test_dynamic_frequency_is_experimental(self):
-        """CustomSql dynamic frequency = EXPERIMENTAL capability."""
+    def test_dynamic_frequency_recommended_is_strong(self):
+        """CustomSql dynamic frequency now validated — RECOMMENDED = STRONG."""
         p = _proposal(
             rule_type=RuleType.CATEGORY_FREQUENCY_DYNAMIC,
             backtest=_bt(coverage=90, fp=0),
         )
         p.recommendation_tier = RecommendationTier.RECOMMENDED
-        assert classify_proposal(p) == ProposalCategory.EXPERIMENTAL
+        assert classify_proposal(p) == ProposalCategory.STRONG
 
-    def test_hybrid_frequency_is_experimental(self):
+    def test_hybrid_frequency_possible_is_needs_review(self):
         p = _proposal(
             rule_type=RuleType.CATEGORY_FREQUENCY_HYBRID,
             backtest=_bt(coverage=85, fp=1),
         )
         p.recommendation_tier = RecommendationTier.POSSIBLE
-        assert classify_proposal(p) == ProposalCategory.EXPERIMENTAL
+        assert classify_proposal(p) == ProposalCategory.NEEDS_REVIEW
 
-    def test_percentile_is_experimental(self):
+    def test_percentile_recommended_is_strong(self):
         p = _proposal(
             rule_type=RuleType.NUMERIC_PERCENTILE_BAND,
             backtest=_bt(coverage=90, fp=0),
         )
         p.recommendation_tier = RecommendationTier.RECOMMENDED
-        assert classify_proposal(p) == ProposalCategory.EXPERIMENTAL
+        assert classify_proposal(p) == ProposalCategory.STRONG
 
     def test_possible_validated_is_needs_review(self):
         p = _proposal(
@@ -490,8 +490,8 @@ class TestClassifyProposal:
         p.recommendation_tier = RecommendationTier.NOT_RECOMMENDED
         assert classify_proposal(p) == ProposalCategory.NOT_RECOMMENDED
 
-    def test_not_recommended_even_if_experimental(self):
-        """NOT_RECOMMENDED domina sobre EXPERIMENTAL capability."""
+    def test_not_recommended_dynamic_stays_not_recommended(self):
+        """NOT_RECOMMENDED domina independente do tipo de regra."""
         p = _proposal(
             rule_type=RuleType.CATEGORY_FREQUENCY_DYNAMIC,
             backtest=_bt(coverage=30),
@@ -684,10 +684,11 @@ class TestSelectMinimalSet:
         )
         assert p not in select_minimal_set([p])
 
-    def test_experimental_excluded(self):
+    def test_dynamic_frequency_excluded_from_minimal(self):
+        """Dynamic frequency is validated but not in minimal rule types (by design)."""
         p = self._make(
             RuleType.CATEGORY_FREQUENCY_DYNAMIC,
-            category=ProposalCategory.EXPERIMENTAL,
+            category=ProposalCategory.STRONG,
         )
         assert p not in select_minimal_set([p])
 

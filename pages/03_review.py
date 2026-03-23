@@ -10,7 +10,7 @@ Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2).
 import streamlit as st
 
 from core.models.enums import ConfidenceLevel, get_rule_label
-from core.gdq_capability import capability_badge, capability_warning, is_experimental
+from core.gdq_capability import capability_warning
 from core.rule_explainer import explain_rule, explain_rule_detail
 from services.export_service import ExportService
 
@@ -85,10 +85,10 @@ for i, selection in _sorted_cart:
     with col2:
         label = get_rule_label(p.rule_type)
         target = p.target_column or "(tabela)"
-        exp_badge = capability_badge(p.rule_type)
-        st.markdown(f"**{label}** {exp_badge} — `{target}`")
-        if is_experimental(p.rule_type):
-            st.caption(capability_warning(p.rule_type))
+        st.markdown(f"**{label}** — `{target}`")
+        warning_text = capability_warning(p.rule_type)
+        if warning_text:
+            st.caption(warning_text)
         if p.backtest:
             st.caption(
                 f"Cobertura: {p.backtest.coverage_pct:.1f}% · "

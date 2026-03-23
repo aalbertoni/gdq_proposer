@@ -25,12 +25,12 @@ RULE_CAPABILITY: dict[RuleType, GDQCapabilityStatus] = {
     # CustomSql static (validated)
     RuleType.CATEGORY_FREQUENCY_STATIC: GDQCapabilityStatus.VALIDATED,
     RuleType.UNIQUENESS_CUSTOM_SQL: GDQCapabilityStatus.VALIDATED,
-    # CustomSql dynamic (experimental — avg/std no between)
-    RuleType.CATEGORY_FREQUENCY_DYNAMIC: GDQCapabilityStatus.EXPERIMENTAL,
-    RuleType.CATEGORY_FREQUENCY_HYBRID: GDQCapabilityStatus.EXPERIMENTAL,
-    RuleType.NUMERIC_PERCENTILE_BAND: GDQCapabilityStatus.EXPERIMENTAL,
+    # CustomSql dynamic (validated — avg/std no between confirmado em prod)
+    RuleType.CATEGORY_FREQUENCY_DYNAMIC: GDQCapabilityStatus.VALIDATED,
+    RuleType.CATEGORY_FREQUENCY_HYBRID: GDQCapabilityStatus.VALIDATED,
+    RuleType.NUMERIC_PERCENTILE_BAND: GDQCapabilityStatus.VALIDATED,
     # Generic
-    RuleType.CUSTOM_SQL: GDQCapabilityStatus.EXPERIMENTAL,
+    RuleType.CUSTOM_SQL: GDQCapabilityStatus.VALIDATED,
 }
 
 
@@ -67,7 +67,7 @@ def capability_badge(rule_type: RuleType) -> str:
 
 
 def capability_warning(rule_type: RuleType) -> str:
-    """Retorna texto de aviso para regras experimentais.
+    """Retorna texto de aviso para regras nao validadas.
 
     Returns:
         String com aviso, ou vazio se validated.
@@ -75,8 +75,7 @@ def capability_warning(rule_type: RuleType) -> str:
     status = get_capability_status(rule_type)
     if status == GDQCapabilityStatus.EXPERIMENTAL:
         return (
-            "Esta regra usa sintaxe experimental (CustomSql com avg/std no between). "
-            "Funciona em testes, mas nao foi confirmada em producao. "
+            "Esta regra usa sintaxe ainda nao confirmada em producao. "
             "Valide via Thundera (pagina Teste) antes de promover."
         )
     elif status == GDQCapabilityStatus.UNKNOWN:

@@ -485,19 +485,13 @@ def classify_proposal(proposal: RuleProposal) -> ProposalCategory:
     Returns:
         ProposalCategory com 1 dos 5 valores.
     """
-    from core.gdq_capability import is_experimental
-
     tier = proposal.recommendation_tier
 
     # NOT_RECOMMENDED domina tudo
     if tier == RecommendationTier.NOT_RECOMMENDED:
         return ProposalCategory.NOT_RECOMMENDED
 
-    # Experimental capability domina RECOMMENDED e POSSIBLE
-    if is_experimental(proposal.rule_type):
-        return ProposalCategory.EXPERIMENTAL
-
-    # POSSIBLE + VALIDATED = precisa revisao
+    # POSSIBLE = precisa revisao
     if tier == RecommendationTier.POSSIBLE:
         return ProposalCategory.NEEDS_REVIEW
 
