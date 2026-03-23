@@ -126,7 +126,7 @@ class GDQRuleGenerator:
 
     @staticmethod
     def _format_column_value(value: str) -> str:
-        """Formata valor para ColumnValues: numerico sem aspas, string com aspas, NULL sem aspas."""
+        """Formata valor para ColumnValues: numerico sem aspas, string com aspas duplas, NULL sem aspas."""
         s = str(value)
         if s.upper() == "NULL":
             return "NULL"
@@ -135,7 +135,7 @@ class GDQRuleGenerator:
             float(s)
             return s
         except (ValueError, TypeError):
-            return f"'{s}'"
+            return f'"{s}"'
 
     def _generate_distinct_count(
         self,

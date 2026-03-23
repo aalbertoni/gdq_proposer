@@ -1,7 +1,7 @@
-commit_sha: 85a5164
+commit_sha: 4c88481
 environment: staging
 gate1: pass
-snapshot_commit: 85a5164
+snapshot_commit: 4c88481
 gate2: warning
 release_build: pass
 staging_deploy: pass

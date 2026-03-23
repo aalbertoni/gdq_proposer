@@ -13,7 +13,7 @@
 | Nomes de regra | **CamelCase**: `Mean`, `StandardDeviation`, `RowCount`, `CustomSql` |
 | Funções dinâmicas | `avg(last(N))`, `std(last(N))` — sempre em **lowercase** |
 | Valores string em CustomSql | Com aspas simples: `'1'`, `'2'` |
-| Valores em ColumnValues | Numéricos sem aspas: `in [2, 1, 3]`; strings com aspas simples: `in ['SP', 'RJ']`; `NULL` nunca tem aspas |
+| Valores em ColumnValues | Numéricos sem aspas: `in [2, 1, 3]`; strings com aspas duplas: `in ["SP", "RJ"]`; `NULL` nunca tem aspas |
 | Buffer numérico | `0.01` adicionado/subtraído para evitar falso positivo em zero |
 | Operadores | `>=`, `<=`, `=`, `in`, `between ... and` |
 
@@ -245,15 +245,15 @@ ColumnValues {COL} in [{VALUE1}, {VALUE2}, {VALUE3}]
 
 ```
 ColumnValues COD_SITU_OPCR in [2, 1, 3]
-ColumnValues UF_EMPR in ['SP', 'RJ', 'MG']
-ColumnValues STATUS in ['ATIVO', NULL, 'INATIVO']
+ColumnValues UF_EMPR in ["SP", "RJ", "MG"]
+ColumnValues STATUS in ["ATIVO", NULL, "INATIVO"]
 ```
 
 ### Notas
 
 - Valores numéricos: **sem aspas** — `in [2, 1, 3]`
-- Valores string: **com aspas simples** — `in ['SP', 'RJ', 'MG']`
-- `NULL` **nunca** tem aspas — `in ['ATIVO', NULL]`
+- Valores string: **com aspas duplas** — `in ["SP", "RJ", "MG"]`
+- `NULL` **nunca** tem aspas — `in ["ATIVO", NULL]`
 - Sem aspas no nome da coluna (sempre UPPERCASE)
 - Ordem dos valores não importa semanticamente
 

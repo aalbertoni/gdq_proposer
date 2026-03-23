@@ -253,7 +253,7 @@ class TestGDQGeneratorCategorical:
             suggested_values=["SP", "RJ", "MG"],
         )
         syntax = self.gen.generate(p)
-        assert "ColumnValues UF in ['SP', 'RJ', 'MG']" == syntax
+        assert 'ColumnValues UF in ["SP", "RJ", "MG"]' == syntax
 
     def test_frequency_static_numeric_column(self):
         """Coluna numerica: valor no case when sem aspas."""

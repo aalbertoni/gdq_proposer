@@ -729,8 +729,8 @@ def _render_sintaxe_gdq():
         )
         st.code(
             "ColumnValues COD_SITU_OPCR in [2, 1, 3]\n"
-            "ColumnValues UF_EMPR in ['SP', 'RJ', 'MG']\n"
-            "ColumnValues STATUS in ['ATIVO', NULL, 'INATIVO']",
+            'ColumnValues UF_EMPR in ["SP", "RJ", "MG"]\n'
+            'ColumnValues STATUS in ["ATIVO", NULL, "INATIVO"]',
             language=None,
         )
 
@@ -1029,7 +1029,7 @@ def _render_faq_glossario():
     )
 
     glossary = [
-        ("AllowedValues", "Regra GDQ estatica que verifica se todos os valores de uma coluna pertencem a uma lista fixa. Sintaxe: ColumnValues COL in [...]. Valores numericos sem aspas, strings com aspas simples, NULL sem aspas."),
+        ("AllowedValues", "Regra GDQ estatica que verifica se todos os valores de uma coluna pertencem a uma lista fixa. Sintaxe: ColumnValues COL in [...]. Valores numericos sem aspas, strings com aspas duplas, NULL sem aspas."),
         ("Athena", "Servico da AWS para consultar dados no data lake via SQL. A ferramenta usa Athena para analisar historico de tabelas."),
         ("Auto-tuning", "Busca automatica da melhor combinacao de N/sigma/margem via grid search. Testa multiplas combinacoes e retorna a que maximiza cobertura com menos falsos positivos."),
         ("Backtest", "Simulacao da regra no historico passado para medir cobertura, falsos positivos e estabilidade. Usa janela rolante para simular o comportamento real da regra em producao."),
