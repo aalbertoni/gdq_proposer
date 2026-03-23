@@ -2,7 +2,7 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Mudanca de aspas simples para duplas em ColumnValues e uma correcao de sintaxe GDQ \u2014 confirmar que o runtime GDQ real aceita aspas duplas em valores string antes de promover para producao."
+    "Diff vazio: nenhuma alteracao material para revisar."
   ],
-  "summary": "Correcao consistente de sintaxe GDQ (aspas simples \u2192 duplas em ColumnValues) aplicada em codigo, docs, UI e testes sem violacao de separacao de camadas."
+  "summary": "No-op review: nenhum diff material foi gerado para avaliacao."
 }

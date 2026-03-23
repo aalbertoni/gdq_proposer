@@ -1,7 +1,7 @@
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-23T16:55:56Z`
+- Generated at: `2026-03-23T17:02:39Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -935,50 +935,28 @@ def _load_dotenv(path: Path):
 ## Status
 
 ```text
- M reviews/latest/architecture.json
  M reviews/latest/architecture.prompt.md
- M reviews/latest/architecture.raw.txt
- D reviews/latest/codex.json
- M reviews/latest/codex.prompt.md
- M reviews/latest/codex.raw.txt
+ M reviews/latest/deploy-staging-check.md
  M reviews/latest/diff.patch
  M reviews/latest/gate1-summary.json
  M reviews/latest/project-context.md
- M reviews/latest/release-ops.json
  M reviews/latest/release-ops.prompt.md
- M reviews/latest/release-ops.raw.txt
- M reviews/latest/security.json
  M reviews/latest/security.prompt.md
- M reviews/latest/security.raw.txt
- M reviews/latest/summary.json
- M reviews/latest/tests.json
  M reviews/latest/tests.prompt.md
- M reviews/latest/tests.raw.txt
 
 ```
 
 ## Diff Stat vs HEAD
 
 ```text
- reviews/latest/architecture.json      |   6 +-
- reviews/latest/architecture.prompt.md | 108 +++++++++++++++++----
- reviews/latest/architecture.raw.txt   |   6 +-
- reviews/latest/codex.json             |   6 --
- reviews/latest/codex.prompt.md        | 171 ++++++++++++++++++++++++++++------
- reviews/latest/codex.raw.txt          |   2 +-
- reviews/latest/diff.patch             | 108 +++++++++++++++++----
- reviews/latest/gate1-summary.json     |   6 +-
- reviews/latest/project-context.md     |  24 +++--
- reviews/latest/release-ops.json       |   6 +-
- reviews/latest/release-ops.prompt.md  | 108 +++++++++++++++++----
- reviews/latest/release-ops.raw.txt    |   8 +-
- reviews/latest/security.json          |   2 +-
- reviews/latest/security.prompt.md     | 108 +++++++++++++++++----
- reviews/latest/security.raw.txt       |   4 +-
- reviews/latest/summary.json           |  50 ++++++----
- reviews/latest/tests.json             |  11 ++-
- reviews/latest/tests.prompt.md        | 108 +++++++++++++++++----
- reviews/latest/tests.raw.txt          |  13 ++-
- 19 files changed, 689 insertions(+), 166 deletions(-)
+ reviews/latest/architecture.prompt.md  | 92 ----------------------------------
+ reviews/latest/deploy-staging-check.md |  4 +-
+ reviews/latest/diff.patch              | 92 ----------------------------------
+ reviews/latest/gate1-summary.json      |  6 +--
+ reviews/latest/project-context.md      | 37 +-------------
+ reviews/latest/release-ops.prompt.md   | 92 ----------------------------------
+ reviews/latest/security.prompt.md      | 92 ----------------------------------
+ reviews/latest/tests.prompt.md         | 92 ----------------------------------
+ 8 files changed, 7 insertions(+), 500 deletions(-)
 
 ```

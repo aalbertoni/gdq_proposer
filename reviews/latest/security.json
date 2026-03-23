@@ -1,6 +1,8 @@
 {
   "status": "APROVADO",
   "blockers": [],
-  "warnings": [],
-  "summary": "Mudanca cosm\u00e9tica de aspas simples para duplas em valores string da sintaxe GDQ ColumnValues \u2014 sem impacto de seguranca."
+  "warnings": [
+    "Diff vazio: nenhuma alteracao material para revisar."
+  ],
+  "summary": "No-op review: nenhum diff material foi gerado para avaliacao."
 }

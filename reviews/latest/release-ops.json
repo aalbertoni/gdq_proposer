@@ -2,8 +2,7 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Mudanca de aspas simples para duplas em ColumnValues e uma alteracao de comportamento em regras GDQ geradas \u2014 confirmar que o motor GDQ em producao aceita aspas duplas em valores string antes de promover.",
-    "Apenas 1 teste unitario atualizado (test_categorical). Verificar se existem outros testes que validam a formatacao de strings em ColumnValues (ex: testes de integracao, testes de export/Thundera payload)."
+    "Diff vazio: nenhuma alteracao material para revisar."
   ],
-  "summary": "Mudanca pontual e coesa de formatacao de strings em ColumnValues (aspas simples \u2192 duplas), com docs e help atualizados; sem impacto em infra, compose, healthcheck ou migracao."
+  "summary": "No-op review: nenhum diff material foi gerado para avaliacao."
 }
