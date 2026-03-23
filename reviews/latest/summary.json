@@ -1,61 +1,66 @@
 {
   "overall_status": "ATENCAO",
-  "combined_status": "BLOQUEADO",
+  "combined_status": "ATENCAO",
   "agents": {
     "architecture": {
       "status": "ATENCAO",
       "blockers": [],
       "warnings": [
-        "Arquivo binario .coverage incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore)",
-        "verify-staging-governance-proof e verify-prod-governance-proof usam 'bash -lc' com login shell \u2014 pode carregar estado inesperado do ambiente; preferir 'bash -c' simples",
-        "promote-prod executa verify-staging-governance-proof inline antes do deploy, mas tambem e chamado em pipeline-prod apos pipeline-staging que ja verifica \u2014 dupla execucao redundante (nao e bloqueio, apenas ruido)"
+        "Arquivo binario .coverage incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore).",
+        "cleanup-staging-after-prod executa `sudo /home/aalbertoni/.config/homelab/scripts/stack-down` \u2014 path hardcoded com usuario especifico e uso de sudo; considerar wrapper no Taskfile ou variavel de ambiente.",
+        "push-after-staging faz `git push` sem especificar remote/branch \u2014 pode empurrar para branch errada se tracking nao estiver configurado.",
+        "pages/07_query_log.py acessa `client.logger.entries` e `client.logger.export_json()` \u2014 contrato do logger nao visivel no diff; se logger ainda nao expoe esses atributos, vai quebrar em runtime."
       ],
-      "summary": "Governanca de deploy bem estruturada: separacao source/deploy/runtime preservada, sem acesso a secrets, sem acoplamento excessivo; apenas .coverage binario e detalhes menores de shell merecem atencao."
+      "summary": "Mudancas de governanca (push-after-staging, cleanup-staging) e nova pagina query_log sao coerentes com a arquitetura; nenhum bloqueio, mas .coverage no diff e path hardcoded com sudo merecem atencao."
     },
     "security": {
-      "status": "APROVADO",
+      "status": "ATENCAO",
       "blockers": [],
       "warnings": [
-        "Arquivo .coverage (binario) incluido no diff \u2014 normalmente deve estar no .gitignore para evitar vazamento de paths locais ou metricas internas.",
-        "promote-prod usa 'sudo /usr/local/bin/deploy-prod' \u2014 garantir que o script destino valida inputs e que sudoers restringe apenas esse comando."
+        "O arquivo .coverage (binario) esta no diff e nao deveria ser commitado \u2014 adicionar ao .gitignore se ainda nao estiver.",
+        "pages/07_query_log.py exibe SQL completo via st.code(entry.sql) \u2014 verificar que o SQL nao contem credenciais ou tokens inline antes de exibir ao usuario.",
+        "Taskfile.yml cleanup-staging-after-prod executa sudo com path hardcoded (/home/aalbertoni/.config/homelab/scripts/stack-down) \u2014 path especifico de usuario pode ser um risco de path traversal se o script for modificavel por outros usuarios."
       ],
-      "summary": "Diff adiciona governanca de deploy com gates obrigatorios, evidencia auditavel e bloqueio de producao sem aprovacao explicita \u2014 sem segredos, injecao ou permissoes excessivas."
+      "summary": "Mudancas de governanca e query log sem bloqueadores criticos; atentar ao .coverage no versionamento e ao SQL exibido no log."
     },
     "tests": {
-      "status": "APROVADO",
+      "status": "ATENCAO",
       "blockers": [],
       "warnings": [
-        "Arquivo .coverage binario incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore)",
-        "Tasks de governanca (verify-staging-governance-proof, verify-prod-governance-proof) dependem de `rg` estar instalado no ambiente de deploy \u2014 sem fallback se ausente",
-        "Nenhum teste automatizado valida os novos tasks do Taskfile (ex: testar que promote-prod falha sem ALLOW_PROD_DEPLOY=true)"
+        "Nova pagina pages/07_query_log.py (218 linhas) nao possui nenhum teste unitario. Funcao publica _describe_query_purpose() deveria ter teste cobrindo query_names conhecidos e fallback para nomes desconhecidos.",
+        "Pagina depende de client.logger.entries e client.logger.get_session_summary() \u2014 nao ha teste de contrato validando shape desses retornos contra o que a UI espera (campos: total_queries, total_elapsed_ms, estimated_cost_usd, cache_hits, errors; entry fields: query_name, column, exception_type, cache_hit, elapsed_ms, rows_returned, estimated_cost_usd, bytes_scanned, dataset, timestamp, sql).",
+        "Nova task push-after-staging no Taskfile.yml executa git push incondicional \u2014 nao ha teste ou validacao de que remote esta configurado. Falha silenciosa possivel se remote nao existir.",
+        "Nova task cleanup-staging-after-prod usa sudo com path hardcoded (/home/aalbertoni/.config/homelab/scripts/stack-down) \u2014 acoplamento a usuario especifico, pode falhar em outro ambiente.",
+        "Troca de rg por grep -nE no Taskfile.yml e funcional mas nao ha teste automatizado das tasks de governanca (verify-staging-governance-proof, verify-prod-governance-proof). Regressao possivel se regex divergir.",
+        "Arquivo .coverage binario incluido no diff \u2014 nao deveria ser versionado."
       ],
-      "summary": "Mudancas de governanca de deploy via Taskfile e CLAUDE.md \u2014 sem codigo Python novo, sem funcoes publicas adicionadas, sem risco de regressao funcional."
+      "summary": "Mudancas de governanca (Taskfile/CLAUDE.md) sao documentacao/infra sem risco funcional, mas a nova pagina Query Log carece de testes unitarios e de contrato para as dependencias de logger."
     },
     "release-ops": {
       "status": "APROVADO",
       "blockers": [],
       "warnings": [
-        "Arquivo .coverage (binario) incluido no diff \u2014 nao deveria ser commitado; adicionar ao .gitignore.",
-        "Tasks de verificacao (verify-staging-governance-proof, verify-prod-governance-proof) dependem de `rg` (ripgrep) estar instalado no ambiente de deploy \u2014 confirmar presenca na imagem Docker/compose.",
-        "promote-prod agora exige ALLOW_PROD_DEPLOY=true e evidencia de staging antes de executar \u2014 operadores existentes precisam ser informados da mudanca de fluxo."
+        "Arquivo .coverage binario incluido no diff \u2014 nao deve ser commitado (adicionar ao .gitignore se ausente).",
+        "Nova pagina 07_query_log.py depende de client.logger.entries e client.logger.get_session_summary() \u2014 confirmar que esses atributos existem no AthenaClient atual.",
+        "Taskfile troca rg por grep -nE nas validacoes de governance proof \u2014 funcionalmente equivalente, mas confirmar que grep esta disponivel no ambiente de deploy (containers Alpine podem precisar de pacote extra).",
+        "Task cleanup-staging-after-prod referencia path hardcoded /home/aalbertoni/.config/homelab/scripts/stack-down \u2014 verificar se path existe no ambiente de deploy."
       ],
-      "summary": "Diff adiciona governanca obrigatoria de deploy (gates, evidencia, aprovacao humana) sem alterar codigo de aplicacao \u2014 implantabilidade e health check nao sao afetados; rollback continua disponivel via task rollback-last."
+      "summary": "Mudancas de governanca (push-after-staging, cleanup-staging-after-prod), migracao rg->grep no Taskfile e nova pagina Query Log \u2014 sem bloqueios, apenas verificacoes menores recomendadas."
     }
   },
   "peer_reviews": {
     "codex": {
-      "status": "BLOQUEADO",
-      "blockers": [
-        "`pipeline-staging` ficou operacionalmente quebrado: ele passou a exigir `task verify-staging-governance-proof`, mas o pr\u00f3prio pipeline nao gera `reviews/latest/deploy-staging-check.md`. Na pratica, o fluxo automatizado falha apos o smoke mesmo com staging saudavel, criando regressao concreta de release.",
-        "`pipeline-prod` tambem ficou quebrado pelo mesmo motivo: exige `task verify-prod-governance-proof`, mas nao existe etapa no Taskfile que gere `reviews/latest/deploy-prod-check.md`. Isso impede a conclusao do fluxo canonico de producao sem intervencao manual fora do pipeline.",
-        "A governanca adicionada depende de evidencia manual em `reviews/latest/`, mas essa escrita nao foi encapsulada em task/script deterministico. Como a condicao minima de release agora depende de artefato nao produzido pelo fluxo, o deploy deixa de ser totalmente executavel e auditavel pelo proprio pipeline."
-      ],
+      "status": "ATENCAO",
+      "blockers": [],
       "warnings": [
-        "O arquivo binario `.coverage` entrou no diff; alem de ruido de review, nao deveria ser versionado e pode expor paths/metadados locais desnecessarios.",
-        "`verify-staging-governance-proof` e `verify-prod-governance-proof` dependem de `rg` e usam `bash -lc`; isso aumenta fragilidade ambiental e pode introduzir comportamento dependente de shell de login sem necessidade.",
-        "As validacoes conferem formato e SHA do arquivo de evidencia, mas nao validam coerencia entre campos criticos e o resultado real das tasks executadas; isso reduz o valor da prova operacional para auditoria."
+        "`.coverage` binario entrou no diff e nao deveria ser versionado; isso polui release review e indica falta de higiene minima no pacote de entrega.",
+        "`pages/07_query_log.py` depende diretamente de `client.logger.entries`, `client.logger.get_session_summary()` e `client.logger.export_json()` sem contrato visivel no diff; se o logger atual nao expuser exatamente esses atributos, a nova tela quebra em runtime.",
+        "A tela `Query Log` exibe `entry.sql` completo e permite exportacao integral do log; isso exige confirmar que as queries nunca carregam literais sensiveis, tokens ou identificadores indevidos no SQL/log antes de liberar amplamente.",
+        "`push-after-staging` faz `git push` sem remote/branch explicitos; operacionalmente isso fica fragil e pode publicar para upstream inesperado em ambientes com tracking diferente.",
+        "`cleanup-staging-after-prod` usa caminho hardcoded `/home/aalbertoni/.config/homelab/scripts/stack-down`; nao viola diretamente o boundary por usar wrapper, mas aumenta acoplamento ao host e risco de falha fora do ambiente esperado.",
+        "A nova pagina de Streamlit nao vem acompanhada de testes unitarios/contratuais para filtros, resumo de sessao e fallback de `_describe_query_purpose()`, deixando regressao funcional sem cobertura."
       ],
-      "summary": "A intencao de reforcar governanca de deploy e boa e preserva os limites de seguranca, mas o diff introduz regressao concreta no fluxo de release: staging e producao agora exigem arquivos de evidencia que o Taskfile nao gera. Com isso, os pipelines deixam de ser auto-suficientes e podem falhar mesmo quando o deploy em si esta correto. Para liberar, a geracao dessas evidencias precisa virar etapa explicita e deterministica do fluxo."
+      "summary": "O diff parece liberavel, sem evidencia de regressao critica de deploy ou falha concreta de seguranca, mas ainda ha riscos moderados de operacao e manutencao: artefato de cobertura indevido no commit, nova tela acoplada a internals do logger, exposicao ampla de SQL no UI/export e tarefas de governanca com push/path mais frageis do que o ideal."
     }
   }
 }

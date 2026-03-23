@@ -5,10 +5,11 @@
   "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Arquivo binario .coverage incluido no diff — nao deveria ser commitado (adicionar ao .gitignore)",
-    "verify-staging-governance-proof e verify-prod-governance-proof usam 'bash -lc' com login shell — pode carregar estado inesperado do ambiente; preferir 'bash -c' simples",
-    "promote-prod executa verify-staging-governance-proof inline antes do deploy, mas tambem e chamado em pipeline-prod apos pipeline-staging que ja verifica — dupla execucao redundante (nao e bloqueio, apenas ruido)"
+    "Arquivo binario .coverage incluido no diff — nao deveria ser commitado (adicionar ao .gitignore).",
+    "cleanup-staging-after-prod executa `sudo /home/aalbertoni/.config/homelab/scripts/stack-down` — path hardcoded com usuario especifico e uso de sudo; considerar wrapper no Taskfile ou variavel de ambiente.",
+    "push-after-staging faz `git push` sem especificar remote/branch — pode empurrar para branch errada se tracking nao estiver configurado.",
+    "pages/07_query_log.py acessa `client.logger.entries` e `client.logger.export_json()` — contrato do logger nao visivel no diff; se logger ainda nao expoe esses atributos, vai quebrar em runtime."
   ],
-  "summary": "Governanca de deploy bem estruturada: separacao source/deploy/runtime preservada, sem acesso a secrets, sem acoplamento excessivo; apenas .coverage binario e detalhes menores de shell merecem atencao."
+  "summary": "Mudancas de governanca (push-after-staging, cleanup-staging) e nova pagina query_log sao coerentes com a arquitetura; nenhum bloqueio, mas .coverage no diff e path hardcoded com sudo merecem atencao."
 }
 ```

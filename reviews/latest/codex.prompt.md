@@ -298,34 +298,39 @@ Resultados dos agentes Claude:
   "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Arquivo binario .coverage incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore)",
-    "verify-staging-governance-proof e verify-prod-governance-proof usam 'bash -lc' com login shell \u2014 pode carregar estado inesperado do ambiente; preferir 'bash -c' simples",
-    "promote-prod executa verify-staging-governance-proof inline antes do deploy, mas tambem e chamado em pipeline-prod apos pipeline-staging que ja verifica \u2014 dupla execucao redundante (nao e bloqueio, apenas ruido)"
+    "Arquivo binario .coverage incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore).",
+    "cleanup-staging-after-prod executa `sudo /home/aalbertoni/.config/homelab/scripts/stack-down` \u2014 path hardcoded com usuario especifico e uso de sudo; considerar wrapper no Taskfile ou variavel de ambiente.",
+    "push-after-staging faz `git push` sem especificar remote/branch \u2014 pode empurrar para branch errada se tracking nao estiver configurado.",
+    "pages/07_query_log.py acessa `client.logger.entries` e `client.logger.export_json()` \u2014 contrato do logger nao visivel no diff; se logger ainda nao expoe esses atributos, vai quebrar em runtime."
   ],
-  "summary": "Governanca de deploy bem estruturada: separacao source/deploy/runtime preservada, sem acesso a secrets, sem acoplamento excessivo; apenas .coverage binario e detalhes menores de shell merecem atencao."
+  "summary": "Mudancas de governanca (push-after-staging, cleanup-staging) e nova pagina query_log sao coerentes com a arquitetura; nenhum bloqueio, mas .coverage no diff e path hardcoded com sudo merecem atencao."
 }
 
 == security.json ==
 {
-  "status": "APROVADO",
+  "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage (binario) incluido no diff \u2014 normalmente deve estar no .gitignore para evitar vazamento de paths locais ou metricas internas.",
-    "promote-prod usa 'sudo /usr/local/bin/deploy-prod' \u2014 garantir que o script destino valida inputs e que sudoers restringe apenas esse comando."
+    "O arquivo .coverage (binario) esta no diff e nao deveria ser commitado \u2014 adicionar ao .gitignore se ainda nao estiver.",
+    "pages/07_query_log.py exibe SQL completo via st.code(entry.sql) \u2014 verificar que o SQL nao contem credenciais ou tokens inline antes de exibir ao usuario.",
+    "Taskfile.yml cleanup-staging-after-prod executa sudo com path hardcoded (/home/aalbertoni/.config/homelab/scripts/stack-down) \u2014 path especifico de usuario pode ser um risco de path traversal se o script for modificavel por outros usuarios."
   ],
-  "summary": "Diff adiciona governanca de deploy com gates obrigatorios, evidencia auditavel e bloqueio de producao sem aprovacao explicita \u2014 sem segredos, injecao ou permissoes excessivas."
+  "summary": "Mudancas de governanca e query log sem bloqueadores criticos; atentar ao .coverage no versionamento e ao SQL exibido no log."
 }
 
 == tests.json ==
 {
-  "status": "APROVADO",
+  "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage binario incluido no diff \u2014 nao deveria ser commitado (adicionar ao .gitignore)",
-    "Tasks de governanca (verify-staging-governance-proof, verify-prod-governance-proof) dependem de `rg` estar instalado no ambiente de deploy \u2014 sem fallback se ausente",
-    "Nenhum teste automatizado valida os novos tasks do Taskfile (ex: testar que promote-prod falha sem ALLOW_PROD_DEPLOY=true)"
+    "Nova pagina pages/07_query_log.py (218 linhas) nao possui nenhum teste unitario. Funcao publica _describe_query_purpose() deveria ter teste cobrindo query_names conhecidos e fallback para nomes desconhecidos.",
+    "Pagina depende de client.logger.entries e client.logger.get_session_summary() \u2014 nao ha teste de contrato validando shape desses retornos contra o que a UI espera (campos: total_queries, total_elapsed_ms, estimated_cost_usd, cache_hits, errors; entry fields: query_name, column, exception_type, cache_hit, elapsed_ms, rows_returned, estimated_cost_usd, bytes_scanned, dataset, timestamp, sql).",
+    "Nova task push-after-staging no Taskfile.yml executa git push incondicional \u2014 nao ha teste ou validacao de que remote esta configurado. Falha silenciosa possivel se remote nao existir.",
+    "Nova task cleanup-staging-after-prod usa sudo com path hardcoded (/home/aalbertoni/.config/homelab/scripts/stack-down) \u2014 acoplamento a usuario especifico, pode falhar em outro ambiente.",
+    "Troca de rg por grep -nE no Taskfile.yml e funcional mas nao ha teste automatizado das tasks de governanca (verify-staging-governance-proof, verify-prod-governance-proof). Regressao possivel se regex divergir.",
+    "Arquivo .coverage binario incluido no diff \u2014 nao deveria ser versionado."
   ],
-  "summary": "Mudancas de governanca de deploy via Taskfile e CLAUDE.md \u2014 sem codigo Python novo, sem funcoes publicas adicionadas, sem risco de regressao funcional."
+  "summary": "Mudancas de governanca (Taskfile/CLAUDE.md) sao documentacao/infra sem risco funcional, mas a nova pagina Query Log carece de testes unitarios e de contrato para as dependencias de logger."
 }
 
 == release-ops.json ==
@@ -333,214 +338,429 @@ Resultados dos agentes Claude:
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage (binario) incluido no diff \u2014 nao deveria ser commitado; adicionar ao .gitignore.",
-    "Tasks de verificacao (verify-staging-governance-proof, verify-prod-governance-proof) dependem de `rg` (ripgrep) estar instalado no ambiente de deploy \u2014 confirmar presenca na imagem Docker/compose.",
-    "promote-prod agora exige ALLOW_PROD_DEPLOY=true e evidencia de staging antes de executar \u2014 operadores existentes precisam ser informados da mudanca de fluxo."
+    "Arquivo .coverage binario incluido no diff \u2014 nao deve ser commitado (adicionar ao .gitignore se ausente).",
+    "Nova pagina 07_query_log.py depende de client.logger.entries e client.logger.get_session_summary() \u2014 confirmar que esses atributos existem no AthenaClient atual.",
+    "Taskfile troca rg por grep -nE nas validacoes de governance proof \u2014 funcionalmente equivalente, mas confirmar que grep esta disponivel no ambiente de deploy (containers Alpine podem precisar de pacote extra).",
+    "Task cleanup-staging-after-prod referencia path hardcoded /home/aalbertoni/.config/homelab/scripts/stack-down \u2014 verificar se path existe no ambiente de deploy."
   ],
-  "summary": "Diff adiciona governanca obrigatoria de deploy (gates, evidencia, aprovacao humana) sem alterar codigo de aplicacao \u2014 implantabilidade e health check nao sao afetados; rollback continua disponivel via task rollback-last."
+  "summary": "Mudancas de governanca (push-after-staging, cleanup-staging-after-prod), migracao rg->grep no Taskfile e nova pagina Query Log \u2014 sem bloqueios, apenas verificacoes menores recomendadas."
 }
 
 Diff para revisar:
 diff --git a/.coverage b/.coverage
-index 3f6d8aa..6baef5f 100644
+index 6baef5f..6e69e8a 100644
 Binary files a/.coverage and b/.coverage differ
 diff --git a/CLAUDE.md b/CLAUDE.md
-index f825d8e..5bae87b 100644
+index 5bae87b..7a07250 100644
 --- a/CLAUDE.md
 +++ b/CLAUDE.md
-@@ -63,6 +63,76 @@ ambos dialetos para que os testes unitarios rodem com DuckDB sem precisar de Ath
+@@ -70,10 +70,12 @@ Este projeto usa governanca obrigatoria de deploy. O agente nao pode improvisar
+ Regras obrigatorias:
+ 
+ 1. Nunca seguir para deploy sem passar por `task gate1`, `task snapshot`, `task review-agents-consensus` e `task build-release`.
+-2. Nunca promover para producao sem staging aprovado.
+-3. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
+-4. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
+-5. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
++2. Nunca fazer `git push` da branch de trabalho antes de staging aprovado. O push remoto acontece somente depois de `task verify-staging-governance-proof`, via `task push-after-staging`.
++3. Nunca promover para producao sem staging aprovado.
++4. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
++5. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
++6. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
++7. O staging nao deve ser derrubado logo apos o deploy de producao. So pode ser desligado depois de `task verify-prod`, `task verify-prod-governance-proof` e uma aprovacao explicita via `ALLOW_STAGING_CLEANUP=true`.
+ 
+ Arquivos obrigatorios de evidencia:
+ 
+@@ -113,22 +115,24 @@ Fluxo obrigatorio daqui pra frente:
+ 6. Rodar `task smoke-staging`.
+ 7. Gravar `reviews/latest/deploy-staging-check.md`.
+ 8. Rodar `task verify-staging-governance-proof`.
+-9. So depois disso considerar staging apto.
+-10. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
+-11. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
+-12. Rodar `task verify-prod`.
+-13. Rodar `task verify-prod-governance-proof`.
++9. Rodar `task push-after-staging`.
++10. So depois disso considerar staging apto e branch remota alinhada.
++11. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
++12. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
++13. Rodar `task verify-prod`.
++14. Rodar `task verify-prod-governance-proof`.
++15. Opcionalmente, so depois de producao estavel, rodar `ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod`.
+ 
+ Quando o usuario disser “segue com o fluxo de deploy”, o agente deve responder executando ou orientando exatamente essa sequencia. Nao pode pular direto para `git status`, `git diff`, `git push` ou deploy.
+ 
+ Prompts operacionais canônicos:
+ 
+ ```text
+-Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico e valide com task verify-staging-governance-proof.
++Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico, valide com task verify-staging-governance-proof e faca o push remoto somente via task push-after-staging.
+ ```
+ 
+ ```text
+-Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof.
++Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente task push-after-staging, ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof. So derrube o staging se houver aprovacao explicita via ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod.
+ ```
  
  ---
- 
-+## Governanca de Deploy
-+
-+Este projeto usa governanca obrigatoria de deploy. O agente nao pode improvisar fluxo com `git push`, `sudo /usr/local/bin/deploy-prod`, `stack-deploy` ou comandos ad hoc fora do `Taskfile`.
-+
-+Regras obrigatorias:
-+
-+1. Nunca seguir para deploy sem passar por `task gate1`, `task snapshot`, `task review-agents-consensus` e `task build-release`.
-+2. Nunca promover para producao sem staging aprovado.
-+3. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
-+4. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
-+5. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
-+
-+Arquivos obrigatorios de evidencia:
-+
-+Staging: `reviews/latest/deploy-staging-check.md`
-+
-+```text
-+commit_sha: <sha atual>
-+environment: staging
-+gate1: <pass|fail>
-+snapshot_commit: <sha do snapshot>
-+gate2: <pass|warning|fail>
-+release_build: <pass|fail>
-+staging_deploy: <pass|fail>
-+staging_smoke: <pass|fail>
-+verdict: <ok|warning|fail>
-+```
-+
-+Producao: `reviews/latest/deploy-prod-check.md`
-+
-+```text
-+commit_sha: <sha atual>
-+environment: prod
-+staging_governance: <pass|fail>
-+prod_approval: explicit
-+prod_deploy: <pass|fail>
-+prod_verify: <pass|fail>
-+verdict: <ok|warning|fail>
-+```
-+
-+Fluxo obrigatorio daqui pra frente:
-+
-+1. Rodar `task gate1`.
-+2. Rodar `task snapshot`.
-+3. Rodar `task review-agents-consensus`.
-+4. Rodar `task build-release`.
-+5. Rodar `task deploy-staging`.
-+6. Rodar `task smoke-staging`.
-+7. Gravar `reviews/latest/deploy-staging-check.md`.
-+8. Rodar `task verify-staging-governance-proof`.
-+9. So depois disso considerar staging apto.
-+10. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
-+11. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
-+12. Rodar `task verify-prod`.
-+13. Rodar `task verify-prod-governance-proof`.
-+
-+Quando o usuario disser “segue com o fluxo de deploy”, o agente deve responder executando ou orientando exatamente essa sequencia. Nao pode pular direto para `git status`, `git diff`, `git push` ou deploy.
-+
-+Prompts operacionais canônicos:
-+
-+```text
-+Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico e valide com task verify-staging-governance-proof.
-+```
-+
-+```text
-+Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof.
-+```
-+
-+---
-+
- ## Principios de Desenvolvimento
- 
- ### 1. Fatias verticais pequenas
 diff --git a/Taskfile.yml b/Taskfile.yml
-index 341cd74..307dafd 100644
+index 307dafd..c08903e 100644
 --- a/Taskfile.yml
 +++ b/Taskfile.yml
-@@ -108,9 +108,63 @@ tasks:
-     cmds:
-       - cmd: 'echo "Skipping public staging smoke: app interno"'
+@@ -123,13 +123,15 @@ tasks:
+         6. task smoke-staging
+         7. Gerar reviews/latest/deploy-staging-check.md
+         8. task verify-staging-governance-proof
++        9. task push-after-staging
  
-+  guide-governed-deploy:
-+    desc: Exibe o fluxo obrigatorio de governanca para staging e producao
+         Para producao:
+-        9. Revisar staging aprovado
+-        10. Gerar reviews/latest/deploy-prod-check.md
+-        11. ALLOW_PROD_DEPLOY=true task promote-prod
+-        12. task verify-prod
+-        13. task verify-prod-governance-proof
++        10. Revisar staging aprovado
++        11. Gerar reviews/latest/deploy-prod-check.md
++        12. ALLOW_PROD_DEPLOY=true task promote-prod
++        13. task verify-prod
++        14. task verify-prod-governance-proof
++        15. Opcional: ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod
+ 
+         Deploy por comando ad hoc fora do Taskfile e proibido.
+         EOF
+@@ -140,25 +142,31 @@ tasks:
+       - |
+         test -f reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
++        grep -nE '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^environment: staging$' reviews/latest/deploy-staging-check.md
++        grep -nE '^environment: staging$' reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
++        grep -nE '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
++        grep -nE '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
++        grep -nE '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
++        grep -nE '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
++        grep -nE '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
++        grep -nE '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
+       - |
+-        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
++        grep -nE '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
+       - |
+-        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
++        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); grep -nE "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
++
++  push-after-staging:
++    desc: Faz git push somente apos staging aprovado
 +    cmds:
-+      - |
-+        cat <<'EOF'
-+        Fluxo obrigatorio deste projeto:
-+
-+        1. task gate1
-+        2. task snapshot
-+        3. task review-agents-consensus
-+        4. task build-release
-+        5. task deploy-staging
-+        6. task smoke-staging
-+        7. Gerar reviews/latest/deploy-staging-check.md
-+        8. task verify-staging-governance-proof
-+
-+        Para producao:
-+        9. Revisar staging aprovado
-+        10. Gerar reviews/latest/deploy-prod-check.md
-+        11. ALLOW_PROD_DEPLOY=true task promote-prod
-+        12. task verify-prod
-+        13. task verify-prod-governance-proof
-+
-+        Deploy por comando ad hoc fora do Taskfile e proibido.
-+        EOF
-+
-+  verify-staging-governance-proof:
-+    desc: Bloqueia sem evidencia obrigatoria de staging governado
-+    cmds:
-+      - |
-+        test -f reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^environment: staging$' reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
-+      - |
-+        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
-+      - |
-+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
-+
++      - task: verify-staging-governance-proof
++      - git push
+ 
    promote-prod:
      desc: Portao 5
-     cmds:
-+      - bash -lc 'test "${ALLOW_PROD_DEPLOY:-false}" = "true" || { echo "Refusing production deploy without ALLOW_PROD_DEPLOY=true." >&2; exit 1; }'
-+      - task: verify-staging-governance-proof
-       - sudo /usr/local/bin/deploy-prod gdq-proposer
- 
-   verify-prod:
-@@ -125,6 +179,28 @@ tasks:
-     cmds:
-       - cmd: 'echo "Skipping public production smoke: app interno"'
- 
-+  verify-prod-governance-proof:
-+    desc: Bloqueia sem evidencia obrigatoria da producao governada
-+    cmds:
-+      - |
-+        test -f reviews/latest/deploy-prod-check.md
-+      - |
-+        rg -n '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
-+      - |
-+        rg -n '^environment: prod$' reviews/latest/deploy-prod-check.md
-+      - |
-+        rg -n '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
-+      - |
-+        rg -n '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
-+      - |
-+        rg -n '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
-+      - |
-+        rg -n '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
-+      - |
-+        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
-+      - |
-+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
+@@ -185,21 +193,29 @@ tasks:
+       - |
+         test -f reviews/latest/deploy-prod-check.md
+       - |
+-        rg -n '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
++        grep -nE '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
+       - |
+-        rg -n '^environment: prod$' reviews/latest/deploy-prod-check.md
++        grep -nE '^environment: prod$' reviews/latest/deploy-prod-check.md
+       - |
+-        rg -n '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
++        grep -nE '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
+       - |
+-        rg -n '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
++        grep -nE '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
+       - |
+-        rg -n '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
++        grep -nE '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
+       - |
+-        rg -n '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
++        grep -nE '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
+       - |
+-        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
++        grep -nE '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
+       - |
+-        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
++        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); grep -nE "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
 +
++  cleanup-staging-after-prod:
++    desc: Derruba o staging somente apos producao estavel e validada
++    cmds:
++      - bash -lc 'test "${ALLOW_STAGING_CLEANUP:-false}" = "true" || { echo "Refusing staging cleanup without ALLOW_STAGING_CLEANUP=true." >&2; exit 1; }'
++      - task: verify-prod
++      - task: verify-prod-governance-proof
++      - sudo /home/aalbertoni/.config/homelab/scripts/stack-down gdq-proposer-staging
+ 
    rollback-last:
      desc: Faz rollback para a ultima release saudavel
-     cmds:
-@@ -139,6 +215,7 @@ tasks:
-       - task: build-release
-       - task: deploy-staging
-       - task: smoke-staging
-+      - task: verify-staging-governance-proof
- 
-   pipeline-prod:
+@@ -221,6 +237,7 @@ tasks:
      desc: Executa gates, staging e verificacao interna de producao
-@@ -146,3 +223,4 @@ tasks:
+     cmds:
        - task: pipeline-staging
++      - task: push-after-staging
        - task: promote-prod
        - task: verify-prod
-+      - task: verify-prod-governance-proof
+       - task: verify-prod-governance-proof
+diff --git a/app.py b/app.py
+index 6a4652a..0ee46ae 100644
+--- a/app.py
++++ b/app.py
+@@ -35,7 +35,9 @@ def render_sidebar():
+     st.sidebar.caption(f"v{__version__}")
+     st.sidebar.divider()
+ 
+-    # Diagnostic link
++    # Utility links
++    if st.sidebar.button("Query Log", key="sidebar_qlog", help="Historico de queries da sessao"):
++        st.switch_page("pages/07_query_log.py")
+     if st.sidebar.button("Diagnostico", key="sidebar_diag", help="Verificar status do ambiente"):
+         st.switch_page("pages/06_diagnostico.py")
+ 
+diff --git a/pages/07_query_log.py b/pages/07_query_log.py
+new file mode 100644
+index 0000000..bbf6671
+--- /dev/null
++++ b/pages/07_query_log.py
+@@ -0,0 +1,218 @@
++"""
++Query Log — Historico completo de queries da sessao.
++
++Exibe todas as queries executadas com status, custo, tempo,
++motivo, detalhes de erro e SQL completo.
++"""
++
++import streamlit as st
++
++st.set_page_config(
++    page_title="Query Log — GDQ",
++    page_icon=":memo:",
++    layout="wide",
++)
++
++st.title("Query Log")
++st.caption("Historico completo de queries executadas nesta sessao.")
++
++# ---------------------------------------------------------------------------
++# Guard: precisa de client ativo
++# ---------------------------------------------------------------------------
++if "client" not in st.session_state:
++    st.info("Nenhuma sessao ativa. Volte ao Dashboard para conectar.")
++    if st.button("Ir para Dashboard", key="ql_go_dash"):
++        st.switch_page("app.py")
++    st.stop()
++
++client = st.session_state["client"]
++entries = client.logger.entries
++
++if not entries:
++    st.info("Nenhuma query executada nesta sessao.")
++    if st.button("Ir para Setup", key="ql_go_setup"):
++        st.switch_page("pages/01_setup.py")
++    st.stop()
++
++# ---------------------------------------------------------------------------
++# Summary metrics
++# ---------------------------------------------------------------------------
++summary = client.logger.get_session_summary()
++time_s = summary["total_elapsed_ms"] / 1000
++cost = summary["estimated_cost_usd"]
++
++m1, m2, m3, m4, m5 = st.columns(5)
++m1.metric("Total de queries", summary["total_queries"])
++m2.metric("Tempo total", f"{time_s:.1f}s")
++m3.metric("Cache hits", f"{summary['cache_hits']}/{summary['total_queries']}")
++m4.metric("Custo estimado", f"${cost:.4f}")
++m5.metric("Erros", summary["errors"])
++
++# Cost guardrail
++app_cfg = st.session_state.get("config")
++threshold = app_cfg.athena.cost_warning_threshold_usd if app_cfg else 0.50
++if cost > threshold:
++    st.warning(f"Custo da sessao (${cost:.4f}) excedeu o limite de ${threshold:.2f}.")
++
++st.divider()
++
++# ---------------------------------------------------------------------------
++# Filters
++# ---------------------------------------------------------------------------
++col_f1, col_f2, col_f3 = st.columns(3)
++
++# Status filter
++status_options = ["Todas", "OK", "Erro", "Cache Hit"]
++with col_f1:
++    status_filter = st.selectbox("Status", status_options, key="ql_status_filter")
++
++# Query name filter
++query_names = sorted({e.query_name for e in entries})
++with col_f2:
++    name_filter = st.selectbox(
++        "Tipo de query", ["Todas"] + query_names, key="ql_name_filter"
++    )
++
++# Column filter
++columns_used = sorted({e.column for e in entries if e.column})
++with col_f3:
++    column_filter = st.selectbox(
++        "Coluna", ["Todas"] + columns_used, key="ql_col_filter"
++    )
++
++# Apply filters
++filtered = list(entries)
++if status_filter == "OK":
++    filtered = [e for e in filtered if not e.exception_type and not e.cache_hit]
++elif status_filter == "Erro":
++    filtered = [e for e in filtered if e.exception_type]
++elif status_filter == "Cache Hit":
++    filtered = [e for e in filtered if e.cache_hit]
++
++if name_filter != "Todas":
++    filtered = [e for e in filtered if e.query_name == name_filter]
++
++if column_filter != "Todas":
++    filtered = [e for e in filtered if e.column == column_filter]
++
++st.caption(f"Exibindo {len(filtered)} de {len(entries)} queries.")
++
++
++# ---------------------------------------------------------------------------
++# Helper: query purpose descriptions
++# ---------------------------------------------------------------------------
++
++def _describe_query_purpose(query_name: str) -> str:
++    """Retorna descricao do proposito de cada tipo de query."""
++    purposes = {
++        "health_check": "Verificacao de conectividade com o Athena.",
++        "table_exists": "Validacao de existencia da tabela no catalogo.",
++        "get_columns": "Leitura de metadados (colunas e tipos) via information_schema.",
++        "get_columns_with_partitions": "Leitura de colunas com deteccao de partition keys.",
++        "count_rows": "Contagem de linhas para estimativa de volume e timeout adaptativo.",
++        "estimate_volume": "Estimativa de volumetria para ajustar timeout da sessao.",
++        "column_sample": "Amostragem de coluna para classificacao semantica (tipo, cardinalidade, cast ratio).",
++        "batch_column_sample": "Amostragem em lote de varias colunas para classificacao semantica.",
++        "numeric_history": "Historico temporal de metricas numericas (mean, stddev, percentis) para calibracao de regras.",
++        "row_count_history": "Historico de contagem de linhas por periodo para regra de RowCount.",
++        "distinct_count_history": "Historico de contagem de valores distintos por periodo.",
++        "categorical_distribution": "Distribuicao de frequencia de valores categoricos.",
++        "categorical_domain": "Dominio de valores (valores unicos) de coluna categorica.",
++        "uniqueness_check": "Verificacao de unicidade para deteccao de chaves primarias.",
++        "completeness_check": "Verificacao de completude (nulls) da coluna.",
++        "partition_values": "Listagem de valores de particao disponiveis.",
++        "partition_range": "Range de particoes (min/max) para definir lookback.",
++    }
++    return purposes.get(query_name, f"Query do tipo `{query_name}`.")
++
++
++# ---------------------------------------------------------------------------
++# Query list (most recent first)
++# ---------------------------------------------------------------------------
++for i, entry in enumerate(reversed(filtered)):
++    # Status badge
++    if entry.exception_type:
++        status_icon = ":red_circle:"
++        status_text = "ERRO"
++    elif entry.cache_hit:
++        status_icon = ":large_blue_circle:"
++        status_text = "CACHE"
++    else:
++        status_icon = ":green_circle:"
++        status_text = "OK"
++
++    # Cost per query
++    entry_cost = entry.estimated_cost_usd
++    cost_label = f"${entry_cost:.6f}" if entry_cost > 0 else "—"
++
++    # Bytes scanned
++    if entry.bytes_scanned and entry.bytes_scanned > 0:
++        mb = entry.bytes_scanned / (1024 ** 2)
++        if mb >= 1024:
++            scan_label = f"{mb / 1024:.2f} GB"
++        else:
++            scan_label = f"{mb:.2f} MB"
++    else:
++        scan_label = "—"
++
++    # Column label
++    col_label = f" → `{entry.column}`" if entry.column else ""
++
++    # Header line
++    header = (
++        f"{status_icon} **{entry.query_name}**{col_label} — "
++        f"{status_text} · {entry.elapsed_ms}ms · {entry.rows_returned} rows · "
++        f"custo {cost_label}"
++    )
++
++    with st.expander(header, expanded=False):
++        # Detail grid
++        d1, d2, d3 = st.columns(3)
++
++        with d1:
++            st.markdown("**Detalhes da execucao**")
++            st.markdown(f"- **Query:** {entry.query_name}")
++            st.markdown(f"- **Dataset:** {entry.dataset}")
++            st.markdown(f"- **Coluna:** {entry.column or '(tabela inteira)'}")
++            st.markdown(f"- **Timestamp:** {entry.timestamp}")
++
++        with d2:
++            st.markdown("**Metricas**")
++            st.markdown(f"- **Tempo:** {entry.elapsed_ms}ms")
++            st.markdown(f"- **Rows retornadas:** {entry.rows_returned}")
++            st.markdown(f"- **Bytes escaneados:** {scan_label}")
++            st.markdown(f"- **Custo:** {cost_label}")
++            st.markdown(f"- **Cache hit:** {'Sim' if entry.cache_hit else 'Nao'}")
++
++        with d3:
++            st.markdown("**Motivo da query**")
++            st.markdown(f"{_describe_query_purpose(entry.query_name)}")
++
++            if entry.exception_type:
++                st.markdown("**Erro**")
++                st.error(f"Tipo: `{entry.exception_type}`")
++
++        # SQL
++        if entry.sql:
++            st.markdown("**SQL executado:**")
++            st.code(entry.sql, language="sql")
++        else:
++            st.caption("SQL nao disponivel para esta query.")
++
++st.divider()
++
++# ---------------------------------------------------------------------------
++# Export
++# ---------------------------------------------------------------------------
++exp1, exp2 = st.columns(2)
++with exp1:
++    st.download_button(
++        label="Exportar log completo (JSON)",
++        data=client.logger.export_json(),
++        file_name="gdq_query_log.json",
++        mime="application/json",
++        key="ql_export_json",
++    )
++with exp2:
++    if st.button("Voltar ao Dashboard", key="ql_back_dash"):
++        st.switch_page("app.py")
 
 Contexto do projeto:
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-21T22:28:26Z`
+- Generated at: `2026-03-23T01:24:30Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -620,10 +840,12 @@ Este projeto usa governanca obrigatoria de deploy. O agente nao pode improvisar 
 Regras obrigatorias:
 
 1. Nunca seguir para deploy sem passar por `task gate1`, `task snapshot`, `task review-agents-consensus` e `task build-release`.
-2. Nunca promover para producao sem staging aprovado.
-3. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
-4. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
-5. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
+2. Nunca fazer `git push` da branch de trabalho antes de staging aprovado. O push remoto acontece somente depois de `task verify-staging-governance-proof`, via `task push-after-staging`.
+3. Nunca promover para producao sem staging aprovado.
+4. Nunca fazer deploy de producao sem aprovacao humana explicita via `ALLOW_PROD_DEPLOY=true`.
+5. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
+6. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
+7. O staging nao deve ser derrubado logo apos o deploy de producao. So pode ser desligado depois de `task verify-prod`, `task verify-prod-governance-proof` e uma aprovacao explicita via `ALLOW_STAGING_CLEANUP=true`.
 
 Arquivos obrigatorios de evidencia:
 
@@ -663,22 +885,24 @@ Fluxo obrigatorio daqui pra frente:
 6. Rodar `task smoke-staging`.
 7. Gravar `reviews/latest/deploy-staging-check.md`.
 8. Rodar `task verify-staging-governance-proof`.
-9. So depois disso considerar staging apto.
-10. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
-11. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
-12. Rodar `task verify-prod`.
-13. Rodar `task verify-prod-governance-proof`.
+9. Rodar `task push-after-staging`.
+10. So depois disso considerar staging apto e branch remota alinhada.
+11. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
+12. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
+13. Rodar `task verify-prod`.
+14. Rodar `task verify-prod-governance-proof`.
+15. Opcionalmente, so depois de producao estavel, rodar `ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod`.
 
 Quando o usuario disser “segue com o fluxo de deploy”, o agente deve responder executando ou orientando exatamente essa sequencia. Nao pode pular direto para `git status`, `git diff`, `git push` ou deploy.
 
 Prompts operacionais canônicos:
 
 ```text
-Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico e valide com task verify-staging-governance-proof.
+Siga a governanca obrigatoria deste projeto. Antes de qualquer deploy, execute ou instrua exatamente o fluxo task gate1 -> task snapshot -> task review-agents-consensus -> task build-release -> task deploy-staging -> task smoke-staging. So depois disso grave reviews/latest/deploy-staging-check.md no formato canonico, valide com task verify-staging-governance-proof e faca o push remoto somente via task push-after-staging.
 ```
 
 ```text
-Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof.
+Siga a governanca obrigatoria deste projeto. Nao faca deploy de producao sem staging aprovado e sem aprovacao humana explicita. Antes da producao, grave reviews/latest/deploy-prod-check.md no formato canonico. Depois execute somente task push-after-staging, ALLOW_PROD_DEPLOY=true task promote-prod, task verify-prod e task verify-prod-governance-proof. So derrube o staging se houver aprovacao explicita via ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod.
 ```
 
 ---
@@ -763,10 +987,6 @@ def score_proposal(proposal: RuleProposal) -> RuleScore:
 - Funcoes de dialeto injetadas pelo `QueryBuilder`
 
 ### Nomes de arquivos
-
-- snake_case para todos os arquivos Python
-- Templates SQL: `<proposito>_<contexto>.sql` (ex: `numeric_history.sql`)
-- Testes: `test_<modulo>.py`
 
 
 ```
@@ -965,13 +1185,15 @@ tasks:
         6. task smoke-staging
         7. Gerar reviews/latest/deploy-staging-check.md
         8. task verify-staging-governance-proof
+        9. task push-after-staging
 
         Para producao:
-        9. Revisar staging aprovado
-        10. Gerar reviews/latest/deploy-prod-check.md
-        11. ALLOW_PROD_DEPLOY=true task promote-prod
-        12. task verify-prod
-        13. task verify-prod-governance-proof
+        10. Revisar staging aprovado
+        11. Gerar reviews/latest/deploy-prod-check.md
+        12. ALLOW_PROD_DEPLOY=true task promote-prod
+        13. task verify-prod
+        14. task verify-prod-governance-proof
+        15. Opcional: ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod
 
         Deploy por comando ad hoc fora do Taskfile e proibido.
         EOF
@@ -982,25 +1204,31 @@ tasks:
       - |
         test -f reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
+        grep -nE '^commit_sha: .+$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^environment: staging$' reviews/latest/deploy-staging-check.md
+        grep -nE '^environment: staging$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^gate1: (pass|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
+        grep -nE '^snapshot_commit: [0-9a-f]{7,40}$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^gate2: (pass|warning|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^release_build: (pass|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^staging_deploy: (pass|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^staging_smoke: (pass|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
+        grep -nE '^verdict: (ok|warning|fail)$' reviews/latest/deploy-staging-check.md
       - |
-        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); grep -nE "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-staging-check.md'
+
+  push-after-staging:
+    desc: Faz git push somente apos staging aprovado
+    cmds:
+      - task: verify-staging-governance-proof
+      - git push
 
   promote-prod:
     desc: Portao 5
@@ -1027,39 +1255,433 @@ tasks:
       - |
         test -f reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
+        grep -nE '^commit_sha: .+$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^environment: prod$' reviews/latest/deploy-prod-check.md
+        grep -nE '^environment: prod$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
+        grep -nE '^staging_governance: (pass|fail)$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
+        grep -nE '^prod_approval: explicit$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
+        grep -nE '^prod_deploy: (pass|fail)$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
+        grep -nE '^prod_verify: (pass|fail)$' reviews/latest/deploy-prod-check.md
       - |
-        rg -n '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
+        grep -nE '^verdict: (ok|warning|fail)$' reviews/latest/deploy-prod-check.md
       - |
-        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); rg -n "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
+        bash -lc 'sha_short=$(git rev-parse --short HEAD); sha_full=$(git rev-parse HEAD); grep -nE "^commit_sha: (${sha_short}|${sha_full})$" reviews/latest/deploy-prod-check.md'
+
+  cleanup-staging-after-prod:
+    desc: Derruba o staging somente apos producao estavel e validada
+    cmds:
+      - bash -lc 'test "${ALLOW_STAGING_CLEANUP:-false}" = "true" || { echo "Refusing staging cleanup without ALLOW_STAGING_CLEANUP=true." >&2; exit 1; }'
+      - task: verify-prod
+      - task: verify-prod-governance-proof
+      - sudo /home/aalbertoni/.config/homelab/scripts/stack-down gdq-proposer-staging
 
   rollback-last:
-    desc: Faz rollback para a ultima release saudavel
-    cmds:
-      - sudo /usr/local/bin/stack-rollback gdq-proposer
 
-  pipeline-staging:
-    desc: Executa gates ate staging interno
-    cmds:
-      - task: gate1
-      - task: snapshot
-      - task: review-agents-consensus
-      - task: build-release
-      - task: deploy-staging
-      - task: smoke-staging
-      - task: verify-staging-governance-proof
+```
 
-  pipeline-prod:
+## File: Dockerfile
+
+```text
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+ENV STREAMLIT_SERVER_HEADLESS=true
+ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+ENV PORT=8501
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app.py .
+COPY run.py .
+COPY config.py .
+COPY core ./core
+COPY infra ./infra
+COPY services ./services
+COPY strategies ./strategies
+COPY pages ./pages
+COPY queries ./queries
+COPY docs ./docs
+COPY .env.example ./.env.example
+
+RUN useradd --create-home --uid 1000 appuser \
+    && mkdir -p /app/logs /app/presets /app/mock_data /app/aws_test_data \
+    && chown -R appuser:appuser /app
+
+USER appuser
+EXPOSE 8501
+
+CMD ["sh", "-lc", "python -m streamlit run app.py --server.address=0.0.0.0 --server.port=${PORT:-8501} --server.headless=true --browser.gatherUsageStats=false"]
+
+```
+
+## File: requirements.txt
+
+```text
+# Core
+streamlit>=1.30
+plotly>=5.18
+pandas>=2.1
+numpy>=1.26
+
+# Athena
+pyathena>=3.0
+boto3>=1.34
+
+# Templates
+jinja2>=3.1
+
+# Testes
+pytest>=8.0
+pytest-cov>=5.0
+duckdb>=1.0
+pyarrow>=14.0
+
+```
+
+## File: app.py
+
+```text
+"""
+GDQ Rule Proposer — Entry point Streamlit.
+
+Dashboard com overview do projeto, metricas da sessao e navegacao guiada.
+"""
+
+import os
+import subprocess
+
+import streamlit as st
+
+from config import load_config
+from infra.athena_client import AthenaClient
+
+__version__ = "0.2.0"
+
+def get_client() -> AthenaClient:
+    """Get or create a cached AthenaClient in session_state."""
+    if "client" not in st.session_state:
+        config = load_config()
+        st.session_state["config"] = config
+        st.session_state["client"] = AthenaClient(config)
+    return st.session_state["client"]
+
+
+
+# ---------------------------------------------------------------------------
+# Sidebar (environment-aware)
+# ---------------------------------------------------------------------------
+
+def render_sidebar():
+    config = st.session_state.get("config")
+
+    st.sidebar.title("GDQ Rule Proposer")
+    st.sidebar.caption(f"v{__version__}")
+    st.sidebar.divider()
+
+    # Utility links
+    if st.sidebar.button("Query Log", key="sidebar_qlog", help="Historico de queries da sessao"):
+        st.switch_page("pages/07_query_log.py")
+    if st.sidebar.button("Diagnostico", key="sidebar_diag", help="Verificar status do ambiente"):
+        st.switch_page("pages/06_diagnostico.py")
+
+    if not config:
+        return
+
+    # Active config indicator
+    if "dataset_config" in st.session_state:
+        cfg = st.session_state["dataset_config"]
+        n_sel = len(cfg.selected_columns) if cfg.selected_columns else 0
+        st.sidebar.divider()
+        st.sidebar.success(f"Config ativa: `{cfg.schema}.{cfg.table}` ({n_sel} colunas)")
+        n_cart = len(st.session_state.get("rule_cart", []))
+        if n_cart:
+            st.sidebar.caption(f"Carrinho: {n_cart} regra(s)")
+
+
+# ---------------------------------------------------------------------------
+# Main page — Dashboard
+# ---------------------------------------------------------------------------
+
+def main():
+    st.set_page_config(
+        page_title="GDQ Rule Proposer",
+        page_icon=":shield:",
+        layout="wide",
+    )
+
+    # Init client + health check real
+    try:
+        client = get_client()
+        # Testar conexao real (apenas uma vez por sessao)
+        if not st.session_state.get("_health_check_done"):
+            client.health_check()
+            st.session_state["_health_check_done"] = True
+        connection_ok = True
+        connection_error = None
+    except Exception as e:
+        connection_ok = False
+        connection_error = str(e)
+        client = None
+        # Limpar estado para re-testar na proxima tentativa
+        st.session_state.pop("_health_check_done", None)
+        st.session_state.pop("client", None)
+
+    render_sidebar()
+
+    config = st.session_state.get("config")
+
+    # --- Header ---
+    header_col, status_col = st.columns([4, 1])
+    with header_col:
+        st.title("GDQ Rule Proposer")
+        st.caption(
+            f"v{__version__} — Proposta automatica de regras AWS Glue Data Quality"
+        )
+    with status_col:
+        if connection_ok:
+            st.success("Conectado")
+        else:
+            st.error("Desconectado")
+
+    if not connection_ok:
+        st.error(
+            f"Falha na conexao: {connection_error}"
+        )
+
+        # Detectar profile para oferecer login
+        profile = ""
+        try:
+            cfg = load_config()
+            profile = cfg.athena.aws_profile
+        except Exception:
+            profile = os.environ.get("GDQ_AWS_PROFILE", "")
+
+        is_auth_error = any(
+            kw in (connection_error or "").lower()
+            for kw in ["expirad", "credenci", "token", "expired", "invalid", "autenticacao"]
+        )
+
+        btn_col1, btn_col2, btn_col3 = st.columns(3)
+
+        with btn_col1:
+            if is_auth_error and profile:
+                if st.button(f"Fazer login AWS (SSO)", type="primary", key="sso_login"):
+                    with st.spinner(f"Executando: aws sso login --profile {profile} ..."):
+                        try:
+                            result = subprocess.run(
+                                ["aws", "sso", "login", "--profile", profile],
+                                capture_output=True,
+                                text=True,
+                                timeout=120,
+                            )
+                            if result.returncode == 0:
+                                st.session_state.pop("_health_check_done", None)
+                                st.session_state.pop("client", None)
+                                st.success("Login realizado! Recarregando...")
+                                st.rerun()
+                            else:
+                                st.error(
+                                    f"Falha no login. Execute manualmente no terminal:\n"
+                                    f"`aws sso login --profile {profile}`"
+                                )
+                        except subprocess.TimeoutExpired:
+                            st.warning(
+                                "Timeout aguardando login. Execute manualmente no terminal:\n"
+                                f"`aws sso login --profile {profile}`"
+                            )
+                        except FileNotFoundError:
+                            st.error("AWS CLI nao encontrado. Instale primeiro.")
+
+        with btn_col2:
+            if st.button("Tentar reconectar", key="retry_conn"):
+                st.session_state.pop("_health_check_done", None)
+                st.session_state.pop("client", None)
+                st.rerun()
+
+        with btn_col3:
+            if st.button("Abrir Diagnostico", key="diag_on_error"):
+                st.switch_page("pages/06_diagnostico.py")
+
+        st.stop()
+
+    # --- Metric cards ---
+    n_cart = len(st.session_state.get("rule_cart", []))
+    has_config = "dataset_config" in st.session_state
+
+    # Cost from query logger
+    summary = client.logger.get_session_summary()
+    if summary["estimated_cost_usd"] > 0:
+        cost_str = f"${summary['estimated_cost_usd']:.4f}"
+        cost_help = (
+            f"{summary['total_queries']} queries, "
+            f"{summary['cache_hits']} cache hits, "
+            f"${summary['estimated_cost_usd']:.4f} estimado"
+        )
+    elif summary["total_queries"] > 0:
+        cost_str = "$0.0000"
+        cost_help = (
+            f"{summary['total_queries']} queries executadas "
+            f"({summary['cache_hits']} cache hits Athena, 0 bytes escaneados)"
+        )
+    else:
+        cost_str = "$0.00"
+        cost_help = "Nenhuma query executada nesta sessao"
+
+    m1, m2 = st.columns(2)
+    with m1:
+        st.metric("Regras no carrinho", n_cart)
+    with m2:
+        st.metric("Custo da sessao", cost_str, help=cost_help)
+
+    st.divider()
+
+    # --- "Como funciona" — 4 steps ---
+    st.subheader("Como funciona")
+
+    s1, s2, s3, s4, s5 = st.columns(5)
+
+    with s1:
+        st.markdown("### 1. Setup")
+        st.markdown(
+            "Configure a **tabela**, o **eixo temporal** e selecione as **colunas** "
+            "para analise."
+        )
+        if st.button("Ir para Setup", type="primary", key="nav_setup"):
+            st.switch_page("pages/01_setup.py")
+
+    with s2:
+        st.markdown("### 2. Explore")
+        st.markdown(
+            "Calibre regras com graficos interativos e **backtest** em tempo real."
+        )
+        if has_config:
+            if st.button("Ir para Explore", key="nav_explore"):
+                st.switch_page("pages/02_explore.py")
+        else:
+            st.caption("Configure o Setup primeiro.")
+
+    with s3:
+
+```
+
+## File: config.py
+
+```text
+"""
+Configuracao do GDQ Rule Proposer.
+Carrega de variaveis de ambiente ou .env file.
+
+O app roda localmente com acesso ao Athena real via AWS CLI profile.
+"""
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class AthenaConfig:
+    region: str = "sa-east-1"
+    workgroup: str = "analytics-workgroup-v3"
+    s3_output: str = ""                # s3://bucket/athena-results/
+    catalog: str = "AwsDataCatalog"
+    aws_profile: str = ""              # AWS CLI named profile
+    query_timeout_seconds: int = 120   # default, adaptado pela volumetria
+    cache_ttl_metadata: int = 3600     # 1h
+    cache_ttl_history: int = 900       # 15min
+    cache_ttl_profiling: int = 1800    # 30min
+    cost_warning_threshold_usd: float = 0.50
+
+
+@dataclass
+class GlueTestConfig:
+    """Configuracao para integracao com Thundera (Glue DQ)."""
+    glue_job_name: str = "glueplataformathundera"
+    region: str = ""  # defaults to AthenaConfig.region if empty
+    poll_interval_seconds: int = 15
+    poll_timeout_seconds: int = 600
+    default_squad: str = ""
+    default_comunidade: str = ""
+    default_racf: str = ""
+    default_periodicidade: str = "D"
+    default_tipo_qualidade: str = "POUSADO"
+    default_conta: str = "DISTRIBUICAOMODELO"
+    default_timeout: str = "60"
+    default_workers: str = "20"
+
+
+@dataclass
+class AppConfig:
+    athena: AthenaConfig = field(default_factory=AthenaConfig)
+    glue_test: GlueTestConfig = field(default_factory=GlueTestConfig)
+    log_dir: str = "logs"
+    preset_dir: str = "presets"
+
+
+def load_config() -> AppConfig:
+    """Carrega configuracao do ambiente.
+
+    Hierarquia:
+    1. Variaveis de ambiente (sempre prevalecem)
+    2. Arquivo .env
+    3. Defaults
+
+    Variaveis de ambiente:
+    - GDQ_ATHENA_REGION: regiao AWS
+    - GDQ_ATHENA_WORKGROUP: workgroup do Athena
+    - GDQ_ATHENA_S3_OUTPUT: bucket de output
+    - GDQ_AWS_PROFILE: named profile do AWS CLI
+    """
+    # Tentar carregar .env file
+    env_file = Path(".env")
+    if env_file.exists():
+        _load_dotenv(env_file)
+
+    # AWS profile: da env var ou do .env file
+    aws_profile = os.getenv("GDQ_AWS_PROFILE", "")
+    if aws_profile and not os.environ.get("AWS_PROFILE"):
+        os.environ["AWS_PROFILE"] = aws_profile
+
+    athena = AthenaConfig(
+        region=os.getenv("GDQ_ATHENA_REGION", "sa-east-1"),
+        workgroup=os.getenv("GDQ_ATHENA_WORKGROUP", "analytics-workgroup-v3"),
+        s3_output=os.getenv("GDQ_ATHENA_S3_OUTPUT", ""),
+        aws_profile=aws_profile,
+    )
+
+    glue_test = GlueTestConfig(
+        glue_job_name=os.getenv("GDQ_GLUE_JOB_NAME", "glueplataformathundera"),
+        region=os.getenv("GDQ_GLUE_REGION", ""),
+        default_racf=os.getenv("GDQ_RACF", ""),
+        default_squad=os.getenv("GDQ_SQUAD", ""),
+        default_comunidade=os.getenv("GDQ_COMUNIDADE", ""),
+    )
+
+    return AppConfig(athena=athena, glue_test=glue_test)
+
+
+def _load_dotenv(path: Path):
+    """Parser simples de .env (sem dependencia externa)."""
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
 
 ```
 
@@ -1096,24 +1718,24 @@ tasks:
 ## Diff Stat vs HEAD
 
 ```text
- reviews/latest/architecture.json      |  13 +-
- reviews/latest/architecture.prompt.md | 522 +++++++++--------------
- reviews/latest/architecture.raw.txt   |  13 +-
- reviews/latest/codex.json             |  19 +-
- reviews/latest/codex.prompt.md        | 771 +++++++++++++++-------------------
- reviews/latest/codex.raw.txt          |   2 +-
- reviews/latest/diff.patch             | 522 +++++++++--------------
- reviews/latest/project-context.md     | 251 +++++++----
- reviews/latest/release-ops.json       |  15 +-
- reviews/latest/release-ops.prompt.md  | 522 +++++++++--------------
- reviews/latest/release-ops.raw.txt    |  15 +-
- reviews/latest/security.json          |  11 +-
- reviews/latest/security.prompt.md     | 522 +++++++++--------------
- reviews/latest/security.raw.txt       |  11 +-
- reviews/latest/summary.json           |  72 ++--
- reviews/latest/tests.json             |  12 +-
- reviews/latest/tests.prompt.md        | 522 +++++++++--------------
- reviews/latest/tests.raw.txt          |  12 +-
- 18 files changed, 1540 insertions(+), 2287 deletions(-)
+ reviews/latest/architecture.json      |    9 +-
+ reviews/latest/architecture.prompt.md |  558 +++++++++++-----
+ reviews/latest/architecture.raw.txt   |    9 +-
+ reviews/latest/codex.json             |   18 +-
+ reviews/latest/codex.prompt.md        | 1130 +++++++++++++++++++++++++--------
+ reviews/latest/codex.raw.txt          |    2 +-
+ reviews/latest/diff.patch             |  558 +++++++++++-----
+ reviews/latest/project-context.md     |  529 ++++++++++++---
+ reviews/latest/release-ops.json       |   12 +-
+ reviews/latest/release-ops.prompt.md  |  558 +++++++++++-----
+ reviews/latest/release-ops.raw.txt    |   12 +-
+ reviews/latest/security.json          |    9 +-
+ reviews/latest/security.prompt.md     |  558 +++++++++++-----
+ reviews/latest/security.raw.txt       |    9 +-
+ reviews/latest/summary.json           |   62 +-
+ reviews/latest/tests.json             |   12 +-
+ reviews/latest/tests.prompt.md        |  558 +++++++++++-----
+ reviews/latest/tests.raw.txt          |   12 +-
+ 18 files changed, 3339 insertions(+), 1276 deletions(-)
 
 ```

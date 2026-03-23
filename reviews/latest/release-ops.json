@@ -2,9 +2,10 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage (binario) incluido no diff \u2014 nao deveria ser commitado; adicionar ao .gitignore.",
-    "Tasks de verificacao (verify-staging-governance-proof, verify-prod-governance-proof) dependem de `rg` (ripgrep) estar instalado no ambiente de deploy \u2014 confirmar presenca na imagem Docker/compose.",
-    "promote-prod agora exige ALLOW_PROD_DEPLOY=true e evidencia de staging antes de executar \u2014 operadores existentes precisam ser informados da mudanca de fluxo."
+    "Arquivo .coverage binario incluido no diff \u2014 nao deve ser commitado (adicionar ao .gitignore se ausente).",
+    "Nova pagina 07_query_log.py depende de client.logger.entries e client.logger.get_session_summary() \u2014 confirmar que esses atributos existem no AthenaClient atual.",
+    "Taskfile troca rg por grep -nE nas validacoes de governance proof \u2014 funcionalmente equivalente, mas confirmar que grep esta disponivel no ambiente de deploy (containers Alpine podem precisar de pacote extra).",
+    "Task cleanup-staging-after-prod referencia path hardcoded /home/aalbertoni/.config/homelab/scripts/stack-down \u2014 verificar se path existe no ambiente de deploy."
   ],
-  "summary": "Diff adiciona governanca obrigatoria de deploy (gates, evidencia, aprovacao humana) sem alterar codigo de aplicacao \u2014 implantabilidade e health check nao sao afetados; rollback continua disponivel via task rollback-last."
+  "summary": "Mudancas de governanca (push-after-staging, cleanup-staging-after-prod), migracao rg->grep no Taskfile e nova pagina Query Log \u2014 sem bloqueios, apenas verificacoes menores recomendadas."
 }

@@ -2,13 +2,16 @@
 
 ```json
 {
-  "status": "APROVADO",
+  "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage binario incluido no diff — nao deveria ser commitado (adicionar ao .gitignore)",
-    "Tasks de governanca (verify-staging-governance-proof, verify-prod-governance-proof) dependem de `rg` estar instalado no ambiente de deploy — sem fallback se ausente",
-    "Nenhum teste automatizado valida os novos tasks do Taskfile (ex: testar que promote-prod falha sem ALLOW_PROD_DEPLOY=true)"
+    "Nova pagina pages/07_query_log.py (218 linhas) nao possui nenhum teste unitario. Funcao publica _describe_query_purpose() deveria ter teste cobrindo query_names conhecidos e fallback para nomes desconhecidos.",
+    "Pagina depende de client.logger.entries e client.logger.get_session_summary() — nao ha teste de contrato validando shape desses retornos contra o que a UI espera (campos: total_queries, total_elapsed_ms, estimated_cost_usd, cache_hits, errors; entry fields: query_name, column, exception_type, cache_hit, elapsed_ms, rows_returned, estimated_cost_usd, bytes_scanned, dataset, timestamp, sql).",
+    "Nova task push-after-staging no Taskfile.yml executa git push incondicional — nao ha teste ou validacao de que remote esta configurado. Falha silenciosa possivel se remote nao existir.",
+    "Nova task cleanup-staging-after-prod usa sudo com path hardcoded (/home/aalbertoni/.config/homelab/scripts/stack-down) — acoplamento a usuario especifico, pode falhar em outro ambiente.",
+    "Troca de rg por grep -nE no Taskfile.yml e funcional mas nao ha teste automatizado das tasks de governanca (verify-staging-governance-proof, verify-prod-governance-proof). Regressao possivel se regex divergir.",
+    "Arquivo .coverage binario incluido no diff — nao deveria ser versionado."
   ],
-  "summary": "Mudancas de governanca de deploy via Taskfile e CLAUDE.md — sem codigo Python novo, sem funcoes publicas adicionadas, sem risco de regressao funcional."
+  "summary": "Mudancas de governanca (Taskfile/CLAUDE.md) sao documentacao/infra sem risco funcional, mas a nova pagina Query Log carece de testes unitarios e de contrato para as dependencias de logger."
 }
 ```

@@ -2,12 +2,13 @@
 
 ```json
 {
-  "status": "APROVADO",
+  "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Arquivo .coverage (binario) incluido no diff — normalmente deve estar no .gitignore para evitar vazamento de paths locais ou metricas internas.",
-    "promote-prod usa 'sudo /usr/local/bin/deploy-prod' — garantir que o script destino valida inputs e que sudoers restringe apenas esse comando."
+    "O arquivo .coverage (binario) esta no diff e nao deveria ser commitado — adicionar ao .gitignore se ainda nao estiver.",
+    "pages/07_query_log.py exibe SQL completo via st.code(entry.sql) — verificar que o SQL nao contem credenciais ou tokens inline antes de exibir ao usuario.",
+    "Taskfile.yml cleanup-staging-after-prod executa sudo com path hardcoded (/home/aalbertoni/.config/homelab/scripts/stack-down) — path especifico de usuario pode ser um risco de path traversal se o script for modificavel por outros usuarios."
   ],
-  "summary": "Diff adiciona governanca de deploy com gates obrigatorios, evidencia auditavel e bloqueio de producao sem aprovacao explicita — sem segredos, injecao ou permissoes excessivas."
+  "summary": "Mudancas de governanca e query log sem bloqueadores criticos; atentar ao .coverage no versionamento e ao SQL exibido no log."
 }
 ```
