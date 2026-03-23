@@ -1,7 +1,7 @@
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-23T04:06:18Z`
+- Generated at: `2026-03-23T04:08:11Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -935,42 +935,24 @@ def _load_dotenv(path: Path):
 ## Status
 
 ```text
- M reviews/latest/architecture.json
  M reviews/latest/architecture.prompt.md
- M reviews/latest/architecture.raw.txt
- M reviews/latest/codex.prompt.md
  M reviews/latest/diff.patch
  M reviews/latest/project-context.md
- M reviews/latest/release-ops.json
  M reviews/latest/release-ops.prompt.md
- M reviews/latest/release-ops.raw.txt
- M reviews/latest/security.json
  M reviews/latest/security.prompt.md
- M reviews/latest/security.raw.txt
- M reviews/latest/tests.json
  M reviews/latest/tests.prompt.md
- M reviews/latest/tests.raw.txt
 
 ```
 
 ## Diff Stat vs HEAD
 
 ```text
- reviews/latest/architecture.json      |   12 +-
- reviews/latest/architecture.prompt.md | 2671 ++++++++++++++++++++++++--------
- reviews/latest/architecture.raw.txt   |   14 +-
- reviews/latest/codex.prompt.md        | 2732 +++++++++++++++++++++++++--------
- reviews/latest/diff.patch             | 2671 ++++++++++++++++++++++++--------
- reviews/latest/project-context.md     |   28 +-
- reviews/latest/release-ops.json       |    9 +-
- reviews/latest/release-ops.prompt.md  | 2671 ++++++++++++++++++++++++--------
- reviews/latest/release-ops.raw.txt    |    9 +-
- reviews/latest/security.json          |    9 +-
- reviews/latest/security.prompt.md     | 2671 ++++++++++++++++++++++++--------
- reviews/latest/security.raw.txt       |   11 +-
- reviews/latest/tests.json             |   15 +-
- reviews/latest/tests.prompt.md        | 2671 ++++++++++++++++++++++++--------
- reviews/latest/tests.raw.txt          |   17 +-
- 15 files changed, 12449 insertions(+), 3762 deletions(-)
+ reviews/latest/architecture.prompt.md | 2110 +--------------------------------
+ reviews/latest/diff.patch             | 2110 +--------------------------------
+ reviews/latest/project-context.md     |   29 +-
+ reviews/latest/release-ops.prompt.md  | 2110 +--------------------------------
+ reviews/latest/security.prompt.md     | 2110 +--------------------------------
+ reviews/latest/tests.prompt.md        | 2110 +--------------------------------
+ 6 files changed, 76 insertions(+), 10503 deletions(-)
 
 ```

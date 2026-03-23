@@ -4,11 +4,7 @@
 {
   "status": "APROVADO",
   "blockers": [],
-  "warnings": [
-    "Arquivo .coverage (binario) incluido no diff — nao deveria ser commitado (adicionar ao .gitignore se ausente)",
-    "core/calibration_advisor.py importa funcao privada _filter_valid de core.statistical_engine — acoplamento a API interna que pode quebrar sem aviso",
-    "ProposalService.calibrate_params e um thin wrapper que apenas faz import + forward — util como facade mas pode ser dead code se UI ja chama calibrate() diretamente"
-  ],
-  "summary": "Novo modulo de calibracao explicavel (core/) com testes unitarios, substituindo grid search na UI — separacao source/deploy/runtime preservada, sem acesso a secrets ou I/O."
+  "warnings": [],
+  "summary": "Remoção de arquivo binário .coverage do repositório e adição ao .gitignore — higiene de repo, sem impacto em source, deploy, runtime ou secrets."
 }
 ```

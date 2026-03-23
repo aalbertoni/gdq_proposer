@@ -1,12 +1,8 @@
 ```json
 {
-  "status": "ATENCAO",
+  "status": "APROVADO",
   "blockers": [],
-  "warnings": [
-    "Arquivo .coverage (binario) incluido no diff — contem metadados de execucao de testes que nao devem ser commitados. Adicionar ao .gitignore.",
-    "Etapa 4 (validate_with_backtest) captura Exception generica com `except Exception as e` e inclui `str(e)` na justificativa retornada ao usuario. Se a excecao contiver detalhes internos (paths, credenciais de conexao), eles podem vazar na UI do Streamlit.",
-    "Broad `except Exception: continue` em find_best_sigma, add_margin_if_needed e validate_with_backtest engole silenciosamente erros, dificultando diagnostico. Nao e blocker de seguranca, mas pode mascarar falhas inesperadas."
-  ],
-  "summary": "Codigo puro sem I/O, sem SQL, sem segredos — risco baixo; atentar para .coverage no repositorio e possivel vazamento de detalhes de excecao na UI."
+  "warnings": [],
+  "summary": "Diff seguro: remove arquivo binario .coverage do repo e adiciona ao .gitignore para evitar commits futuros."
 }
 ```

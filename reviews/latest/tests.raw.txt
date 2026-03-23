@@ -1,16 +1,8 @@
 ```json
 {
-  "status": "ATENCAO",
+  "status": "APROVADO",
   "blockers": [],
-  "warnings": [
-    "Funcao `_build_recommendation` (publica via underscore mas chamada internamente) nao tem teste unitario isolado — apenas coberta indiretamente via `calibrate()`. Testar paths de regime (ZERO_INFLATED, SPARSE, TRENDING) diretamente.",
-    "Testes usam `random.seed(42)` dentro de cada fixture mas nao isolam o estado global do random — se a ordem de execucao mudar (pytest-randomly), seeds podem interagir. Considerar usar `random.Random(42)` local.",
-    "Nenhum teste cobre o path de ajuste na etapa 4 onde `margin_enabled=True` e sigma e incrementado em 0.5 (branch de 'Tentar aumentar sigma'). O teste `test_adjusts_when_recent_fps` nao asserta que o ajuste de fato ocorreu.",
-    "Nenhum teste para `_render_calibration` na UI (02_explore.py) — o branch de legado (`del st.session_state[cache_key]; return`) que limpa cache antigo de dict nao tem cobertura.",
-    "Explainer `_append_regime_detail` nao tem teste isolado — coberta apenas indiretamente via `explain_calibration` com serie volatil. Regimes como ZERO_INFLATED, SPARSE, TRENDING nao sao exercitados.",
-    "`calibrate()` com `metric_kind='frequency'` e structural_break nao tem teste combinado — paths de `backtest_frequency_dual_guard` com N reduzido ficam sem cobertura.",
-    "Arquivo `.coverage` binario esta no diff — nao deveria ser commitado (adicionar ao .gitignore)."
-  ],
-  "summary": "Boa cobertura do core e orquestrador com 560 linhas de testes, mas faltam testes isolados para _build_recommendation, path de ajuste de sigma na etapa 4, e combinacoes de metric_kind com regimes especificos."
+  "warnings": [],
+  "summary": "Housekeeping: remove .coverage binario do tracking e adiciona ao .gitignore — nenhum codigo funcional alterado, nenhum teste necessario."
 }
 ```

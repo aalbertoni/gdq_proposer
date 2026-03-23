@@ -1,13 +1,10 @@
 ```json
 {
-  "status": "ATENCAO",
+  "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    ".coverage (binario) esta no diff — arquivo de cobertura nao deve ser commitado. Adicionar ao .gitignore.",
-    "Nao ha logging (logger.info/debug) no novo calibration_advisor.py — em caso de falha silenciosa em producao, nao havera rastro nos logs do app.",
-    "Cache legado: se um usuario tinha session_state com dict do auto-tune antigo, o codigo limpa e recalibra (L601-603), mas o rerun implicito pode causar flash visual na UI.",
-    "find_best_params() no ProposalService nao foi removido — codigo morto permanece (chamado apenas pelo novo calibrate_params wrapper e possivelmente por paths antigos nao cobertos no diff)."
+    "Arquivo binário .coverage foi removido do repositório — confirmar que nenhum pipeline CI depende dele estar versionado (improvável, mas vale checar)."
   ],
-  "summary": "Substituicao do auto-tune grid search por calibracao sequencial em 5 etapas — mudanca puramente logica (core + UI), sem impacto em infra, compose, migrations ou health check. Deployavel com ressalvas menores."
+  "summary": "Housekeeping: remove artefato de cobertura acidentalmente commitado e adiciona ao .gitignore — zero impacto em deploy, health check ou rollback."
 }
 ```

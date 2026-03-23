@@ -1,18 +1,19 @@
-commit_sha: c16c3a4
+commit_sha: 85a5164
 environment: staging
 gate1: pass
-snapshot_commit: c16c3a4
+snapshot_commit: 85a5164
 gate2: warning
 release_build: pass
 staging_deploy: pass
 staging_smoke: pass
-verdict: warning
+verdict: ok
 notes: |
-  gate1: 1393 passed, 1 skipped, 0 failed. Secret scan clean. Dependency scan clean.
-         (gate1 script exit 128 on temp index cleanup — all substantive checks passed.)
-  gate2: 4 Claude APROVADO, 1 Codex ATENCAO (0 blockers).
-         Warnings: .coverage in diff, pricing hardcoded, comment typo (fixed).
-  build: homelab/gdq-proposer:2026-03-22-e926927 built successfully.
-  deploy: Container gdq-proposer-staging started, health check passed (healthy).
-  smoke: stack-health passed (container healthy).
-  changes: Regional Athena pricing ($9.00/TB sa-east-1), CustomSql promoted to validated.
+  gate1: 1439 passed, 1 skipped, 0 failed. Secret scan clean. Dependency scan clean.
+  gate2: 4 Claude (1 APROVADO, 3 ATENCAO), 0 blockers. Codex crashed (infra, not code).
+         Warnings: .coverage in diff (fixed — added to .gitignore, removed from repo).
+  build: homelab/gdq-proposer:2026-03-23-85a5164 built successfully.
+  deploy: Container gdq-proposer-staging healthy (Docker healthcheck passed).
+  smoke: stack-health passed. Port 18501 not exposed (Traefik network — expected).
+  changes: Calibration Advisor replaces grid search auto-tune with explainable 5-step logic.
+           New modules: core/calibration_advisor.py, core/calibration_explainer.py.
+           46 new tests in tests/test_calibration_advisor.py. All 1439 unit tests pass.

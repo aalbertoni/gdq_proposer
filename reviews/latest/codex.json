@@ -1,11 +1,6 @@
 {
-  "status": "ATENCAO",
+  "status": "APROVADO",
   "blockers": [],
-  "warnings": [
-    "Arquivo binario `.coverage` entrou no diff sem valor de release e nao deveria ser versionado; aumenta ruido de review e pode expor caminhos/metadados locais.",
-    "`QueryLogEntry` continua com `_price_per_tb` default de `5.00`, enquanto `QueryLogger` passou a defaultar `sa-east-1` (`9.00`). Entradas instanciadas fora de `log_query()` continuam calculando custo errado, o que fragiliza diagnostico operacional.",
-    "`QueryLogger.get_session_summary()` aplica o preco regional sobre o total agregado de bytes, mas nao replica o minimo faturavel de 10 MB por query usado em `QueryLogEntry.estimated_cost_usd`; isso pode subestimar custo de sessao e reduzir a confiabilidade do guardrail/telemetria.",
-    "Comentario em `infra/query_logger.py` diz `sa-east-1 = $6.25/TB`, mas a tabela e os testes usam `9.00`; a implementacao parece consistente com os testes, porem a documentacao inline ficou contraditoria."
-  ],
-  "summary": "O diff parece seguro do ponto de vista funcional principal: a promocao de capacidades para `validated` esta coerente com os testes e nao ha sinal de regressao de deploy, segredos ou fronteiras de infra. Ainda assim, ha lacunas operacionais no logging de custo e um artefato `.coverage` indevido no commit, entao o mais adequado e seguir com `ATENCAO`."
+  "warnings": [],
+  "summary": "Diff de higiene de reposit\u00f3rio: remove o artefato bin\u00e1rio `.coverage` versionado e passa a ignor\u00e1-lo em `.gitignore`. N\u00e3o altera c\u00f3digo de aplica\u00e7\u00e3o, arquitetura, fluxo de deploy, secrets, testes executados, nem jornada/UX. N\u00e3o h\u00e1 risco concreto de regress\u00e3o funcional, seguran\u00e7a ou release."
 }
