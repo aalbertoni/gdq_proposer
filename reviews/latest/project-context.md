@@ -1,7 +1,7 @@
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-23T04:08:11Z`
+- Generated at: `2026-03-23T16:55:56Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -935,24 +935,50 @@ def _load_dotenv(path: Path):
 ## Status
 
 ```text
+ M reviews/latest/architecture.json
  M reviews/latest/architecture.prompt.md
+ M reviews/latest/architecture.raw.txt
+ D reviews/latest/codex.json
+ M reviews/latest/codex.prompt.md
+ M reviews/latest/codex.raw.txt
  M reviews/latest/diff.patch
+ M reviews/latest/gate1-summary.json
  M reviews/latest/project-context.md
+ M reviews/latest/release-ops.json
  M reviews/latest/release-ops.prompt.md
+ M reviews/latest/release-ops.raw.txt
+ M reviews/latest/security.json
  M reviews/latest/security.prompt.md
+ M reviews/latest/security.raw.txt
+ M reviews/latest/summary.json
+ M reviews/latest/tests.json
  M reviews/latest/tests.prompt.md
+ M reviews/latest/tests.raw.txt
 
 ```
 
 ## Diff Stat vs HEAD
 
 ```text
- reviews/latest/architecture.prompt.md | 2110 +--------------------------------
- reviews/latest/diff.patch             | 2110 +--------------------------------
- reviews/latest/project-context.md     |   29 +-
- reviews/latest/release-ops.prompt.md  | 2110 +--------------------------------
- reviews/latest/security.prompt.md     | 2110 +--------------------------------
- reviews/latest/tests.prompt.md        | 2110 +--------------------------------
- 6 files changed, 76 insertions(+), 10503 deletions(-)
+ reviews/latest/architecture.json      |   6 +-
+ reviews/latest/architecture.prompt.md | 108 +++++++++++++++++----
+ reviews/latest/architecture.raw.txt   |   6 +-
+ reviews/latest/codex.json             |   6 --
+ reviews/latest/codex.prompt.md        | 171 ++++++++++++++++++++++++++++------
+ reviews/latest/codex.raw.txt          |   2 +-
+ reviews/latest/diff.patch             | 108 +++++++++++++++++----
+ reviews/latest/gate1-summary.json     |   6 +-
+ reviews/latest/project-context.md     |  24 +++--
+ reviews/latest/release-ops.json       |   6 +-
+ reviews/latest/release-ops.prompt.md  | 108 +++++++++++++++++----
+ reviews/latest/release-ops.raw.txt    |   8 +-
+ reviews/latest/security.json          |   2 +-
+ reviews/latest/security.prompt.md     | 108 +++++++++++++++++----
+ reviews/latest/security.raw.txt       |   4 +-
+ reviews/latest/summary.json           |  50 ++++++----
+ reviews/latest/tests.json             |  11 ++-
+ reviews/latest/tests.prompt.md        | 108 +++++++++++++++++----
+ reviews/latest/tests.raw.txt          |  13 ++-
+ 19 files changed, 689 insertions(+), 166 deletions(-)
 
 ```

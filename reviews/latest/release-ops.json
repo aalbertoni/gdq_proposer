@@ -2,7 +2,8 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Arquivo bin\u00e1rio .coverage foi removido do reposit\u00f3rio \u2014 confirmar que nenhum pipeline CI depende dele estar versionado (improv\u00e1vel, mas vale checar)."
+    "Mudanca de aspas simples para duplas em ColumnValues e uma alteracao de comportamento em regras GDQ geradas \u2014 confirmar que o motor GDQ em producao aceita aspas duplas em valores string antes de promover.",
+    "Apenas 1 teste unitario atualizado (test_categorical). Verificar se existem outros testes que validam a formatacao de strings em ColumnValues (ex: testes de integracao, testes de export/Thundera payload)."
   ],
-  "summary": "Housekeeping: remove artefato de cobertura acidentalmente commitado e adiciona ao .gitignore \u2014 zero impacto em deploy, health check ou rollback."
+  "summary": "Mudanca pontual e coesa de formatacao de strings em ColumnValues (aspas simples \u2192 duplas), com docs e help atualizados; sem impacto em infra, compose, healthcheck ou migracao."
 }

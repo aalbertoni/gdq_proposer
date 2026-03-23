@@ -297,8 +297,10 @@ Resultados dos agentes Claude:
 {
   "status": "APROVADO",
   "blockers": [],
-  "warnings": [],
-  "summary": "Remo\u00e7\u00e3o de arquivo bin\u00e1rio .coverage do reposit\u00f3rio e adi\u00e7\u00e3o ao .gitignore \u2014 higiene de repo, sem impacto em source, deploy, runtime ou secrets."
+  "warnings": [
+    "Mudanca de aspas simples para duplas em ColumnValues e uma correcao de sintaxe GDQ \u2014 confirmar que o runtime GDQ real aceita aspas duplas em valores string antes de deploy."
+  ],
+  "summary": "Correcao consistente de sintaxe ColumnValues (aspas simples \u2192 duplas) em gerador, docs, UI e testes, sem violacao de separacao de camadas ou acoplamento indevido."
 }
 
 == security.json ==
@@ -306,15 +308,20 @@ Resultados dos agentes Claude:
   "status": "APROVADO",
   "blockers": [],
   "warnings": [],
-  "summary": "Diff seguro: remove arquivo binario .coverage do repo e adiciona ao .gitignore para evitar commits futuros."
+  "summary": "Mudanca puramente cosmetica: troca aspas simples por aspas duplas em valores string na sintaxe GDQ ColumnValues, sem impacto de seguranca."
 }
 
 == tests.json ==
 {
-  "status": "APROVADO",
+  "status": "ATENCAO",
   "blockers": [],
-  "warnings": [],
-  "summary": "Housekeeping: remove .coverage binario do tracking e adiciona ao .gitignore \u2014 nenhum codigo funcional alterado, nenhum teste necessario."
+  "warnings": [
+    "Apenas 1 teste atualizado (test_allowed_values_string_column). Faltam testes para casos de borda: strings com aspas duplas internas (ex: valor 'foo\"bar'), mix de numericos com strings, e valor NULL combinado com strings.",
+    "Nao ha teste de regressao explicito que valide que aspas simples NAO sao mais geradas \u2014 um teste parametrizado com assert '\\'' not in syntax evitaria regressao silenciosa.",
+    "O _format_column_value so tem cobertura indireta via generate(). Um teste unitario direto para _format_column_value com casos NULL, numerico, string simples e string com aspas duplas embedded aumentaria a confianca.",
+    "Verificar se testes de integracao existentes que geram sintaxe ColumnValues (DuckDB end-to-end) foram atualizados para refletir aspas duplas \u2014 risco de falha em CI se houver assertions com aspas simples em outros arquivos."
+  ],
+  "summary": "Mudanca correta e consistente (codigo, docs, help, teste), mas cobertura de edge cases insuficiente para a funcao _format_column_value."
 }
 
 == release-ops.json ==
@@ -322,34 +329,112 @@ Resultados dos agentes Claude:
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Arquivo bin\u00e1rio .coverage foi removido do reposit\u00f3rio \u2014 confirmar que nenhum pipeline CI depende dele estar versionado (improv\u00e1vel, mas vale checar)."
+    "Mudanca de aspas simples para duplas em ColumnValues e uma alteracao de sintaxe GDQ visivel em producao \u2014 regras ja exportadas com aspas simples nao serao retroativamente corrigidas.",
+    "Verificar se o runtime GDQ (AWS Glue Data Quality) aceita aspas duplas em ColumnValues. Se o runtime so aceitar aspas simples, regras geradas apos este deploy falharao na execucao.",
+    "Smoke test deve incluir geracao de regra ColumnValues com valores string para validar a nova sintaxe end-to-end."
   ],
-  "summary": "Housekeeping: remove artefato de cobertura acidentalmente commitado e adiciona ao .gitignore \u2014 zero impacto em deploy, health check ou rollback."
+  "summary": "Mudanca pontual de formatacao de strings em ColumnValues (aspas simples \u2192 duplas) com doc, help, teste e gerador alinhados; sem impacto em infra/deploy, mas requer validacao de compatibilidade com o runtime GDQ."
 }
 
 Diff para revisar:
-diff --git a/.coverage b/.coverage
-deleted file mode 100644
-index 81d8dfb..0000000
-Binary files a/.coverage and /dev/null differ
-diff --git a/.gitignore b/.gitignore
-index 343ab3c..9026de7 100644
---- a/.gitignore
-+++ b/.gitignore
-@@ -3,6 +3,7 @@
- __pycache__/
- *.pyc
- .pytest_cache/
-+.coverage
+diff --git a/core/gdq_rule_generator.py b/core/gdq_rule_generator.py
+index d22895b..0009a4c 100644
+--- a/core/gdq_rule_generator.py
++++ b/core/gdq_rule_generator.py
+@@ -126,7 +126,7 @@ class GDQRuleGenerator:
  
- # Ambiente
- .env
+     @staticmethod
+     def _format_column_value(value: str) -> str:
+-        """Formata valor para ColumnValues: numerico sem aspas, string com aspas, NULL sem aspas."""
++        """Formata valor para ColumnValues: numerico sem aspas, string com aspas duplas, NULL sem aspas."""
+         s = str(value)
+         if s.upper() == "NULL":
+             return "NULL"
+@@ -135,7 +135,7 @@ class GDQRuleGenerator:
+             float(s)
+             return s
+         except (ValueError, TypeError):
+-            return f"'{s}'"
++            return f'"{s}"'
+ 
+     def _generate_distinct_count(
+         self,
+diff --git a/docs/gdq_syntax_reference.md b/docs/gdq_syntax_reference.md
+index 667d783..6154542 100644
+--- a/docs/gdq_syntax_reference.md
++++ b/docs/gdq_syntax_reference.md
+@@ -13,7 +13,7 @@
+ | Nomes de regra | **CamelCase**: `Mean`, `StandardDeviation`, `RowCount`, `CustomSql` |
+ | Funções dinâmicas | `avg(last(N))`, `std(last(N))` — sempre em **lowercase** |
+ | Valores string em CustomSql | Com aspas simples: `'1'`, `'2'` |
+-| Valores em ColumnValues | Numéricos sem aspas: `in [2, 1, 3]`; strings com aspas simples: `in ['SP', 'RJ']`; `NULL` nunca tem aspas |
++| Valores em ColumnValues | Numéricos sem aspas: `in [2, 1, 3]`; strings com aspas duplas: `in ["SP", "RJ"]`; `NULL` nunca tem aspas |
+ | Buffer numérico | `0.01` adicionado/subtraído para evitar falso positivo em zero |
+ | Operadores | `>=`, `<=`, `=`, `in`, `between ... and` |
+ 
+@@ -245,15 +245,15 @@ ColumnValues {COL} in [{VALUE1}, {VALUE2}, {VALUE3}]
+ 
+ ```
+ ColumnValues COD_SITU_OPCR in [2, 1, 3]
+-ColumnValues UF_EMPR in ['SP', 'RJ', 'MG']
+-ColumnValues STATUS in ['ATIVO', NULL, 'INATIVO']
++ColumnValues UF_EMPR in ["SP", "RJ", "MG"]
++ColumnValues STATUS in ["ATIVO", NULL, "INATIVO"]
+ ```
+ 
+ ### Notas
+ 
+ - Valores numéricos: **sem aspas** — `in [2, 1, 3]`
+-- Valores string: **com aspas simples** — `in ['SP', 'RJ', 'MG']`
+-- `NULL` **nunca** tem aspas — `in ['ATIVO', NULL]`
++- Valores string: **com aspas duplas** — `in ["SP", "RJ", "MG"]`
++- `NULL` **nunca** tem aspas — `in ["ATIVO", NULL]`
+ - Sem aspas no nome da coluna (sempre UPPERCASE)
+ - Ordem dos valores não importa semanticamente
+ 
+diff --git a/pages/05_help.py b/pages/05_help.py
+index e399db1..6d641f0 100644
+--- a/pages/05_help.py
++++ b/pages/05_help.py
+@@ -729,8 +729,8 @@ def _render_sintaxe_gdq():
+         )
+         st.code(
+             "ColumnValues COD_SITU_OPCR in [2, 1, 3]\n"
+-            "ColumnValues UF_EMPR in ['SP', 'RJ', 'MG']\n"
+-            "ColumnValues STATUS in ['ATIVO', NULL, 'INATIVO']",
++            'ColumnValues UF_EMPR in ["SP", "RJ", "MG"]\n'
++            'ColumnValues STATUS in ["ATIVO", NULL, "INATIVO"]',
+             language=None,
+         )
+ 
+@@ -1029,7 +1029,7 @@ def _render_faq_glossario():
+     )
+ 
+     glossary = [
+-        ("AllowedValues", "Regra GDQ estatica que verifica se todos os valores de uma coluna pertencem a uma lista fixa. Sintaxe: ColumnValues COL in [...]. Valores numericos sem aspas, strings com aspas simples, NULL sem aspas."),
++        ("AllowedValues", "Regra GDQ estatica que verifica se todos os valores de uma coluna pertencem a uma lista fixa. Sintaxe: ColumnValues COL in [...]. Valores numericos sem aspas, strings com aspas duplas, NULL sem aspas."),
+         ("Athena", "Servico da AWS para consultar dados no data lake via SQL. A ferramenta usa Athena para analisar historico de tabelas."),
+         ("Auto-tuning", "Busca automatica da melhor combinacao de N/sigma/margem via grid search. Testa multiplas combinacoes e retorna a que maximiza cobertura com menos falsos positivos."),
+         ("Backtest", "Simulacao da regra no historico passado para medir cobertura, falsos positivos e estabilidade. Usa janela rolante para simular o comportamento real da regra em producao."),
+diff --git a/tests/test_categorical.py b/tests/test_categorical.py
+index 28d69b1..1f0940d 100644
+--- a/tests/test_categorical.py
++++ b/tests/test_categorical.py
+@@ -253,7 +253,7 @@ class TestGDQGeneratorCategorical:
+             suggested_values=["SP", "RJ", "MG"],
+         )
+         syntax = self.gen.generate(p)
+-        assert "ColumnValues UF in ['SP', 'RJ', 'MG']" == syntax
++        assert 'ColumnValues UF in ["SP", "RJ", "MG"]' == syntax
+ 
+     def test_frequency_static_numeric_column(self):
+         """Coluna numerica: valor no case when sem aspas."""
 
 Contexto do projeto:
 # Project Context
 
 - Project: `gdq-proposer`
-- Generated at: `2026-03-23T04:08:11Z`
+- Generated at: `2026-03-23T16:52:41Z`
 - Purpose: curated context bundle for Codex plan/review criticism.
 
 # Core Files
@@ -1283,24 +1368,48 @@ def _load_dotenv(path: Path):
 ## Status
 
 ```text
+ M reviews/latest/architecture.json
  M reviews/latest/architecture.prompt.md
+ M reviews/latest/architecture.raw.txt
+ M reviews/latest/codex.json
+ M reviews/latest/codex.prompt.md
+ M reviews/latest/codex.raw.txt
  M reviews/latest/diff.patch
  M reviews/latest/project-context.md
+ M reviews/latest/release-ops.json
  M reviews/latest/release-ops.prompt.md
+ M reviews/latest/release-ops.raw.txt
+ M reviews/latest/security.json
  M reviews/latest/security.prompt.md
+ M reviews/latest/security.raw.txt
+ M reviews/latest/summary.json
+ M reviews/latest/tests.json
  M reviews/latest/tests.prompt.md
+ M reviews/latest/tests.raw.txt
 
 ```
 
 ## Diff Stat vs HEAD
 
 ```text
- reviews/latest/architecture.prompt.md | 2110 +--------------------------------
- reviews/latest/diff.patch             | 2110 +--------------------------------
- reviews/latest/project-context.md     |   29 +-
- reviews/latest/release-ops.prompt.md  | 2110 +--------------------------------
- reviews/latest/security.prompt.md     | 2110 +--------------------------------
- reviews/latest/tests.prompt.md        | 2110 +--------------------------------
- 6 files changed, 76 insertions(+), 10503 deletions(-)
+ reviews/latest/architecture.json      |   6 +-
+ reviews/latest/architecture.prompt.md | 108 +++++++++++++++++++++----
+ reviews/latest/architecture.raw.txt   |   6 +-
+ reviews/latest/codex.json             |  10 ++-
+ reviews/latest/codex.prompt.md        | 146 ++++++++++++++++++++++++++--------
+ reviews/latest/codex.raw.txt          |   2 +-
+ reviews/latest/diff.patch             | 108 +++++++++++++++++++++----
+ reviews/latest/project-context.md     |  23 +++---
+ reviews/latest/release-ops.json       |   5 +-
+ reviews/latest/release-ops.prompt.md  | 108 +++++++++++++++++++++----
+ reviews/latest/release-ops.raw.txt    |   7 +-
+ reviews/latest/security.json          |   2 +-
+ reviews/latest/security.prompt.md     | 108 +++++++++++++++++++++----
+ reviews/latest/security.raw.txt       |   4 +-
+ reviews/latest/summary.json           |  46 +++++++----
+ reviews/latest/tests.json             |  11 ++-
+ reviews/latest/tests.prompt.md        | 108 +++++++++++++++++++++----
+ reviews/latest/tests.raw.txt          |  13 ++-
+ 18 files changed, 663 insertions(+), 158 deletions(-)
 
 ```

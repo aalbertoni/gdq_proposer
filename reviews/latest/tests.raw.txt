@@ -1,8 +1,15 @@
+
+
 ```json
 {
-  "status": "APROVADO",
+  "status": "ATENCAO",
   "blockers": [],
-  "warnings": [],
-  "summary": "Housekeeping: remove .coverage binario do tracking e adiciona ao .gitignore — nenhum codigo funcional alterado, nenhum teste necessario."
+  "warnings": [
+    "Apenas 1 teste atualizado (test_allowed_values_string_column). Faltam testes para casos de borda: strings com aspas duplas internas (ex: valor 'foo\"bar'), mix de numericos+strings+NULL na mesma lista, e string vazia.",
+    "Nao ha teste de regressao explicito que valide que aspas simples NAO sao mais geradas — um teste parametrizado com assert '\\'' not in syntax blindaria contra reintroducao do bug.",
+    "O teste existente foi apenas atualizado para refletir a nova sintaxe, mas nao foi adicionado nenhum teste novo para _format_column_value cobrindo o escape de aspas duplas dentro de strings.",
+    "Verificar se CustomSql continua usando aspas simples conforme documentacao (Valores string em CustomSql: 'com aspas simples') — a mudanca e apenas para ColumnValues, mas seria prudente ter teste contratual confirmando essa separacao."
+  ],
+  "summary": "Mudanca correta de aspas simples para duplas em ColumnValues, mas cobertura de testes insuficiente para casos de borda e regressao."
 }
 ```

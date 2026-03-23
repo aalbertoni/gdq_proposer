@@ -1,8 +1,10 @@
+
+
 ```json
 {
   "status": "APROVADO",
   "blockers": [],
   "warnings": [],
-  "summary": "Diff seguro: remove arquivo binario .coverage do repo e adiciona ao .gitignore para evitar commits futuros."
+  "summary": "Mudanca cosmética de aspas simples para duplas em valores string da sintaxe GDQ ColumnValues — sem impacto de seguranca."
 }
 ```

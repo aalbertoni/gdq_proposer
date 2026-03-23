@@ -4,7 +4,9 @@
 {
   "status": "APROVADO",
   "blockers": [],
-  "warnings": [],
-  "summary": "Remoção de arquivo binário .coverage do repositório e adição ao .gitignore — higiene de repo, sem impacto em source, deploy, runtime ou secrets."
+  "warnings": [
+    "Mudanca de aspas simples para duplas em ColumnValues e uma correcao de sintaxe GDQ — confirmar que o runtime GDQ real aceita aspas duplas em valores string antes de promover para producao."
+  ],
+  "summary": "Correcao consistente de sintaxe GDQ (aspas simples → duplas em ColumnValues) aplicada em codigo, docs, UI e testes sem violacao de separacao de camadas."
 }
 ```

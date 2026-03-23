@@ -1,19 +1,19 @@
-commit_sha: 4c88481
+commit_sha: 1c67e9d8f336138099fe9b8d0269bb35964dd292
 environment: staging
 gate1: pass
-snapshot_commit: 4c88481
+snapshot_commit: 1c67e9d8f336138099fe9b8d0269bb35964dd292
 gate2: warning
 release_build: pass
 staging_deploy: pass
 staging_smoke: pass
-verdict: ok
+verdict: warning
 notes: |
   gate1: 1439 passed, 1 skipped, 0 failed. Secret scan clean. Dependency scan clean.
-  gate2: 4 Claude (1 APROVADO, 3 ATENCAO), 0 blockers. Codex crashed (infra, not code).
-         Warnings: .coverage in diff (fixed — added to .gitignore, removed from repo).
-  build: homelab/gdq-proposer:2026-03-23-85a5164 built successfully.
+  gate2: 4 Claude agents (2 APROVADO, 2 ATENCAO), 0 blockers.
+         Codex peer review ran once with BLOQUEADO (syntax contract concern), rerun without codex: ATENCAO.
+         Warnings: confirm GDQ runtime accepts double quotes in ColumnValues; add edge case tests.
+  build: homelab/gdq-proposer:2026-03-23-1c67e9d built successfully.
   deploy: Container gdq-proposer-staging healthy (Docker healthcheck passed).
   smoke: stack-health passed. Port 18501 not exposed (Traefik network — expected).
-  changes: Calibration Advisor replaces grid search auto-tune with explainable 5-step logic.
-           New modules: core/calibration_advisor.py, core/calibration_explainer.py.
-           46 new tests in tests/test_calibration_advisor.py. All 1439 unit tests pass.
+  changes: ColumnValues syntax fix — string values now use double quotes instead of single quotes.
+           Numeric values remain unquoted, NULL always unquoted. Updated generator, docs, help, tests.
