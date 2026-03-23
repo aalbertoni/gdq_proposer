@@ -6,39 +6,39 @@
       "status": "APROVADO",
       "blockers": [],
       "warnings": [
-        "CustomSql expression is repeated twice in >= / <= form (sigma_lower + sigma_upper, margin_lower + margin_upper, floor_ceil), increasing rendered rule length \u2014 acceptable trade-off for GDQ compatibility but worth monitoring if rule size limits exist.",
-        "test_hybrid_no_constraint_when_full_range uses OR logic (`assert '>= 0.0000) AND' not in result or '<= 100.0000)' not in result`) which always passes if either clause is absent \u2014 consider using AND to ensure neither clause is present."
+        "Remocao de _render_diagnostics_panel (~200 linhas) e uma mudanca significativa de UX \u2014 confirmar que os diagnosticos (change-point, sazonalidade, IQR/MAD, cobertura ponderada) continuam acessiveis por outra via ou foram intencionalmente descontinuados.",
+        "evaluate_proposal() agora e chamado incondicionalmente quando profile != None, mesmo que o resultado nao seja usado (has_trade_off=False) \u2014 custo computacional marginal mas desnecessario nesses casos."
       ],
-      "summary": "Refactoring puro de sintaxe GDQ: substitui 'between X and Y' por '>= X AND <= Y' em renderer, generator, docs e testes \u2014 sem impacto em separacao de camadas, secrets ou runtime."
+      "summary": "Refatoracao de UI (explainer condicional por margin_enabled, layout de calibracao side-by-side, remocao de diagnostics panel) confinada a camadas corretas (core/explainer, pages/UI, tests) sem violacao de boundaries."
     },
     "security": {
       "status": "APROVADO",
       "blockers": [],
       "warnings": [],
-      "summary": "Refatoracao sintatica de 'between X and Y' para '>= X AND <= Y' em regras GDQ, sem impacto de seguranca."
+      "summary": "Refatoracao de UI e logica de explicacao sem impacto de seguranca \u2014 nenhum segredo, input externo, SQL ou endpoint alterado."
     },
     "tests": {
       "status": "ATENCAO",
       "blockers": [],
       "warnings": [
-        "Teste test_hybrid_no_constraint_when_full_range usa logica OR (`or`) na asser\u00e7\u00e3o, tornando-o fraco \u2014 sempre passa se qualquer lado for verdadeiro. Deveria verificar que NENHUMA cl\u00e1usula absoluta aparece no resultado.",
-        "N\u00e3o h\u00e1 teste unit\u00e1rio dedicado para a mudan\u00e7a de precis\u00e3o de 2 para 4 casas decimais em _build_static_frequency (gdq_rule_generator.py). Os testes existentes cobrem indiretamente via assertions de string, mas um teste expl\u00edcito de arredondamento seria mais robusto.",
-        "Nenhum teste de regress\u00e3o verifica que a sintaxe antiga com 'between' N\u00c3O aparece mais na sa\u00edda \u2014 apenas verificam a presen\u00e7a da nova sintaxe. Um assert negativo ('between' not in syntax) preveniria regress\u00e3o."
+        "_explain_percentile foi modificada com a mesma logica de margin_enabled mas nao ganhou teste para margin_disabled (mean, stddev e rowcount tem, percentile nao)",
+        "_render_diagnostics_panel removida (~200 linhas) sem verificacao de que nenhum outro modulo a importa ou referencia",
+        "Logica de apply_clicked no 02_explore.py depende de has_result e apply_enabled mas nao ha teste de integracao cobrindo o fluxo Calibrar->Aplicar com o novo layout de botoes side-by-side"
       ],
-      "summary": "Mudan\u00e7a de 'between' para '>= / <=' consistente entre renderer, generator, docs e testes; sem blockers, mas asser\u00e7\u00e3o fraca em test_hybrid_no_constraint e aus\u00eancia de asserts negativos reduzem confian\u00e7a contra regress\u00e3o."
+      "summary": "Testes cobrem 3 de 4 funcoes explain modificadas; falta teste para _explain_percentile com margin_disabled e verificacao de dead code na remocao do diagnostics panel."
     },
     "release-ops": {
       "status": "APROVADO",
       "blockers": [],
       "warnings": [
-        "Mudanca de sintaxe GDQ (between -> >= AND <=) altera output de todas as regras CustomSql \u2014 confirmar compatibilidade com o parser do AWS Glue Data Quality antes de prod.",
-        "Precisao aumentada de 2 para 4 casas decimais (.2f -> .4f) nas regras estaticas \u2014 verificar se regras existentes em producao precisam ser regeneradas.",
-        "Testes atualizados cobrem os novos formatos, mas nao ha teste de contrato validando que o GDQ engine da AWS aceita a nova sintaxe com >= e <= separados."
+        "Funcao _render_diagnostics_panel removida (~200 linhas de UI) \u2014 confirmar que diagnosticos de calibragem nao sao mais necessarios ou foram movidos para outro local.",
+        "Expander 'O que e o dual guard?' removido \u2014 perda de contexto educativo para o usuario; verificar se ha alternativa in-app.",
+        "Botao 'Aplicar parametros sugeridos' movido para fora do bloco condicional de resultado \u2014 testar que o estado disabled funciona corretamente no Streamlit quando nao ha calibracao."
       ],
-      "summary": "Refatoracao de sintaxe CustomSql de 'between X and Y' para '>= X AND <= Y' com 4 casas decimais \u2014 codigo, testes e docs consistentes, sem risco de deploy, mas requer validacao de compatibilidade com o GDQ engine real."
+      "summary": "Refatoracao de UI (explore) e explainer: margem condicional, layout de botoes side-by-side, remocao de painel de diagnosticos; sem impacto em infra, deploy ou rollback."
     }
   },
-  "reviewed_commit": "556938653ac1eca99fd6e67fe2cc7dd597687046",
-  "reviewed_tree": "548b1194e1ce4bea2ca92d179dd17d63f93f448e",
-  "generated_at": "2026-03-23T18:42:30.951176Z"
+  "reviewed_commit": "075a6235cd0190aa657a6eeab3d917b30343b25f",
+  "reviewed_tree": "d1b9588ba9b0a38bf70fe080c90a87b2a3cc8241",
+  "generated_at": "2026-03-23T23:27:28.572435Z"
 }

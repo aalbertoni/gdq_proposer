@@ -176,6 +176,13 @@ class TestExplainRule:
         assert "% do volume" not in text
         assert "duas bandas" not in text
 
+    def test_percentile_margin_disabled_no_margin_text(self):
+        p = _make_proposal(RuleType.NUMERIC_PERCENTILE_BAND)
+        p.margin_enabled = False
+        text = explain_rule(p)
+        assert "**ou**" not in text
+        assert "% da media" not in text
+
 
 # ---------------------------------------------------------------------------
 # Tests: explain_rule_detail

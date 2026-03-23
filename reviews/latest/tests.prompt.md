@@ -20,252 +20,540 @@ Formato esperado:
 }
 
 Diff:
-diff --git a/core/gdq_renderer.py b/core/gdq_renderer.py
-index 37175fd..8fc8962 100644
---- a/core/gdq_renderer.py
-+++ b/core/gdq_renderer.py
-@@ -71,20 +71,28 @@ class DualGuardRenderer:
-         lo_margin = round(1 - margin, 2)
-         hi_margin = round(1 + margin, 2)
+diff --git a/core/rule_explainer.py b/core/rule_explainer.py
+index c2648e4..7025016 100644
+--- a/core/rule_explainer.py
++++ b/core/rule_explainer.py
+@@ -92,46 +92,67 @@ def _explain_mean(p: RuleProposal) -> str:
+     col = p.target_column
+     n = p.baseline_window or 30
+     k = p.baseline_n_sigma or 2.0
+-    margin = (p.baseline_margin_pct or 0.10) * 100
  
--        sigma_part = (
--            f'(CustomSql "{sql_expr}" between '
--            f"(avg(last({n})) - ({k} * std(last({n}))) - {buffer}) "
--            f"and (avg(last({n})) + ({k} * std(last({n}))) + {buffer}))"
-+        sigma_lower = (
-+            f'(CustomSql "{sql_expr}" >= '
-+            f"(avg(last({n})) - ({k} * std(last({n}))) - {buffer}))"
-         )
-+        sigma_upper = (
-+            f'(CustomSql "{sql_expr}" <= '
-+            f"(avg(last({n})) + ({k} * std(last({n}))) + {buffer}))"
-+        )
-+        sigma_part = f"({sigma_lower} AND {sigma_upper})"
+-    return (
++    base = (
+         f"Verifica se a **media** da coluna `{col}` esta dentro do esperado. "
+         f"A regra calcula a media dos ultimos **{n} periodos** e aceita o valor se estiver "
+-        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica, "
+-        f"**ou** dentro de **{margin:.0f}%** da media historica. "
+-        f"Se qualquer uma das duas bandas for atendida, a regra passa."
++        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica"
+     )
  
-         if not spec.margin_enabled:
-             return sigma_part
- 
--        margin_part = (
--            f'(CustomSql "{sql_expr}" between '
--            f"(avg(last({n})) * {lo_margin} - {buffer}) "
--            f"and (avg(last({n})) * {hi_margin} + {buffer}))"
-+        margin_lower = (
-+            f'(CustomSql "{sql_expr}" >= '
-+            f"(avg(last({n})) * {lo_margin} - {buffer}))"
-+        )
-+        margin_upper = (
-+            f'(CustomSql "{sql_expr}" <= '
-+            f"(avg(last({n})) * {hi_margin} + {buffer}))"
-         )
-+        margin_part = f"({margin_lower} AND {margin_upper})"
- 
-         dual_guard = f"({sigma_part} OR {margin_part})"
- 
-@@ -92,10 +100,12 @@ class DualGuardRenderer:
-         is_hybrid = spec.floor_pct > 0.0 or spec.ceiling_pct < 100.0
-         if is_hybrid:
-             floor_ceil = (
--                f'(CustomSql "{sql_expr}" between '
--                f"{spec.floor_pct} and {spec.ceiling_pct})"
-+                f'(CustomSql "{sql_expr}" >= '
-+                f"{spec.floor_pct:.4f}) AND "
-+                f'(CustomSql "{sql_expr}" <= '
-+                f"{spec.ceiling_pct:.4f})"
-             )
--            return f"({dual_guard} AND {floor_ceil})"
-+            return f"({dual_guard} AND ({floor_ceil}))"
- 
-         return dual_guard
- 
-diff --git a/core/gdq_rule_generator.py b/core/gdq_rule_generator.py
-index 0009a4c..05425b6 100644
---- a/core/gdq_rule_generator.py
-+++ b/core/gdq_rule_generator.py
-@@ -169,7 +169,11 @@ class GDQRuleGenerator:
-                 upper = overrides.custom_upper
-         athena_type = proposal.target_column_type or "string"
-         sql_inner = self._build_custom_sql_expression(col, value, athena_type)
--        return f'CustomSql "{sql_inner}" between {lower:.2f} and {upper:.2f}'
++    if p.margin_enabled:
++        margin = (p.baseline_margin_pct or 0.10) * 100
 +        return (
-+            f'(CustomSql "{sql_inner}" >= {lower:.4f})'
-+            f' AND '
-+            f'(CustomSql "{sql_inner}" <= {upper:.4f})'
++            f"{base}, "
++            f"**ou** dentro de **{margin:.0f}%** da media historica. "
++            f"Se qualquer uma das duas bandas for atendida, a regra passa."
 +        )
++
++    return f"{base}."
++
  
-     def _build_custom_sql_expression(
-         self, col: str, value: str, athena_type: str = "string",
-diff --git a/docs/gdq_syntax_reference.md b/docs/gdq_syntax_reference.md
-index 6154542..163f1ea 100644
---- a/docs/gdq_syntax_reference.md
-+++ b/docs/gdq_syntax_reference.md
-@@ -141,7 +141,7 @@ Verificar que a **proporção de uma categoria específica** em uma coluna está
- ### Sintaxe
+ def _explain_stddev(p: RuleProposal) -> str:
+     col = p.target_column
+     n = p.baseline_window or 30
+     k = p.baseline_n_sigma or 2.0
+-    margin = (p.baseline_margin_pct or 0.10) * 100
  
- ```
--CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" between {LOWER} and {UPPER}
-+(CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= {LOWER}) AND (CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= {UPPER})
- ```
+-    return (
++    base = (
+         f"Verifica se o **desvio padrao** da coluna `{col}` esta dentro do esperado. "
+         f"A regra calcula o desvio padrao medio dos ultimos **{n} periodos** e aceita se estiver "
+-        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica, "
+-        f"**ou** dentro de **{margin:.0f}%** da media historica. "
+-        f"Detecta se a dispersao dos dados mudou significativamente."
++        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica"
+     )
  
- ### Parâmetros
-@@ -150,16 +150,16 @@ CustomSql "select cast(sum(case when {COL} = '{VALUE}' then 1 else 0 end) as dou
- |-----------|-----------|
- | `{COL}` | Nome da coluna (sem aspas, uppercase) — dentro do SQL |
- | `{VALUE}` | Valor da categoria (com aspas simples dentro do SQL) |
--| `{LOWER}` | Percentual mínimo esperado (pode ser negativo como buffer) |
--| `{UPPER}` | Percentual máximo esperado |
-+| `{LOWER}` | Percentual mínimo esperado (4 casas decimais, pode ser negativo como buffer) |
-+| `{UPPER}` | Percentual máximo esperado (4 casas decimais) |
- | `"from primary"` | Referência à tabela sendo avaliada (sempre `primary`) |
++    if p.margin_enabled:
++        margin = (p.baseline_margin_pct or 0.10) * 100
++        return (
++            f"{base}, "
++            f"**ou** dentro de **{margin:.0f}%** da media historica. "
++            f"Detecta se a dispersao dos dados mudou significativamente."
++        )
++
++    return f"{base}. Detecta se a dispersao dos dados mudou significativamente."
++
  
- ### Exemplos Reais
+ def _explain_rowcount(p: RuleProposal) -> str:
+     table = p.target_table
+     n = p.baseline_window or 30
+     k = p.baseline_n_sigma or 2.0
+-    margin = (p.baseline_margin_pct or 0.10) * 100
  
- ```
--CustomSql "select cast(sum(case when COD_SITU_OPCR = '1' then 1 else 0 end) as double) * 100.0 / count(*) from primary" between 85.61 and 97.66
--CustomSql "select cast(sum(case when COD_SITU_OPCR = '2' then 1 else 0 end) as double) * 100.0 / count(*) from primary" between 2.31 and 14.35
--CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as double) * 100.0 / count(*) from primary" between -0.01 and 5.04
-+(CustomSql "select cast(sum(case when COD_SITU_OPCR = '1' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= 85.6100) AND (CustomSql "select cast(sum(case when COD_SITU_OPCR = '1' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= 97.6600)
-+(CustomSql "select cast(sum(case when COD_SITU_OPCR = '2' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= 2.3100) AND (CustomSql "select cast(sum(case when COD_SITU_OPCR = '2' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= 14.3500)
-+(CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as double) * 100.0 / count(*) from primary" >= -0.0100) AND (CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as double) * 100.0 / count(*) from primary" <= 5.0400)
- ```
+-    return (
++    base = (
+         f"Verifica se o **volume de linhas** da tabela `{table}` esta dentro do esperado. "
+         f"A regra calcula a quantidade media de linhas dos ultimos **{n} periodos** e aceita se estiver "
+-        f"dentro de **{_fmt_k(k)} desvios padrao** do volume historico, "
+-        f"**ou** dentro de **{margin:.0f}%** do volume historico. "
+-        f"Detecta cargas com volume anomalo (muito acima ou abaixo)."
++        f"dentro de **{_fmt_k(k)} desvios padrao** do volume historico"
+     )
  
- ### Notas Importantes
-@@ -167,10 +167,11 @@ CustomSql "select cast(sum(case when COD_SITU_OPCR = '3' then 1 else 0 end) as d
- - O SQL inteiro fica entre **aspas duplas**
- - Valores de string dentro do SQL usam **aspas simples**: `= '1'`
- - O resultado é em **percentual (0-100)**, não proporção (0-1)
--- `LOWER` pode ser negativo (ex: `-0.01`) como buffer para categorias muito raras
-+- `LOWER` pode ser negativo (ex: `-0.0100`) como buffer para categorias muito raras
- - `from primary` é a referência fixa à tabela sendo avaliada
- - O `cast(... as double)` é obrigatório para evitar divisão inteira
--- Valores de LOWER/UPPER são **estáticos** (calculados pela ferramenta), não dinâmicos
-+- Valores de LOWER/UPPER são **estáticos** (calculados pela ferramenta) com **4 casas decimais**
-+- Usa `>=` e `<=` (não `between`)
++    if p.margin_enabled:
++        margin = (p.baseline_margin_pct or 0.10) * 100
++        return (
++            f"{base}, "
++            f"**ou** dentro de **{margin:.0f}%** do volume historico. "
++            f"Detecta cargas com volume anomalo (muito acima ou abaixo)."
++        )
++
++    return f"{base}. Detecta cargas com volume anomalo (muito acima ou abaixo)."
++
  
- ---
+ def _explain_completeness(p: RuleProposal) -> str:
+     col = p.target_column
+@@ -207,16 +228,23 @@ def _explain_percentile(p: RuleProposal) -> str:
+     pct_label = p.metric_name.upper() if p.metric_name else "P50"
+     n = p.baseline_window or 30
+     k = p.baseline_n_sigma or 2.0
+-    margin = (p.baseline_margin_pct or 0.10) * 100
  
-@@ -210,15 +211,15 @@ A regra passa se: (dentro da banda dinamica) **AND** (entre floor e ceiling).
- ### Sintaxe
+-    return (
++    base = (
+         f"Verifica se o **{pct_label}** da coluna `{col}` esta dentro do esperado. "
+         f"A regra calcula o percentil historico dos ultimos **{n} periodos** e aceita se estiver "
+-        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica, "
+-        f"**ou** dentro de **{margin:.0f}%** da media historica. "
+-        f"Detecta mudancas na distribuicao dos dados (caudas)."
++        f"dentro de **{_fmt_k(k)} desvios padrao** da media historica"
+     )
  
- ```
--((DUAL_GUARD_EXPRESSION) AND (CustomSql "..." between {FLOOR} and {CEILING}))
-+((DUAL_GUARD_EXPRESSION) AND ((CustomSql "..." >= {FLOOR}) AND (CustomSql "..." <= {CEILING})))
- ```
++    if p.margin_enabled:
++        margin = (p.baseline_margin_pct or 0.10) * 100
++        return (
++            f"{base}, "
++            f"**ou** dentro de **{margin:.0f}%** da media historica. "
++            f"Detecta mudancas na distribuicao dos dados (caudas)."
++        )
++
++    return f"{base}. Detecta mudancas na distribuicao dos dados (caudas)."
++
  
- Onde `DUAL_GUARD_EXPRESSION` e a mesma expressao da secao 4b (sigma OR margem).
+ def _explain_category_frequency(p: RuleProposal) -> str:
+     col = p.target_column
+diff --git a/pages/02_explore.py b/pages/02_explore.py
+index d022894..160d270 100644
+--- a/pages/02_explore.py
++++ b/pages/02_explore.py
+@@ -303,23 +303,31 @@ def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=N
+         st.caption(f"Motivo: {'; '.join(reasons)}")
  
- ### Parametros adicionais
+     if show_syntax:
+-        with st.expander("Sintaxe GDQ e detalhes", expanded=False):
+-            st.code(proposal.gdq_syntax_preview)
+-            st.info(explain_rule(proposal))
+-            detail = explain_rule_detail(proposal)
+-            if detail.strip():
+-                st.markdown(detail)
+-
+-            # Regime context and trade-offs
+-            if profile is not None:
+-                regime_ctx = explain_regime_context(proposal, profile)
+-                if regime_ctx:
++        st.code(proposal.gdq_syntax_preview)
++        st.info(explain_rule(proposal))
++
++        detail = explain_rule_detail(proposal)
++        has_detail = bool(detail and detail.strip())
++        has_regime = False
++        has_trade_off = False
++
++        if profile is not None:
++            regime_ctx = explain_regime_context(proposal, profile)
++            has_regime = bool(regime_ctx)
++            ev = evaluate_proposal(proposal, profile=profile)
++            trade_off_text = explain_trade_offs(proposal, ev)
++            has_trade_off = bool(trade_off_text)
++
++        if has_detail or has_regime or has_trade_off:
++            with st.expander("Detalhes", expanded=False):
++                if has_detail:
++                    st.markdown(detail)
++
++                if has_regime:
+                     st.markdown("---")
+                     st.markdown(regime_ctx)
  
--- `{FLOOR}`: Limite inferior absoluto (percentual 0-100). Ex: `5.0`
--- `{CEILING}`: Limite superior absoluto (percentual 0-100). Ex: `50.0`
-+- `{FLOOR}`: Limite inferior absoluto (percentual 0-100, 4 casas decimais). Ex: `5.0000`
-+- `{CEILING}`: Limite superior absoluto (percentual 0-100, 4 casas decimais). Ex: `50.0000`
+-                ev = evaluate_proposal(proposal, profile=profile)
+-                trade_off_text = explain_trade_offs(proposal, ev)
+-                if trade_off_text:
++                if has_trade_off:
+                     st.markdown("---")
+                     st.markdown(trade_off_text)
  
- ### Quando usar
+@@ -364,212 +372,6 @@ def _update_col_health(column: str, rule_key: str, confidence: ConfidenceLevel)
+     st.session_state[health_key][column][rule_key] = confidence
  
-diff --git a/pages/05_help.py b/pages/05_help.py
-index 6d641f0..7492a98 100644
---- a/pages/05_help.py
-+++ b/pages/05_help.py
-@@ -1050,8 +1050,8 @@ def _render_faq_glossario():
-         ("Falso positivo", "Estimativa (~) de periodos normais que seriam reprovados pela regra. Criterio: viola a regra mas esta dentro de 4 sigma da media global. Ideal: 0."),
-         ("Floor", "Limite inferior absoluto (%) usado no modo hibrido. A frequencia nunca pode ficar abaixo deste valor, independente do dual guard."),
-         ("Frequencia dinamica", "Regra CustomSql de frequencia que usa avg(last(N)) e std(last(N)) para auto-ajustar os limites a cada execucao do GDQ."),
--        ("Frequencia estatica", "Regra CustomSql de frequencia com limites fixos (between X and Y). Calculada pela ferramenta com base no historico, mas nao se auto-ajusta."),
--        ("Frequencia hibrida", "Regra dinamica com floor/ceiling absolutos. Combina auto-ajuste com limites de negocio fixos. Logica: dual guard AND between floor and ceiling."),
-+        ("Frequencia estatica", "Regra CustomSql de frequencia com limites fixos (>= lower AND <= upper, 4 casas decimais). Calculada pela ferramenta com base no historico, mas nao se auto-ajusta."),
-+        ("Frequencia hibrida", "Regra dinamica com floor/ceiling absolutos. Combina auto-ajuste com limites de negocio fixos. Logica: dual guard AND (>= floor AND <= ceiling)."),
-         ("GDQ", "AWS Glue Data Quality. Servico da AWS para definir e executar regras de qualidade de dados em pipelines Glue."),
-         ("Granularidade", "Frequencia dos periodos de analise: diario (1 periodo por dia), mensal (1 periodo por mes)."),
-         ("IsPrimaryKey", "Regra GDQ que valida unicidade de uma combinacao de colunas. Colunas separadas por espaco, sem aspas."),
-diff --git a/tests/test_categorical.py b/tests/test_categorical.py
-index 1f0940d..7e30d13 100644
---- a/tests/test_categorical.py
-+++ b/tests/test_categorical.py
-@@ -210,7 +210,8 @@ class TestGDQGeneratorCategorical:
-         assert 'CustomSql' in syntax
-         assert 'STATUS' in syntax and "'A'" in syntax
-         assert '"STATUS"' not in syntax  # sem aspas no nome da coluna
--        assert 'between 25.00 and 35.00' in syntax
-+        assert '>= 25.0000' in syntax
-+        assert '<= 35.0000' in syntax
-         assert 'from primary' in syntax
  
-     def test_distinct_count_range(self):
-diff --git a/tests/test_sprint_c2.py b/tests/test_sprint_c2.py
-index 28ad262..1f2f5d3 100644
---- a/tests/test_sprint_c2.py
-+++ b/tests/test_sprint_c2.py
-@@ -136,13 +136,15 @@ class TestRendererCustomSqlHybrid:
-         spec = self._make_spec(floor_pct=0.0, ceiling_pct=5.0)
-         result = self.renderer.render(spec)
-         assert 'AND' in result
--        assert 'between 0.0 and 5.0' in result
-+        assert '>= 0.0000' in result
-+        assert '<= 5.0000' in result
+-def _render_diagnostics_panel(proposal):
+-    """Painel consolidado de ferramentas de apoio a calibragem.
+-
+-    Agrupa sazonalidade, change-point, IQR/MAD e cobertura ponderada
+-    em um unico expander com explicacoes claras sobre o que cada item
+-    faz e se impacta ou nao a regra gerada.
+-    """
+-    if not proposal:
+-        return
+-
+-    # Collect diagnostics
+-    has_seasonality = (
+-        proposal.seasonality_info
+-        and proposal.seasonality_info.get("has_seasonality")
+-    )
+-    has_change_point = (
+-        proposal.change_point_info
+-        and proposal.change_point_info.get("has_change_point")
+-    )
+-    has_outliers = (
+-        proposal.robust_info
+-        and proposal.robust_info.get("outliers", {}).get("n_outliers", 0) > 0
+-    )
+-    has_weighted_cov = (
+-        proposal.backtest
+-        and hasattr(proposal.backtest, "weighted_coverage_pct")
+-        and abs(proposal.backtest.weighted_coverage_pct - proposal.backtest.coverage_pct) > 1.0
+-    )
+-
+-    n_findings = sum([
+-        bool(has_seasonality),
+-        bool(has_change_point),
+-        bool(has_outliers),
+-        bool(has_weighted_cov),
+-    ])
+-
+-    if n_findings == 0:
+-        return
+-
+-    # Build label
+-    tags = []
+-    if has_change_point:
+-        tags.append("change-point")
+-    if has_seasonality:
+-        tags.append("sazonalidade")
+-    if has_outliers:
+-        tags.append("outliers")
+-    if has_weighted_cov:
+-        tags.append("recencia")
+-    label = f"Diagnosticos de apoio a calibragem ({n_findings}): {', '.join(tags)}"
+-
+-    with st.expander(label, expanded=n_findings >= 2):
+-        st.caption(
+-            "Estas ferramentas analisam o comportamento dos dados para ajudar "
+-            "na escolha dos parametros. Apenas o **Change-Point** altera o "
+-            "calculo da regra. Os demais sao **informativos**."
+-        )
+-
+-        # ------ 1. Change-Point (IMPACTA a regra) ------
+-        if has_change_point:
+-            cp = proposal.change_point_info
+-            st.markdown("---")
+-            st.markdown("**Change-Point (Mudanca de Regime)** — :red[IMPACTA A REGRA]")
+-            st.caption(
+-                "Detecta mudancas bruscas de patamar na serie (ex: migracao de sistema). "
+-                "Usa o algoritmo CUSUM bilateral com threshold de 4 sigma."
+-            )
+-            n_post = len(cp.get("post_change_values", []))
+-            st.warning(
+-                f"Mudanca detectada em **{cp.get('change_date', '?')}**. "
+-                f"{cp.get('message', '')} "
+-                f"Os limites da regra foram calculados usando apenas os "
+-                f"**{n_post} periodos pos-mudanca** (dados do regime atual)."
+-            )
+-            st.caption(
+-                "Gabarito: a regra deve usar N <= periodos pos-mudanca. "
+-                f"Neste caso, N <= {n_post}."
+-            )
+-
+-        # ------ 2. Sazonalidade (NAO impacta) ------
+-        if has_seasonality:
+-            info = proposal.seasonality_info
+-            st.markdown("---")
+-            st.markdown("**Sazonalidade Semanal** — :green[NAO IMPACTA A REGRA]")
+-            st.caption(
+-                "Detecta padroes repetitivos por dia da semana usando eta-squared "
+-                "(variancia entre grupos / variancia total). "
+-                "Positivo quando eta-squared > 15% e amplitude > 10% da media."
+-            )
+-            st.info(
+-                f"Forca: **{info['seasonality_strength']:.0%}** · "
+-                f"Amplitude: **{info['amplitude_ratio']:.0%}** da media. "
+-                f"{info['message']}"
+-            )
+-            st.caption(
+-                "Gabarito: use N multiplo de 7 (14, 21, 28, 35) para alinhar a "
+-                "janela com semanas completas e evitar vies. "
+-                "O auto-tune ja prioriza isso automaticamente (+0.02 no score)."
+-            )
+-
+-        # ------ 3. Outliers / IQR / MAD (NAO impacta) ------
+-        if has_outliers:
+-            robust = proposal.robust_info
+-            outlier_info = robust.get("outliers", {})
+-            comparison = robust.get("iqr_vs_sigma", {})
+-            iqr_b = robust.get("iqr_band", {})
+-            mad_b = robust.get("mad_band", {})
+-
+-            st.markdown("---")
+-            st.markdown("**Analise de Outliers (IQR/MAD)** — :green[NAO IMPACTA A REGRA]")
+-            st.caption(
+-                "Compara a banda classica (sigma) com bandas robustas (IQR de Tukey "
+-                "e MAD). Se a banda sigma for muito mais larga, outliers podem estar "
+-                "distorcendo o desvio padrao."
+-            )
+-
+-            # Key metrics side by side
+-            oc1, oc2, oc3 = st.columns(3)
+-            with oc1:
+-                st.metric(
+-                    "Outliers",
+-                    f"{outlier_info['n_outliers']} ({outlier_info['pct_outliers']:.0%})",
+-                    help="Periodos com valores fora de [Q1 - 1.5*IQR, Q3 + 1.5*IQR].",
+-                )
+-            with oc2:
+-                sigma_w = comparison.get("sigma_width", 0)
+-                iqr_w = comparison.get("iqr_width", 0)
+-                ratio = sigma_w / iqr_w if iqr_w > 0 else 0
+-                st.metric(
+-                    "Sigma / IQR",
+-                    f"{ratio:.1f}x",
+-                    help="Razao entre largura da banda sigma e largura da banda IQR. "
+-                         "Acima de 2x indica distorcao por outliers.",
+-                )
+-            with oc3:
+-                rec = comparison.get("recommendation", "classical")
+-                rec_labels = {
+-                    "classical": "Classica (OK)",
+-                    "robust_iqr": "Considerar IQR",
+-                    "robust_mad": "Considerar MAD",
+-                }
+-                st.metric(
+-                    "Recomendacao",
+-                    rec_labels.get(rec, rec),
+-                    help="'Classica (OK)' = banda sigma adequada. "
+-                         "'Considerar IQR' = sigma inflada, aumentar K ou margem. "
+-                         "'Considerar MAD' = distorcao severa.",
+-                )
+-
+-            if iqr_b and mad_b:
+-                st.caption(
+-                    f"Banda IQR: [{iqr_b['lower']:.2f}, {iqr_b['upper']:.2f}] · "
+-                    f"Banda MAD: [{mad_b['lower']:.2f}, {mad_b['upper']:.2f}]"
+-                )
+-
+-            if rec != "classical":
+-                st.caption(
+-                    "Gabarito: aumente sigma (K) de 2 para 2.5 ou 3, ou aumente "
+-                    "a margem % para compensar a distorcao causada pelos outliers."
+-                )
+-            else:
+-                st.caption(
+-                    "Gabarito: banda classica (sigma) esta adequada. "
+-                    "Os outliers nao distorcem significativamente os limites."
+-                )
+-
+-        # ------ 4. Cobertura Ponderada (NAO impacta) ------
+-        if has_weighted_cov:
+-            bt = proposal.backtest
+-            st.markdown("---")
+-            st.markdown("**Cobertura Ponderada (Recencia)** — :green[NAO IMPACTA A REGRA]")
+-            st.caption(
+-                "Atribui mais peso aos periodos recentes no backtest "
+-                "(meia-vida ~14 periodos, decaimento exponencial). "
+-                "Compara com a cobertura classica para indicar tendencia."
+-            )
+-            wc1, wc2 = st.columns(2)
+-            with wc1:
+-                st.metric(
+-                    "Cobertura classica",
+-                    f"{bt.coverage_pct:.1f}%",
+-                    help="Todos os periodos com peso igual.",
+-                )
+-            with wc2:
+-                delta = bt.weighted_coverage_pct - bt.coverage_pct
+-                st.metric(
+-                    "Cobertura recente",
+-                    f"{bt.weighted_coverage_pct:.1f}%",
+-                    delta=f"{delta:+.1f}pp",
+-                    delta_color="normal",
+-                    help="Periodos recentes pesam mais. "
+-                         "Delta positivo = regra funciona melhor recentemente.",
+-                )
+-            if bt.weighted_coverage_pct > bt.coverage_pct:
+-                st.caption(
+-                    "Gabarito: periodos recentes mais estaveis — bom sinal "
+-                    "para producao. A regra tende a funcionar bem daqui pra frente."
+-                )
+-            else:
+-                st.caption(
+-                    "Gabarito: periodos recentes menos estaveis — sinal de "
+-                    "atencao. Considere reduzir N para focar em dados mais recentes "
+-                    "ou investigar o que mudou."
+-                )
+-
+-
+ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="numeric",
+                         grain=None, series_profile=None):
+     """Renderiza botao de calibracao explicavel, exibe resultado com justificativa e aplica parametros.
+@@ -589,12 +391,30 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
+     if grain is None:
+         grain = GrainType.DAILY
  
-     def test_hybrid_has_dual_guard_and_absolute(self):
-         spec = self._make_spec(floor_pct=1.0, ceiling_pct=10.0)
-         result = self.renderer.render(spec)
-         assert 'OR' in result  # dual guard
--        assert 'between 1.0 and 10.0' in result  # absolute
-+        assert '>= 1.0000' in result  # absolute lower
-+        assert '<= 10.0000' in result  # absolute upper
+-    if st.button(
+-        "Calibrar parametros",
+-        key=f"btn_autotune_{rule_key}",
+-        help="Analisa a serie e sugere a melhor combinacao de N, sigma e margem, "
+-             "explicando cada decisao.",
+-    ):
++    has_result = (
++        cache_key in st.session_state
++        and isinstance(st.session_state.get(cache_key), CalibrationResult)
++    )
++
++    # Buttons side by side: Calibrar + Aplicar
++    btn_c1, btn_c2 = st.columns(2)
++    with btn_c1:
++        calibrate_clicked = st.button(
++            "Calibrar parametros",
++            key=f"btn_autotune_{rule_key}",
++            help="Analisa a serie e sugere a melhor combinacao de N, sigma e margem.",
++        )
++    with btn_c2:
++        apply_enabled = has_result and st.session_state[cache_key].viable
++        apply_clicked = st.button(
++            "Aplicar parametros sugeridos",
++            key=f"apply_autotune_{rule_key}",
++            disabled=not apply_enabled,
++            help="Atualiza os sliders com os parametros recomendados."
++                 if apply_enabled else "Execute a calibracao primeiro.",
++        )
++
++    if calibrate_clicked:
+         with st.spinner("Calibrando..."):
+             result = calibrate(
+                 values=values, dates=dates,
+@@ -602,11 +422,22 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
+                 profile=series_profile,
+             )
+             st.session_state[cache_key] = result
++            has_result = True
++
++    if apply_clicked and apply_enabled:
++        result = st.session_state[cache_key]
++        st.session_state["_pending_autotune"] = {
++            "rule_key": rule_key,
++            "n_periods": result.n_periods,
++            "n_sigma": result.n_sigma,
++            "margin_pct": int(result.margin_pct * 100),
++            "margin_enabled": result.margin_enabled,
++        }
++        st.rerun()
  
-     def test_hybrid_balanced_parentheses(self):
-         spec = self._make_spec()
-@@ -153,18 +155,20 @@ class TestRendererCustomSqlHybrid:
-         """floor=0 and ceiling=100 means no effective constraint — pure dynamic."""
-         spec = self._make_spec(floor_pct=0.0, ceiling_pct=100.0)
-         result = self.renderer.render(spec)
--        # Should be pure dynamic (no AND with between 0.0 and 100.0)
--        assert 'between 0.0 and 100.0' not in result
-+        # Should be pure dynamic (no >= 0.0000 AND <= 100.0000 absolute clause)
-+        assert '>= 0.0000) AND' not in result or '<= 100.0000)' not in result
+-    if cache_key in st.session_state:
++    if has_result:
+         result = st.session_state[cache_key]
+         if not isinstance(result, CalibrationResult):
+-            # Legado: se cache contem AutoTuneResult dict antigo, limpar e recalibrar
+             del st.session_state[cache_key]
+             return
  
-     def test_hybrid_floor_only(self):
-         spec = self._make_spec(floor_pct=1.0, ceiling_pct=100.0)
-         result = self.renderer.render(spec)
--        assert 'between 1.0 and 100.0' in result
-+        assert '>= 1.0000' in result
-+        assert '<= 100.0000' in result
+@@ -687,21 +518,6 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
+                         f"Periodos mais recentes estao mais instaveis."
+                     )
  
-     def test_hybrid_ceiling_only(self):
-         spec = self._make_spec(floor_pct=0.0, ceiling_pct=50.0)
-         result = self.renderer.render(spec)
--        assert 'between 0.0 and 50.0' in result
-+        assert '>= 0.0000' in result
-+        assert '<= 50.0000' in result
- 
+-        # Botao para aplicar parametros sugeridos nos sliders.
+-        if result.viable and st.button(
+-            "Aplicar parametros sugeridos",
+-            key=f"apply_autotune_{rule_key}",
+-            help="Atualiza os sliders com os parametros recomendados.",
+-        ):
+-            st.session_state["_pending_autotune"] = {
+-                "rule_key": rule_key,
+-                "n_periods": result.n_periods,
+-                "n_sigma": result.n_sigma,
+-                "margin_pct": int(result.margin_pct * 100),
+-                "margin_enabled": result.margin_enabled,
+-            }
+-            st.rerun()
+-
  
  # ---------------------------------------------------------------------------
-@@ -233,7 +237,8 @@ class TestGeneratorDynamic:
-             floor_pct=0.0, ceiling_pct=5.0,
-         )
-         syntax = self.gen.generate(p)
--        assert 'between 0.0 and 5.0' in syntax
-+        assert '>= 0.0000' in syntax
-+        assert '<= 5.0000' in syntax
-         assert 'avg(last(30))' in syntax
-         assert 'OR' in syntax
+ # Page config
+@@ -1363,17 +1179,6 @@ with tab_numericas:
+             # ---- Mean ----
+             st.subheader(f"Mean -- {selected_col}")
  
-@@ -247,7 +252,8 @@ class TestGeneratorDynamic:
-         )
-         overrides = UserOverride(custom_floor_pct=1.0, custom_ceiling_pct=10.0)
-         syntax = self.gen.generate(p, overrides)
--        assert 'between 1.0 and 10.0' in syntax
-+        assert '>= 1.0000' in syntax
-+        assert '<= 10.0000' in syntax
+-            with st.expander("O que e o dual guard?", expanded=False):
+-                st.markdown(
+-                    "O **dual guard** combina duas bandas de validacao com OR:\n\n"
+-                    "1. **Banda sigma:** media +/- K desvios padrao — captura a variabilidade normal dos dados\n"
+-                    "2. **Banda margem:** media +/- X% — captura variacao proporcional\n\n"
+-                    "A regra passa se o valor estiver dentro de **qualquer uma** das bandas. "
+-                    "Isso evita falsos positivos quando o dado e muito estavel (sigma proximo de 0).\n\n"
+-                    "O grafico mostra ambas as bandas: azul (sigma) e verde (margem). "
+-                    "Ajuste os parametros abaixo e observe como as bandas mudam."
+-                )
+-
+             mean_n, mean_k, mean_margin, mean_buffer, mean_margin_on = _render_rule_params(
+                 f"{_fp}_mean_{selected_col}",
+                 n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
+@@ -1412,9 +1217,6 @@ with tab_numericas:
+                         margin_enabled=mean_margin_on,
+                     )
  
+-                    # Diagnostics panel (seasonality, change-point, outliers, recency)
+-                    _render_diagnostics_panel(proposal)
+-
+                     _render_calibration(
+                         proposal_svc, values, dates,
+                         f"{_fp}_mean_{selected_col}", metric_kind="numeric",
+@@ -1473,9 +1275,6 @@ with tab_numericas:
+                         margin_enabled=std_margin_on,
+                     )
+ 
+-                    # Diagnostics panel (outliers, recency — seasonality/change-point already shown in Mean)
+-                    _render_diagnostics_panel(proposal)
+-
+                     _render_calibration(
+                         proposal_svc, values, dates,
+                         f"{_fp}_stddev_{selected_col}", metric_kind="numeric",
+diff --git a/tests/test_rule_explainer.py b/tests/test_rule_explainer.py
+index c2e376c..84e9d13 100644
+--- a/tests/test_rule_explainer.py
++++ b/tests/test_rule_explainer.py
+@@ -152,6 +152,30 @@ class TestExplainRule:
+         text = explain_rule(p)
+         assert "20%" in text
+ 
++    def test_mean_margin_disabled_no_margin_text(self):
++        p = _make_proposal(RuleType.MEAN_DUAL_GUARD)
++        p.margin_enabled = False
++        text = explain_rule(p)
++        assert "**ou**" not in text
++        assert "% da media" not in text
++        assert "duas bandas" not in text
++
++    def test_stddev_margin_disabled_no_margin_text(self):
++        p = _make_proposal(RuleType.STDDEV_DUAL_GUARD)
++        p.margin_enabled = False
++        text = explain_rule(p)
++        assert "**ou**" not in text
++        assert "% da media" not in text
++        assert "duas bandas" not in text
++
++    def test_rowcount_margin_disabled_no_margin_text(self):
++        p = _make_proposal(RuleType.ROW_COUNT_DUAL_GUARD, column=None, table="tb_ops")
++        p.margin_enabled = False
++        text = explain_rule(p)
++        assert "**ou**" not in text
++        assert "% do volume" not in text
++        assert "duas bandas" not in text
++
  
  # ---------------------------------------------------------------------------
-@@ -436,7 +442,8 @@ class TestProposalServiceFreqMode:
-         freq_proposals = [p for p in proposals if p.rule_type == RuleType.CATEGORY_FREQUENCY_HYBRID]
-         assert len(freq_proposals) > 0
-         for p in freq_proposals:
--            assert 'between 0.0 and 80.0' in p.gdq_syntax_preview
-+            assert '>= 0.0000' in p.gdq_syntax_preview
-+            assert '<= 80.0000' in p.gdq_syntax_preview
-             assert p.floor_pct == 0.0
-             assert p.ceiling_pct == 80.0
- 
+ # Tests: explain_rule_detail
 

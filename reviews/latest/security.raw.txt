@@ -5,6 +5,6 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [],
-  "summary": "Refatoracao sintatica de 'between X and Y' para '>= X AND <= Y' em regras GDQ, sem impacto de seguranca."
+  "summary": "Refatoracao de UI e logica de explicacao sem impacto de seguranca — nenhum segredo, input externo, SQL ou endpoint alterado."
 }
 ```

@@ -2,9 +2,9 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "Mudanca de sintaxe GDQ (between -> >= AND <=) altera output de todas as regras CustomSql \u2014 confirmar compatibilidade com o parser do AWS Glue Data Quality antes de prod.",
-    "Precisao aumentada de 2 para 4 casas decimais (.2f -> .4f) nas regras estaticas \u2014 verificar se regras existentes em producao precisam ser regeneradas.",
-    "Testes atualizados cobrem os novos formatos, mas nao ha teste de contrato validando que o GDQ engine da AWS aceita a nova sintaxe com >= e <= separados."
+    "Funcao _render_diagnostics_panel removida (~200 linhas de UI) \u2014 confirmar que diagnosticos de calibragem nao sao mais necessarios ou foram movidos para outro local.",
+    "Expander 'O que e o dual guard?' removido \u2014 perda de contexto educativo para o usuario; verificar se ha alternativa in-app.",
+    "Botao 'Aplicar parametros sugeridos' movido para fora do bloco condicional de resultado \u2014 testar que o estado disabled funciona corretamente no Streamlit quando nao ha calibracao."
   ],
-  "summary": "Refatoracao de sintaxe CustomSql de 'between X and Y' para '>= X AND <= Y' com 4 casas decimais \u2014 codigo, testes e docs consistentes, sem risco de deploy, mas requer validacao de compatibilidade com o GDQ engine real."
+  "summary": "Refatoracao de UI (explore) e explainer: margem condicional, layout de botoes side-by-side, remocao de painel de diagnosticos; sem impacto em infra, deploy ou rollback."
 }

@@ -2,9 +2,9 @@
   "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Teste test_hybrid_no_constraint_when_full_range usa logica OR (`or`) na asser\u00e7\u00e3o, tornando-o fraco \u2014 sempre passa se qualquer lado for verdadeiro. Deveria verificar que NENHUMA cl\u00e1usula absoluta aparece no resultado.",
-    "N\u00e3o h\u00e1 teste unit\u00e1rio dedicado para a mudan\u00e7a de precis\u00e3o de 2 para 4 casas decimais em _build_static_frequency (gdq_rule_generator.py). Os testes existentes cobrem indiretamente via assertions de string, mas um teste expl\u00edcito de arredondamento seria mais robusto.",
-    "Nenhum teste de regress\u00e3o verifica que a sintaxe antiga com 'between' N\u00c3O aparece mais na sa\u00edda \u2014 apenas verificam a presen\u00e7a da nova sintaxe. Um assert negativo ('between' not in syntax) preveniria regress\u00e3o."
+    "_explain_percentile foi modificada com a mesma logica de margin_enabled mas nao ganhou teste para margin_disabled (mean, stddev e rowcount tem, percentile nao)",
+    "_render_diagnostics_panel removida (~200 linhas) sem verificacao de que nenhum outro modulo a importa ou referencia",
+    "Logica de apply_clicked no 02_explore.py depende de has_result e apply_enabled mas nao ha teste de integracao cobrindo o fluxo Calibrar->Aplicar com o novo layout de botoes side-by-side"
   ],
-  "summary": "Mudan\u00e7a de 'between' para '>= / <=' consistente entre renderer, generator, docs e testes; sem blockers, mas asser\u00e7\u00e3o fraca em test_hybrid_no_constraint e aus\u00eancia de asserts negativos reduzem confian\u00e7a contra regress\u00e3o."
+  "summary": "Testes cobrem 3 de 4 funcoes explain modificadas; falta teste para _explain_percentile com margin_disabled e verificacao de dead code na remocao do diagnostics panel."
 }

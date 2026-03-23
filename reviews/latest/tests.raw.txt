@@ -1,14 +1,12 @@
-
-
 ```json
 {
   "status": "ATENCAO",
   "blockers": [],
   "warnings": [
-    "Teste test_hybrid_no_constraint_when_full_range usa logica OR (`or`) na asserção, tornando-o fraco — sempre passa se qualquer lado for verdadeiro. Deveria verificar que NENHUMA cláusula absoluta aparece no resultado.",
-    "Não há teste unitário dedicado para a mudança de precisão de 2 para 4 casas decimais em _build_static_frequency (gdq_rule_generator.py). Os testes existentes cobrem indiretamente via assertions de string, mas um teste explícito de arredondamento seria mais robusto.",
-    "Nenhum teste de regressão verifica que a sintaxe antiga com 'between' NÃO aparece mais na saída — apenas verificam a presença da nova sintaxe. Um assert negativo ('between' not in syntax) preveniria regressão."
+    "_explain_percentile foi modificada com a mesma logica de margin_enabled mas nao ganhou teste para margin_disabled (mean, stddev e rowcount tem, percentile nao)",
+    "_render_diagnostics_panel removida (~200 linhas) sem verificacao de que nenhum outro modulo a importa ou referencia",
+    "Logica de apply_clicked no 02_explore.py depende de has_result e apply_enabled mas nao ha teste de integracao cobrindo o fluxo Calibrar->Aplicar com o novo layout de botoes side-by-side"
   ],
-  "summary": "Mudança de 'between' para '>= / <=' consistente entre renderer, generator, docs e testes; sem blockers, mas asserção fraca em test_hybrid_no_constraint e ausência de asserts negativos reduzem confiança contra regressão."
+  "summary": "Testes cobrem 3 de 4 funcoes explain modificadas; falta teste para _explain_percentile com margin_disabled e verificacao de dead code na remocao do diagnostics panel."
 }
 ```

@@ -2,8 +2,8 @@
   "status": "APROVADO",
   "blockers": [],
   "warnings": [
-    "CustomSql expression is repeated twice in >= / <= form (sigma_lower + sigma_upper, margin_lower + margin_upper, floor_ceil), increasing rendered rule length \u2014 acceptable trade-off for GDQ compatibility but worth monitoring if rule size limits exist.",
-    "test_hybrid_no_constraint_when_full_range uses OR logic (`assert '>= 0.0000) AND' not in result or '<= 100.0000)' not in result`) which always passes if either clause is absent \u2014 consider using AND to ensure neither clause is present."
+    "Remocao de _render_diagnostics_panel (~200 linhas) e uma mudanca significativa de UX \u2014 confirmar que os diagnosticos (change-point, sazonalidade, IQR/MAD, cobertura ponderada) continuam acessiveis por outra via ou foram intencionalmente descontinuados.",
+    "evaluate_proposal() agora e chamado incondicionalmente quando profile != None, mesmo que o resultado nao seja usado (has_trade_off=False) \u2014 custo computacional marginal mas desnecessario nesses casos."
   ],
-  "summary": "Refactoring puro de sintaxe GDQ: substitui 'between X and Y' por '>= X AND <= Y' em renderer, generator, docs e testes \u2014 sem impacto em separacao de camadas, secrets ou runtime."
+  "summary": "Refatoracao de UI (explainer condicional por margin_enabled, layout de calibracao side-by-side, remocao de diagnostics panel) confinada a camadas corretas (core/explainer, pages/UI, tests) sem violacao de boundaries."
 }
