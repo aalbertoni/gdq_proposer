@@ -1,7 +1,7 @@
-commit_sha: 6a29ffce5d00437e9729e7d0c0dcb23f7dc39aa0
+commit_sha: 61cef08e83c9f2a3de209117845cebbcfdf0c132
 environment: staging
 gate1: pass
-snapshot_commit: 6a29ffce5d00437e9729e7d0c0dcb23f7dc39aa0
+snapshot_commit: 61cef08e83c9f2a3de209117845cebbcfdf0c132
 gate2: warning
 release_build: pass
 staging_deploy: pass
