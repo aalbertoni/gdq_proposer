@@ -1317,20 +1317,43 @@ with tab_numericas:
             ))
 
             if comp_proposals:
-                _update_col_health(selected_col, "completeness", comp_proposals[0].confidence)
-                with st.expander(f"Completeness {selected_col}", expanded=False):
-                    st.caption(
-                        "Regra de completude: verifica que a porcentagem de valores nao-nulos "
-                        "esta acima de um limite. Util para colunas que devem ser sempre preenchidas."
+                proposal = comp_proposals[0]
+                _update_col_health(selected_col, "completeness", proposal.confidence)
+                st.subheader(f"Completeness -- {selected_col}")
+                st.caption(
+                    "Regra de completude: verifica que a porcentagem de valores nao-nulos "
+                    "esta acima de um limite. Util para colunas que devem ser sempre preenchidas."
+                )
+
+                if proposal.history_dates and proposal.history_values:
+                    fig_comp = go.Figure()
+                    fig_comp.add_trace(go.Scatter(
+                        x=proposal.history_dates, y=proposal.history_values,
+                        mode="lines+markers", name="Completude (%)",
+                        line=dict(color="steelblue", width=2),
+                        marker=dict(size=4),
+                    ))
+                    if proposal.suggested_lower:
+                        fig_comp.add_hline(
+                            y=proposal.suggested_lower * 100, line_dash="dash",
+                            line_color="green",
+                            annotation_text=f"Limite: {proposal.suggested_lower * 100:.0f}%",
+                        )
+                    fig_comp.update_layout(
+                        height=300,
+                        margin=dict(l=50, r=20, t=30, b=30),
+                        xaxis_title="Periodo",
+                        yaxis_title="Completude (%)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
                     )
-                    proposal = comp_proposals[0]
-                    st.code(proposal.gdq_syntax_preview)
-                    _render_add_to_cart(
-                        proposal, "Completeness",
-                        f"comp_{selected_col}",
-                        show_syntax=False,
-                        fp=_fp,
-                    )
+                    st.plotly_chart(fig_comp, use_container_width=True)
+
+                _render_backtest_metrics(proposal)
+                _render_add_to_cart(
+                    proposal, "Completeness",
+                    f"comp_{selected_col}",
+                    fp=_fp,
+                )
 
 
 # ===========================================================================
@@ -1687,10 +1710,10 @@ with tab_categoricas:
             # ---- AllowedValues (CAT_LOW) ----
             av_proposals = _filter_minimal([p for p in cat_proposals if p.rule_type == RuleType.ALLOWED_VALUES])
             if av_proposals:
-                st.subheader("Valores Permitidos (AllowedValues)")
+                st.subheader(f"AllowedValues -- {selected_cat_col}")
                 av = av_proposals[0]
                 st.caption(
-                    "Verifica que todos os valores da coluna pertencem a lista abaixo. "
+                    "Verifica que todos os valores da coluna pertencem a lista permitida. "
                     "Qualquer valor novo faz a regra falhar."
                 )
 
@@ -1712,7 +1735,7 @@ with tab_categoricas:
                         margin=dict(l=50, r=20, t=30, b=30),
                         xaxis_title="Periodo",
                         yaxis=dict(visible=False),
-                        title="Historico: regra teria passado?",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
                     )
                     st.plotly_chart(fig_av, use_container_width=True)
 
@@ -1730,7 +1753,7 @@ with tab_categoricas:
                 if p.rule_type in (RuleType.DISTINCT_COUNT_EXACT, RuleType.DISTINCT_COUNT_RANGE)
             ])
             if dc_proposals:
-                st.subheader("Contagem de Distintos (DistinctValuesCount)")
+                st.subheader(f"DistinctValuesCount -- {selected_cat_col}")
                 proposal = dc_proposals[0]
                 if proposal.rule_type == RuleType.DISTINCT_COUNT_EXACT:
                     st.caption(
@@ -1810,42 +1833,43 @@ with tab_categoricas:
             # ---- Completeness ----
             comp_proposals = _filter_minimal([p for p in cat_proposals if p.rule_type == RuleType.COMPLETENESS])
             if comp_proposals:
-                with st.expander(f"Completeness {selected_cat_col}", expanded=False):
-                    proposal = comp_proposals[0]
-                    st.caption(
-                        "Regra de completude: verifica que a porcentagem de valores nao-nulos "
-                        "esta acima de um limite."
-                    )
+                proposal = comp_proposals[0]
+                st.subheader(f"Completeness -- {selected_cat_col}")
+                st.caption(
+                    "Regra de completude: verifica que a porcentagem de valores nao-nulos "
+                    "esta acima de um limite."
+                )
 
-                    # Completeness history chart
-                    if proposal.history_dates and proposal.history_values:
-                        fig_comp = go.Figure()
-                        fig_comp.add_trace(go.Scatter(
-                            x=proposal.history_dates, y=proposal.history_values,
-                            mode="lines+markers", name="Completude (%)",
-                            line=dict(color="steelblue"),
-                        ))
-                        if proposal.suggested_lower:
-                            fig_comp.add_hline(
-                                y=proposal.suggested_lower * 100, line_dash="dash",
-                                line_color="green",
-                                annotation_text=f"Limite: {proposal.suggested_lower * 100:.0f}%",
-                            )
-                        fig_comp.update_layout(
-                            height=250,
-                            margin=dict(l=50, r=20, t=30, b=30),
-                            xaxis_title="Periodo",
-                            yaxis_title="Completude (%)",
+                # Completeness history chart
+                if proposal.history_dates and proposal.history_values:
+                    fig_comp = go.Figure()
+                    fig_comp.add_trace(go.Scatter(
+                        x=proposal.history_dates, y=proposal.history_values,
+                        mode="lines+markers", name="Completude (%)",
+                        line=dict(color="steelblue", width=2),
+                        marker=dict(size=4),
+                    ))
+                    if proposal.suggested_lower:
+                        fig_comp.add_hline(
+                            y=proposal.suggested_lower * 100, line_dash="dash",
+                            line_color="green",
+                            annotation_text=f"Limite: {proposal.suggested_lower * 100:.0f}%",
                         )
-                        st.plotly_chart(fig_comp, use_container_width=True)
-
-                    st.code(proposal.gdq_syntax_preview)
-                    _render_add_to_cart(
-                        proposal, "Completeness",
-                        f"cat_comp_{selected_cat_col}",
-                        show_syntax=False,
-                        fp=_fp,
+                    fig_comp.update_layout(
+                        height=300,
+                        margin=dict(l=50, r=20, t=30, b=30),
+                        xaxis_title="Periodo",
+                        yaxis_title="Completude (%)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
                     )
+                    st.plotly_chart(fig_comp, use_container_width=True)
+
+                _render_backtest_metrics(proposal)
+                _render_add_to_cart(
+                    proposal, "Completeness",
+                    f"cat_comp_{selected_cat_col}",
+                    fp=_fp,
+                )
 
 
 # ===========================================================================

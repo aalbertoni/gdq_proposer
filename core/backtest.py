@@ -795,6 +795,84 @@ def backtest_allowed_values(
 
 
 # ---------------------------------------------------------------------------
+# Backtest: Completeness
+# ---------------------------------------------------------------------------
+
+def backtest_completeness(
+    completeness_pct: list[float],
+    dates: list[str],
+    threshold_pct: float,
+) -> BacktestSummary:
+    """Executa backtest de Completeness >= threshold no historico.
+
+    Para cada periodo, verifica se completeness_pct >= threshold_pct.
+
+    Args:
+        completeness_pct: Serie de porcentagens de completude (0-100) por periodo.
+        dates: Datas correspondentes (mesmo length).
+        threshold_pct: Limite minimo de completude (0-100). Ex: 95.0 para >= 95%.
+
+    Returns:
+        BacktestSummary com metricas de cobertura e estabilidade.
+    """
+    n = len(completeness_pct)
+    if n == 0:
+        return BacktestSummary(
+            total_periods=0, periods_pass=0, periods_fail=0,
+            coverage_pct=0.0, false_positive_proxy=0,
+            band_width_ratio=0.0, stability_score=0.0,
+            has_drift=False, outlier_periods=[],
+        )
+
+    periods_pass = 0
+    periods_fail = 0
+    outlier_periods: list[str] = []
+    false_positive_proxy = 0
+    eval_results: list[dict] = []
+
+    for i in range(n):
+        val = completeness_pct[i]
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            continue
+
+        passed = val >= threshold_pct
+        eval_results.append({"index": i, "value": val, "passed": passed})
+
+        if passed:
+            periods_pass += 1
+        else:
+            periods_fail += 1
+            if i < len(dates):
+                outlier_periods.append(dates[i])
+            # FP proxy: within 2pp of threshold (borderline)
+            if abs(val - threshold_pct) <= 2.0:
+                false_positive_proxy += 1
+
+    total_periods = periods_pass + periods_fail
+    coverage_pct = (periods_pass / total_periods * 100) if total_periods > 0 else 0.0
+    weighted_coverage_pct = _compute_weighted_coverage(eval_results)
+
+    stability_score = coverage_pct / 100.0 if total_periods > 0 else 0.0
+
+    valid_values = _filter_valid(completeness_pct)
+    has_drift = _detect_monotonic_trend(valid_values)
+
+    return BacktestSummary(
+        total_periods=total_periods,
+        periods_pass=periods_pass,
+        periods_fail=periods_fail,
+        coverage_pct=coverage_pct,
+        false_positive_proxy=false_positive_proxy,
+        band_width_ratio=0.0,
+        stability_score=stability_score,
+        has_drift=has_drift,
+        outlier_periods=outlier_periods,
+        weighted_coverage_pct=weighted_coverage_pct,
+        point_results=eval_results,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Backtest: IsPrimaryKey
 # ---------------------------------------------------------------------------
 

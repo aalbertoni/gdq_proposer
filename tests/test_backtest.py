@@ -6,7 +6,7 @@ Usa fixtures sintéticas para validar backtest com janela rolante.
 import math
 import pytest
 
-from core.backtest import backtest_band, backtest_frequency_band, backtest_frequency_dual_guard, _compute_weighted_coverage
+from core.backtest import backtest_band, backtest_frequency_band, backtest_frequency_dual_guard, backtest_completeness, _compute_weighted_coverage
 from tests.fixtures import (
     make_stable_series,
     make_drift_series,
@@ -243,3 +243,60 @@ class TestWeightedCoverageFrequency:
         """Empty frequency dual guard backtest: weighted = 0."""
         bt = backtest_frequency_dual_guard([], [], n_periods=10)
         assert bt.weighted_coverage_pct == 0.0
+
+
+class TestBacktestCompleteness:
+    def test_all_pass(self):
+        """All periods above threshold: 100% coverage."""
+        values = [99.5, 99.8, 100.0, 99.9, 99.7] * 6
+        dates = [f"2026-01-{i + 1:02d}" for i in range(len(values))]
+        bt = backtest_completeness(values, dates, threshold_pct=99.0)
+        assert bt.coverage_pct == 100.0
+        assert bt.periods_fail == 0
+
+    def test_some_fail(self):
+        """Some periods below threshold: partial coverage."""
+        values = [99.5, 98.0, 97.0, 99.9, 96.5, 99.0, 100.0]
+        dates = [f"2026-01-{i + 1:02d}" for i in range(len(values))]
+        bt = backtest_completeness(values, dates, threshold_pct=99.0)
+        assert bt.periods_pass == 4  # 99.5, 99.9, 99.0, 100.0
+        assert bt.periods_fail == 3
+        assert len(bt.outlier_periods) == 3
+
+    def test_empty(self):
+        """Empty series: zero coverage."""
+        bt = backtest_completeness([], [], threshold_pct=95.0)
+        assert bt.total_periods == 0
+        assert bt.coverage_pct == 0.0
+
+    def test_weighted_coverage(self):
+        """Weighted coverage is populated."""
+        values = [99.5] * 20
+        dates = [f"2026-01-{i + 1:02d}" for i in range(20)]
+        bt = backtest_completeness(values, dates, threshold_pct=99.0)
+        assert bt.weighted_coverage_pct > 0
+        assert bt.weighted_coverage_pct <= 100.0
+
+    def test_point_results(self):
+        """Point results are populated."""
+        values = [100.0, 95.0, 100.0]
+        dates = ["2026-01-01", "2026-01-02", "2026-01-03"]
+        bt = backtest_completeness(values, dates, threshold_pct=99.0)
+        assert len(bt.point_results) == 3
+        assert bt.point_results[0]["passed"] is True
+        assert bt.point_results[1]["passed"] is False
+        assert bt.point_results[2]["passed"] is True
+
+    def test_fp_proxy_borderline(self):
+        """Values within 2pp of threshold counted as FP proxy."""
+        values = [97.5, 98.0, 98.5, 100.0]  # threshold=99: 97.5 is 1.5pp away (FP), 98.0 is 1pp (FP), 98.5 is 0.5pp (FP)
+        dates = [f"2026-01-{i + 1:02d}" for i in range(4)]
+        bt = backtest_completeness(values, dates, threshold_pct=99.0)
+        assert bt.false_positive_proxy == 3  # all 3 failing values are within 2pp
+
+    def test_nan_handling(self):
+        """NaN values are skipped."""
+        values = [100.0, float('nan'), 99.5, None, 100.0]
+        dates = [f"2026-01-{i + 1:02d}" for i in range(5)]
+        bt = backtest_completeness(values, dates, threshold_pct=99.0)
+        assert bt.total_periods == 3  # skips NaN and None

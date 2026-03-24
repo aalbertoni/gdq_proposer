@@ -383,6 +383,8 @@ class ProposalService:
 
         # --- Completeness ---
         if profile.null_ratio <= 0.10:
+            from core.backtest import backtest_completeness
+
             completeness = 1.0 - profile.null_ratio
             threshold = round(completeness, 2)
             comp_proposal = RuleProposal(
@@ -406,6 +408,15 @@ class ProposalService:
                         comp_values.append(0.0)
                 comp_proposal.history_dates = comp_dates
                 comp_proposal.history_values = comp_values
+                # Backtest
+                bt = backtest_completeness(comp_values, comp_dates, threshold * 100)
+                comp_proposal.backtest = bt
+                if bt.coverage_pct >= 95:
+                    comp_proposal.confidence = ConfidenceLevel.HIGH
+                elif bt.coverage_pct >= 80:
+                    comp_proposal.confidence = ConfidenceLevel.MEDIUM
+                else:
+                    comp_proposal.confidence = ConfidenceLevel.LOW
             comp_proposal.gdq_syntax_preview = self.generator.generate(comp_proposal)
             proposals.append(comp_proposal)
 
@@ -1424,6 +1435,8 @@ class ProposalService:
         table: str,
     ) -> RuleProposal | None:
         """Constrói proposta de Completeness baseada no histórico."""
+        from core.backtest import backtest_completeness
+
         total = history["total_count"].sum()
         non_null = history["non_null_count"].sum()
         if total == 0:
@@ -1435,6 +1448,18 @@ class ProposalService:
             return None
 
         threshold = round(completeness, 2)
+
+        # Per-period history for chart + backtest
+        comp_dates: list[str] = []
+        comp_values: list[float] = []
+        if "period" in history.columns and "total_count" in history.columns:
+            for _, row in history.iterrows():
+                tot = row.get("total_count", 0)
+                nn = row.get("non_null_count", 0)
+                if tot and tot > 0:
+                    comp_dates.append(str(row["period"]))
+                    comp_values.append(round(float(nn) / float(tot) * 100, 2))
+
         proposal = RuleProposal(
             id=str(uuid.uuid4()),
             target_column=column,
@@ -1442,6 +1467,20 @@ class ProposalService:
             rule_type=RuleType.COMPLETENESS,
             metric_name="completeness",
             suggested_lower=threshold,
+            history_dates=comp_dates,
+            history_values=comp_values,
         )
+
+        # Backtest
+        if comp_values:
+            bt = backtest_completeness(comp_values, comp_dates, threshold * 100)
+            proposal.backtest = bt
+            if bt.coverage_pct >= 95:
+                proposal.confidence = ConfidenceLevel.HIGH
+            elif bt.coverage_pct >= 80:
+                proposal.confidence = ConfidenceLevel.MEDIUM
+            else:
+                proposal.confidence = ConfidenceLevel.LOW
+
         proposal.gdq_syntax_preview = self.generator.generate(proposal)
         return proposal
