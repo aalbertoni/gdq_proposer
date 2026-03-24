@@ -66,7 +66,7 @@ class TestBuildPayload:
         ]
         payload = self.svc.build_payload(MockDatasetConfig(), sels, {})
         assert payload.cod_tabe == "my_db.my_table"
-        assert payload.columns_name == ["VLR_SALDO"]
+        assert payload.columns_name == ['"vlr_saldo"']
         assert len(payload.regras_gdq) == 2
         assert payload.particao == ["dt_ref"]
 
@@ -77,14 +77,14 @@ class TestBuildPayload:
             MockSelection(RuleType.COMPLETENESS, "COL_B", "rule3"),
         ]
         payload = self.svc.build_payload(MockDatasetConfig(), sels, {})
-        assert payload.columns_name == ["COL_A", "COL_B"]
+        assert payload.columns_name == ['"col_a"', '"col_b"']
 
     def test_isprimarykey_columns_extracted(self):
         sels = [
             MockSelection(RuleType.IS_PRIMARY_KEY, "COL_A COL_B COL_C", "IsPrimaryKey COL_A COL_B COL_C"),
         ]
         payload = self.svc.build_payload(MockDatasetConfig(), sels, {})
-        assert payload.columns_name == ["COL_A", "COL_B", "COL_C"]
+        assert payload.columns_name == ['"col_a"', '"col_b"', '"col_c"']
 
     def test_rowcount_no_column(self):
         sels = [
@@ -99,7 +99,7 @@ class TestBuildPayload:
             MockSelection(RuleType.MEAN_DUAL_GUARD, "COL_B", "rule2", enabled=False),
         ]
         payload = self.svc.build_payload(MockDatasetConfig(), sels, {})
-        assert payload.columns_name == ["COL_A"]
+        assert payload.columns_name == ['"col_a"']
         assert len(payload.regras_gdq) == 1
 
     def test_classificatory_override(self):
@@ -159,9 +159,9 @@ class TestBuildPayload:
         assert len(payload.regras_gdq) == 1
         assert payload.regras_gdq[0] == "rule1"
         # COL_B and COL_C still appear in columns (enabled + has target_column)
-        assert "COL_A" in payload.columns_name
-        assert "COL_B" in payload.columns_name
-        assert "COL_C" in payload.columns_name
+        assert '"col_a"' in payload.columns_name
+        assert '"col_b"' in payload.columns_name
+        assert '"col_c"' in payload.columns_name
 
     def test_processamento_defaults(self):
         """Processamento gets defaults from config when not overridden."""
@@ -183,7 +183,7 @@ class TestExtractColumns:
             MockSelection(RuleType.COMPLETENESS, "MMM", "r3"),
         ]
         cols = self.svc._extract_columns(sels)
-        assert cols == ["AAA", "MMM", "ZZZ"]
+        assert cols == ['"aaa"', '"mmm"', '"zzz"']
 
     def test_disabled_excluded(self):
         sels = [
@@ -191,14 +191,14 @@ class TestExtractColumns:
             MockSelection(RuleType.COMPLETENESS, "COL_B", "r2", enabled=False),
         ]
         cols = self.svc._extract_columns(sels)
-        assert cols == ["COL_A"]
+        assert cols == ['"col_a"']
 
     def test_primary_key_split(self):
         sels = [
             MockSelection(RuleType.IS_PRIMARY_KEY, "A B C", "IsPrimaryKey A B C"),
         ]
         cols = self.svc._extract_columns(sels)
-        assert cols == ["A", "B", "C"]
+        assert cols == ['"a"', '"b"', '"c"']
 
     def test_mixed_types(self):
         sels = [
@@ -207,7 +207,7 @@ class TestExtractColumns:
             MockSelection(RuleType.COMPLETENESS, "COL_C", "r3"),
         ]
         cols = self.svc._extract_columns(sels)
-        assert cols == ["COL_A", "COL_B", "COL_C"]
+        assert cols == ['"col_a"', '"col_b"', '"col_c"']
 
 
 class TestThunderaPayloadSerialization:

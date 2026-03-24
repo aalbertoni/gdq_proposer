@@ -50,9 +50,11 @@ def parse_glue_log(log_text: str) -> list[GlueRuleResult]:
             seen_rules.add(key)
             results.append(r)
 
-    # Enrich with labels
+    # Enrich with labels, category, column, and compiled range
     for r in results:
         r.rule_label = _extract_rule_label(r.rule_syntax)
+        r.rule_category, r.target_column = _extract_rule_category_and_column(r.rule_syntax)
+        _extract_compiled_range(r)
 
     return results
 
@@ -202,6 +204,103 @@ def _safe_eval_list(raw: str) -> Optional[list[dict]]:
         pass
 
     return None
+
+
+def _extract_rule_category_and_column(syntax: str) -> tuple[str, str]:
+    """Extract rule category and target column from GDQ syntax.
+
+    Returns:
+        Tuple of (category, column). Category is user-friendly name.
+    """
+    s = syntax.strip()
+
+    # CustomSql percentile: extract percentile + column
+    m = re.search(
+        r'CustomSql\s+"select\s+approx_percentile\(\s*cast\((\w+)',
+        s, re.IGNORECASE,
+    )
+    if m:
+        return "Percentil", m.group(1)
+
+    # CustomSql frequency: extract column and value from case when
+    m = re.search(
+        r'CustomSql\s+"select\s+cast\(sum\(case\s+when\s+(\w+)',
+        s, re.IGNORECASE,
+    )
+    if m:
+        return "Frequencia", m.group(1)
+
+    # CustomSql generic
+    if "CustomSql" in s or "customsql" in s.lower():
+        m = re.search(r'select\s+\w+\(.*?(\w+).*?from\s+primary', s, re.IGNORECASE)
+        col = m.group(1) if m else ""
+        return "CustomSql", col
+
+    # Dual guard: (((Mean COL >= ...) AND ...)) OR ...)
+    if s.startswith("(("):
+        m = re.match(r'\(\((\w+)\s+(\w+)', s)
+        if m:
+            return m.group(1), m.group(2)
+
+    # RowCount dual guard: (((RowCount >= ...) AND ...))
+    if s.startswith("(((RowCount"):
+        return "RowCount", ""
+
+    # RowCount standalone (no column)
+    if re.match(r'RowCount\b', s):
+        return "RowCount", ""
+
+    # IsPrimaryKey: all remaining tokens are columns
+    if s.startswith("IsPrimaryKey"):
+        cols = s.replace("IsPrimaryKey", "").strip()
+        return "IsPrimaryKey", cols
+
+    # Standard: RuleName column ...
+    m = re.match(r'(\w+)\s+(\w+)', s)
+    if m:
+        return m.group(1), m.group(2)
+
+    return "", ""
+
+
+def _extract_compiled_range(r) -> None:
+    """Extract compiled band limits from failure_reason.
+
+    GDQ failure reasons often contain patterns like:
+    - 'ExpectedRange: [80.5, 120.3]'
+    - 'Expected: between 80.5 and 120.3'
+    - 'Threshold: >= 0.95'
+    """
+    if not r.failure_reason:
+        return
+
+    # Pattern: ExpectedRange: [lower, upper]
+    m = re.search(r'ExpectedRange:\s*\[\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\]', r.failure_reason)
+    if m:
+        try:
+            r.compiled_lower = float(m.group(1))
+            r.compiled_upper = float(m.group(2))
+        except ValueError:
+            pass
+        return
+
+    # Pattern: Expected ... between X and Y
+    m = re.search(r'between\s+([-\d.]+)\s+and\s+([-\d.]+)', r.failure_reason, re.IGNORECASE)
+    if m:
+        try:
+            r.compiled_lower = float(m.group(1))
+            r.compiled_upper = float(m.group(2))
+        except ValueError:
+            pass
+        return
+
+    # Pattern: >= threshold (single-sided like Completeness)
+    m = re.search(r'>=\s*([-\d.]+)', r.failure_reason)
+    if m:
+        try:
+            r.compiled_lower = float(m.group(1))
+        except ValueError:
+            pass
 
 
 def _safe_eval_dict(raw: str) -> Optional[dict]:

@@ -109,11 +109,13 @@ class GlueTestService:
     def _extract_columns(self, selections: list) -> list[str]:
         """Extrai nomes unicos de colunas referenciadas nas regras.
 
+        Formato Thundera: lowercase entre aspas duplas (ex: '"vlr_saldo"').
+
         Args:
             selections: Lista de RuleSelection.
 
         Returns:
-            Lista ordenada de nomes de colunas unicos.
+            Lista ordenada de nomes de colunas formatados.
         """
         columns: set[str] = set()
         for sel in selections:
@@ -127,7 +129,7 @@ class GlueTestService:
                 columns.update(p.target_column.split())
             else:
                 columns.add(p.target_column)
-        return sorted(columns)
+        return sorted(f'"{c.lower()}"' for c in columns)
 
     def run_test(
         self,

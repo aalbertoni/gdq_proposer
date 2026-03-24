@@ -142,16 +142,31 @@ class GlueRuleResult:
         evaluated_metrics: Metricas avaliadas (ex: Dataset.*.CustomSQL -> valor).
         failure_reason: Motivo da falha (se houver).
         rule_label: Label curta para exibicao (ex: "Mean vlr_saldo").
+        rule_category: Categoria da regra (Mean, StandardDeviation, Completeness, etc).
+        target_column: Coluna alvo da regra.
+        compiled_lower: Limite inferior compilado (extraido do failure_reason).
+        compiled_upper: Limite superior compilado (extraido do failure_reason).
     """
     rule_syntax: str = ""
     outcome: str = ""
     evaluated_metrics: dict[str, float] = field(default_factory=dict)
     failure_reason: str = ""
     rule_label: str = ""
+    rule_category: str = ""
+    target_column: str = ""
+    compiled_lower: Optional[float] = None
+    compiled_upper: Optional[float] = None
 
     @property
     def passed(self) -> bool:
         return self.outcome.lower() == "passed"
+
+    @property
+    def metric_value(self) -> Optional[float]:
+        """Retorna o valor da metrica principal avaliada."""
+        if self.evaluated_metrics:
+            return next(iter(self.evaluated_metrics.values()))
+        return None
 
 
 @dataclass

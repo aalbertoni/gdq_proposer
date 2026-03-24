@@ -14,6 +14,77 @@ from core.models.enums import get_rule_label
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _render_rule_result_card(r, idx: int):
+    """Renderiza card visual completo para um resultado de regra."""
+    passed = r.passed
+    status_icon = "✅" if passed else "❌"
+    status_color = "green" if passed else "red"
+    outcome_text = "Aprovada" if passed else "Reprovada"
+
+    # Rule title: Category + Column
+    title = r.rule_category or "Regra"
+    if r.target_column:
+        title += f" — {r.target_column}"
+
+    with st.container(border=True):
+        # Header row: icon + title + outcome badge
+        hcol1, hcol2 = st.columns([1, 11])
+        with hcol1:
+            st.markdown(f"<div style='font-size:2rem;text-align:center'>{status_icon}</div>",
+                        unsafe_allow_html=True)
+        with hcol2:
+            st.markdown(
+                f"**{title}** &nbsp; "
+                f"<span style='background-color:{'#d4edda' if passed else '#f8d7da'};"
+                f"color:{'#155724' if passed else '#721c24'};"
+                f"padding:2px 8px;border-radius:4px;font-size:0.85em'>"
+                f"{outcome_text}</span>",
+                unsafe_allow_html=True,
+            )
+
+        # Metrics row
+        metric_cols = st.columns(4)
+        with metric_cols[0]:
+            val = r.metric_value
+            if val is not None:
+                st.metric("Valor medido", f"{val:,.4f}")
+            else:
+                st.metric("Valor medido", "—")
+        with metric_cols[1]:
+            if r.compiled_lower is not None:
+                st.metric("Limite inferior", f"{r.compiled_lower:,.4f}")
+            else:
+                st.metric("Limite inferior", "—")
+        with metric_cols[2]:
+            if r.compiled_upper is not None:
+                st.metric("Limite superior", f"{r.compiled_upper:,.4f}")
+            else:
+                st.metric("Limite superior", "—")
+        with metric_cols[3]:
+            # Metric key (cleaned)
+            if r.evaluated_metrics:
+                clean_keys = []
+                for k in r.evaluated_metrics:
+                    clean_keys.append(k.split(".")[-1] if "." in k else k)
+                st.metric("Metrica GDQ", ", ".join(clean_keys))
+            else:
+                st.metric("Metrica GDQ", "—")
+
+        # Failure reason (prominent when failed)
+        if r.failure_reason and not passed:
+            st.error(f"**Motivo:** {r.failure_reason}", icon="⚠️")
+        elif r.failure_reason:
+            st.caption(f"Detalhe: {r.failure_reason}")
+
+        # GDQ Syntax (collapsible)
+        with st.expander("Sintaxe GDQ", expanded=False):
+            st.code(r.rule_syntax, language=None)
+
+
+# ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 
@@ -517,29 +588,8 @@ if _run_state == "done" and _run_result:
         # Results cards — failed first, then passed
         sorted_results = sorted(rule_results, key=lambda r: (r.passed, r.rule_label))
 
-        for r in sorted_results:
-            status_icon = "✅" if r.passed else "❌"
-            outcome_label = "Aprovada" if r.passed else "Reprovada"
-
-            with st.container(border=True):
-                col_status, col_label = st.columns([1, 11])
-                with col_status:
-                    st.markdown(f"### {status_icon}")
-                with col_label:
-                    st.markdown(f"**{r.rule_label}** — {outcome_label}")
-
-                    if r.evaluated_metrics:
-                        metrics_parts = []
-                        for k, v in r.evaluated_metrics.items():
-                            clean_key = k.split(".")[-1] if "." in k else k
-                            metrics_parts.append(f"`{clean_key}` = **{v:g}**")
-                        st.caption("Metricas: " + " · ".join(metrics_parts))
-
-                    if r.failure_reason:
-                        st.caption(f"Motivo: {r.failure_reason}")
-
-                    with st.expander("Sintaxe completa", expanded=False):
-                        st.code(r.rule_syntax, language=None)
+        for idx, r in enumerate(sorted_results):
+            _render_rule_result_card(r, idx)
 
         # Next steps
         st.divider()
