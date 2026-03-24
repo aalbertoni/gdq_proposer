@@ -1431,26 +1431,19 @@ with tab_categoricas:
             st.error(f"Erro ao consultar dominio categorico: {e}")
             st.stop()
 
-        # Distribution e distinct_count carregados sob demanda para reduzir custo
+        # Distribution e distinct_count carregados automaticamente
         import pandas as pd
         cat_dist_df = pd.DataFrame()
         cat_dc_history_df = pd.DataFrame()
 
-        _cat_detail_key = f"cat_detail_loaded_{selected_cat_col}"
-        if st.button(
-            "Carregar historico de frequencia e distintos",
-            key=f"btn_cat_detail_{_fp}_{selected_cat_col}",
-            help="Executa 2 queries adicionais no Athena para obter distribuicao por periodo e contagem de distintos.",
-        ) or st.session_state.get(_cat_detail_key, False):
-            st.session_state[_cat_detail_key] = True
-            try:
-                cat_dist_df = fetch_categorical_distribution(config_dict, selected_cat_col)
-            except Exception as e:
-                st.warning(f"Erro na distribuicao: {e}")
-            try:
-                cat_dc_history_df = fetch_distinct_count_history(config_dict, selected_cat_col)
-            except Exception as e:
-                st.warning(f"Erro no historico de distintos: {e}")
+        try:
+            cat_dist_df = fetch_categorical_distribution(config_dict, selected_cat_col)
+        except Exception as e:
+            st.warning(f"Erro na distribuicao: {e}")
+        try:
+            cat_dc_history_df = fetch_distinct_count_history(config_dict, selected_cat_col)
+        except Exception as e:
+            st.warning(f"Erro no historico de distintos: {e}")
 
         if cat_domain_df.empty:
             st.warning(f"Nenhum dado encontrado para `{selected_cat_col}`.")
@@ -1532,6 +1525,13 @@ with tab_categoricas:
                         key=f"cat_margin_{selected_cat_col}",
                         help="Margem percentual alternativa (dual guard OR).",
                     )
+                cat_margin_enabled = st.checkbox(
+                    "Margem ativa (dual guard: sigma OR margem)",
+                    value=True,
+                    key=f"cat_margin_enabled_{selected_cat_col}",
+                    help="Quando ativo, a regra passa se o valor estiver dentro da banda sigma OU da banda de margem. "
+                         "Desativar para usar apenas a banda sigma.",
+                )
             elif is_low or is_mid:
                 cat_n_periods = 20
                 cat_n_sigma = 2.0
@@ -1541,10 +1541,12 @@ with tab_categoricas:
                     help="Margem em pontos percentuais sobre a frequencia media para "
                          "definir a faixa aceitavel. Mais alto = regra mais tolerante.",
                 )
+                cat_margin_enabled = True
             else:
                 cat_n_periods = 20
                 cat_n_sigma = 2.0
                 cat_margin_pct = 10
+                cat_margin_enabled = True
 
             # --- Hybrid floor/ceiling ---
             cat_floor_pct = None
@@ -1591,14 +1593,15 @@ with tab_categoricas:
                 n_periods=cat_n_periods,
                 n_sigma=cat_n_sigma,
                 margin_pct=cat_margin_pct / 100.0,
-                margin_enabled=cat_freq_mode != "static",
+                margin_enabled=cat_margin_enabled if cat_freq_mode != "static" else False,
                 min_history_points=_grain_policy.min_history,
             )
 
             cat_cache_key = (
                 f"cat_proposals_{selected_cat_col}_{cat_margin_pct}"
                 f"_{cat_freq_mode}_{cat_n_periods}_{cat_n_sigma}"
-                f"_{cat_floor_pct}_{cat_ceiling_pct}_{max_freq_rules}_{effective_lookback}"
+                f"_{cat_floor_pct}_{cat_ceiling_pct}_{max_freq_rules}"
+                f"_{cat_margin_enabled}_{effective_lookback}"
             )
             cat_proposals = _get_cached_proposals(
                 cat_cache_key,
@@ -1678,7 +1681,7 @@ with tab_categoricas:
                                 fp.history_values, fp.history_dates,
                                 cat_n_periods, cat_n_sigma, margin_pct_chart,
                                 f"Freq % ({cat_val})",
-                                margin_enabled=cat_freq_mode != "static",
+                                margin_enabled=cat_margin_enabled if cat_freq_mode != "static" else False,
                             )
 
                         _render_backtest_metrics(fp)
