@@ -97,11 +97,10 @@ tasks:
       - sudo /usr/local/bin/deploy-staging gdq-proposer
 
   smoke-staging:
-    desc: Smoke interno do staging (via docker exec, sem depender de porta host)
+    desc: Smoke interno do staging (via wrappers autorizados)
     cmds:
       - sudo /usr/local/bin/stack-status gdq-proposer-staging
       - sudo /usr/local/bin/stack-health gdq-proposer-staging 60
-      - sudo docker exec gdq-proposer-staging curl -fsS http://localhost:8501/_stcore/health
 
   smoke-staging-public:
     desc: Smoke publico do staging

@@ -39,7 +39,7 @@ build:
 
 smoke:
   local_command: "curl -fsS http://localhost:8501/_stcore/health"
-  staging_command: "sudo docker exec gdq-proposer-staging curl -fsS http://localhost:8501/_stcore/health"
+  staging_command: "sudo /usr/local/bin/stack-health gdq-proposer-staging 60"
   public_command: "echo no-public-smoke-configured"
 
 review_agents:
