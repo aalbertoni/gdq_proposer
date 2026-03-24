@@ -22,10 +22,10 @@ test:
   coverage_command: ".venv/bin/pytest tests/ -v --tb=short --cov=core --cov=infra --cov=services --cov=strategies --cov=pages --cov-report=term-missing -m 'not athena'"
 
 lint:
-  command: ""
+  command: ""  # TODO: configurar ruff check . (requer ruff em requirements.txt)
 
 typecheck:
-  command: ""
+  command: ""  # TODO: configurar mypy core infra services (requer mypy em requirements.txt)
 
 security:
   secret_scan_command: "gitleaks detect --no-banner --source ."
@@ -39,7 +39,7 @@ build:
 
 smoke:
   local_command: "curl -fsS http://localhost:8501/_stcore/health"
-  staging_command: "curl -fsS http://localhost:18501/_stcore/health"
+  staging_command: "sudo docker exec gdq-proposer-staging curl -fsS http://localhost:8501/_stcore/health"
   public_command: "echo no-public-smoke-configured"
 
 review_agents:

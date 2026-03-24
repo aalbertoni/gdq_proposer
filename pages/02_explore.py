@@ -374,17 +374,7 @@ def _update_col_health(column: str, rule_key: str, confidence: ConfidenceLevel) 
 
 def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="numeric",
                         grain=None, series_profile=None):
-    """Renderiza botao de calibracao explicavel, exibe resultado com justificativa e aplica parametros.
-
-    Substitui o antigo auto-tune (grid search) por logica sequencial em 5 etapas:
-    1. Escolher N pelo grao
-    2. Testar sigma sozinho — se suficiente, sem margem
-    3. Adicionar margem somente se necessario
-    4. Validar com backtest
-    5. Gerar justificativa
-
-    Cada decisao e explicada ao usuario.
-    """
+    """Renderiza expander de calibracao automatica com botoes, resultado e justificativa."""
     from core.models.enums import GrainType
     cache_key = f"autotune_{rule_key}"
 
@@ -396,126 +386,106 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
         and isinstance(st.session_state.get(cache_key), CalibrationResult)
     )
 
-    # Buttons side by side: Calibrar + Aplicar
-    btn_c1, btn_c2 = st.columns(2)
-    with btn_c1:
-        calibrate_clicked = st.button(
-            "Calibrar parametros",
-            key=f"btn_autotune_{rule_key}",
-            help="Analisa a serie e sugere a melhor combinacao de N, sigma e margem.",
-        )
-    with btn_c2:
-        apply_enabled = has_result and st.session_state[cache_key].viable
-        apply_clicked = st.button(
-            "Aplicar parametros sugeridos",
-            key=f"apply_autotune_{rule_key}",
-            disabled=not apply_enabled,
-            help="Atualiza os sliders com os parametros recomendados."
-                 if apply_enabled else "Execute a calibracao primeiro.",
+    with st.expander("Calibracao automatica", expanded=False):
+        st.caption(
+            "Analisa a serie e sugere a melhor combinacao de parametros. "
+            "Clique em **Aplicar** para atualizar os sliders e o grafico acima."
         )
 
-    if calibrate_clicked:
-        with st.spinner("Calibrando..."):
-            result = calibrate(
-                values=values, dates=dates,
-                grain=grain, metric_kind=metric_kind,
-                profile=series_profile,
+        # Buttons side by side
+        btn_c1, btn_c2 = st.columns(2)
+        with btn_c1:
+            calibrate_clicked = st.button(
+                "Calibrar",
+                key=f"btn_autotune_{rule_key}",
+                help="Analisa a serie e sugere N, sigma e margem.",
             )
-            st.session_state[cache_key] = result
-            has_result = True
-
-    if apply_clicked and apply_enabled:
-        result = st.session_state[cache_key]
-        st.session_state["_pending_autotune"] = {
-            "rule_key": rule_key,
-            "n_periods": result.n_periods,
-            "n_sigma": result.n_sigma,
-            "margin_pct": int(result.margin_pct * 100),
-            "margin_enabled": result.margin_enabled,
-        }
-        st.rerun()
-
-    if has_result:
-        result = st.session_state[cache_key]
-        if not isinstance(result, CalibrationResult):
-            del st.session_state[cache_key]
-            return
-
-        confidence = result.confidence
-        badge = _confidence_badge(confidence)
-
-        if result.viable:
-            st.success(f"{badge} {result.recommendation}")
-        else:
-            st.error(f"{badge} {result.recommendation}")
-
-        # -- Metricas-chave em colunas --
-        m_c1, m_c2, m_c3 = st.columns(3)
-        with m_c1:
-            st.metric(
-                "Cobertura",
-                f"{result.coverage_pct:.1f}%",
-                help="Porcentagem de periodos historicos que passariam na regra.",
-            )
-        with m_c2:
-            st.metric(
-                "Falsos Positivos",
-                f"~{result.false_positives}",
-                delta_color="inverse",
-                help="Periodos normais que seriam reprovados indevidamente.",
-            )
-        with m_c3:
-            st.metric(
-                "Confianca",
-                badge,
-                help="HIGH = recomendada, MEDIUM = revisar, LOW = nao recomendada.",
+        with btn_c2:
+            apply_enabled = has_result and st.session_state[cache_key].viable
+            apply_clicked = st.button(
+                "Aplicar nos sliders",
+                key=f"apply_autotune_{rule_key}",
+                disabled=not apply_enabled,
+                help="Atualiza os sliders e o grafico com os parametros sugeridos."
+                     if apply_enabled else "Execute a calibracao primeiro.",
             )
 
-        # -- Parametros recomendados --
-        p_c1, p_c2, p_c3, p_c4 = st.columns(4)
-        with p_c1:
-            st.caption(f"**N:** {result.n_periods} periodos")
-        with p_c2:
+        if calibrate_clicked:
+            with st.spinner("Calibrando..."):
+                result = calibrate(
+                    values=values, dates=dates,
+                    grain=grain, metric_kind=metric_kind,
+                    profile=series_profile,
+                )
+                st.session_state[cache_key] = result
+                has_result = True
+
+        if apply_clicked and apply_enabled:
+            result = st.session_state[cache_key]
+            st.session_state["_pending_autotune"] = {
+                "rule_key": rule_key,
+                "n_periods": result.n_periods,
+                "n_sigma": result.n_sigma,
+                "margin_pct": int(result.margin_pct * 100),
+                "margin_enabled": result.margin_enabled,
+            }
+            st.rerun()
+
+        if has_result:
+            result = st.session_state[cache_key]
+            if not isinstance(result, CalibrationResult):
+                del st.session_state[cache_key]
+                return
+
+            confidence = result.confidence
+            badge = _confidence_badge(confidence)
+
+            st.markdown("---")
+
+            if result.viable:
+                st.success(f"{badge} {result.recommendation}")
+            else:
+                st.error(f"{badge} {result.recommendation}")
+
+            # -- Parametros sugeridos em linha --
             sigma_str = str(int(result.n_sigma)) if result.n_sigma == int(result.n_sigma) else f"{result.n_sigma:.1f}"
-            st.caption(f"**Sigma:** {sigma_str}")
-        with p_c3:
-            st.caption(f"**Margem:** {result.margin_pct*100:.0f}%")
-        with p_c4:
-            st.caption(f"**Margem:** {'ativada' if result.margin_enabled else 'desativada'}")
+            margin_status = f"{result.margin_pct*100:.0f}%" if result.margin_enabled else "desativada"
+            st.markdown(
+                f"**Sugestao:** N={result.n_periods} · Sigma={sigma_str} · "
+                f"Margem={margin_status} · "
+                f"Cobertura={result.coverage_pct:.1f}% · FP=~{result.false_positives}"
+            )
 
-        # -- Expander com justificativas passo a passo --
-        with st.expander("Justificativa da calibracao", expanded=False):
+            # -- Justificativa simplificada --
+            _step_icons = {1: "1.", 2: "2.", 3: "3.", 4: "4."}
             for step in result.steps:
                 if step.step == 5:
-                    continue  # Relatorio consolidado nao precisa ser repetido
-                st.markdown(f"**Etapa {step.step}: {step.name}**")
-                st.caption(f"Decisao: {step.decision}")
-                st.caption(f"Justificativa: {step.justification}")
+                    continue
+                icon = _step_icons.get(step.step, "-")
+                st.markdown(f"{icon} **{step.name}** — {step.decision}")
 
-                # Detalhes extras por etapa
+                # Dados extras inline
                 if step.step == 2 and step.data.get("results_by_sigma"):
-                    results = step.data["results_by_sigma"]
-                    items = [f"sigma={s}: {c:.1%}" for s, c in sorted(results.items())]
-                    st.caption(f"Cobertura por sigma: {' | '.join(items)}")
+                    results_data = step.data["results_by_sigma"]
+                    items = [f"σ={s}: {c:.0%}" for s, c in sorted(results_data.items())]
+                    st.caption(" · ".join(items))
 
                 if step.step == 3 and step.data.get("results_by_margin"):
-                    results = step.data["results_by_margin"]
-                    items = [f"margem={m:.0%}: {c:.1%}" for m, c in sorted(results.items())]
-                    st.caption(f"Cobertura por margem: {' | '.join(items)}")
-
-                st.caption("")  # spacer
+                    results_data = step.data["results_by_margin"]
+                    items = [f"{m:.0%}: {c:.0%}" for m, c in sorted(results_data.items())]
+                    st.caption(" · ".join(items))
 
             # Weighted coverage insight
             if abs(result.weighted_coverage_pct - result.coverage_pct) > 1.0:
                 if result.weighted_coverage_pct > result.coverage_pct:
                     st.caption(
-                        f":green[Cobertura recente ({result.weighted_coverage_pct:.1f}%) melhor que historica ({result.coverage_pct:.1f}%).] "
-                        f"Periodos mais recentes estao mais estaveis."
+                        f":green[Recente ({result.weighted_coverage_pct:.1f}%) > historica ({result.coverage_pct:.1f}%)] "
+                        f"— serie estabilizando."
                     )
                 else:
                     st.caption(
-                        f":orange[Cobertura recente ({result.weighted_coverage_pct:.1f}%) pior que historica ({result.coverage_pct:.1f}%).] "
-                        f"Periodos mais recentes estao mais instaveis."
+                        f":orange[Recente ({result.weighted_coverage_pct:.1f}%) < historica ({result.coverage_pct:.1f}%)] "
+                        f"— atencao, serie desestabilizando."
                     )
 
 
@@ -941,51 +911,23 @@ for _regime, _cols in _summary.problematic_regimes.items():
 if _alerts:
     st.warning(" · ".join(_alerts))
 
-# --- Detalhes (expander colapsado) ---
-from core.models.enums import SEMANTIC_TYPE_LABELS as _STYPE_MAP
-_STYPE_LABELS = {st.value: label for st, label in _STYPE_MAP.items()}
-_CAT_INLINE_BADGES = {
-    "strong": ":green[Forte]", "conservative": ":blue[Conservadora]",
-    "needs_review": ":orange[Revisar]", "not_recommended": ":red[N/R]",
-}
-_has_details = bool(
-    _summary.by_semantic_type or _summary.by_proposal_category or _exclusions
-)
-if _has_details:
-    with st.expander("Detalhes da analise", expanded=False):
-        _dc1, _dc2 = st.columns(2)
-        with _dc1:
-            _parts = [
-                f"{_STYPE_LABELS.get(k, k)} ({v})"
-                for k, v in sorted(_summary.by_semantic_type.items(), key=lambda x: -x[1])
-            ]
-            if _parts:
-                st.caption("**Tipos:** " + " · ".join(_parts))
-        with _dc2:
-            _cat_parts = [
-                f"{_CAT_INLINE_BADGES.get(k, k)} ({v})"
-                for k, v in sorted(_summary.by_proposal_category.items(), key=lambda x: -x[1])
-                if v > 0
-            ]
-            if _cat_parts:
-                st.caption("**Propostas:** " + " · ".join(_cat_parts))
-        if _exclusions:
-            st.markdown("---")
-            st.caption(f"**Colunas sem regras ({len(_exclusions)}):**")
-            for exc in _exclusions:
-                st.caption(f"- **{exc.column_name}** ({_STYPE_LABELS.get(exc.semantic_type.value, exc.semantic_type.value)}): {exc.reason}")
-
 # ---------------------------------------------------------------------------
 # Calibracao em lote (acima das tabs para visibilidade)
 # ---------------------------------------------------------------------------
 
 if numeric_profiles:
-    with st.expander("Calibracao em lote", expanded=False):
-        st.caption(
-            "Calibra todas as colunas numericas e adiciona "
-            "regras de alta confianca ao carrinho automaticamente."
-        )
+    st.markdown("---")
+    _batch_n_cols = len(numeric_profiles)
+    st.markdown(f"**Calibracao em lote** — {_batch_n_cols} colunas numericas")
+    st.caption(
+        "Calibra automaticamente todas as colunas numericas e adiciona as regras "
+        "aprovadas direto ao carrinho (Mean e StdDev). "
+        "Os graficos e sliders individuais abaixo **nao** sao alterados — "
+        "use a calibracao individual em cada coluna se quiser ajustar manualmente."
+    )
 
+    _batch_c1, _batch_c2 = st.columns([1, 2])
+    with _batch_c1:
         _batch_min = st.selectbox(
             "Confianca minima",
             options=["HIGH", "MEDIUM"],
@@ -993,89 +935,106 @@ if numeric_profiles:
             key="batch_min_confidence_top",
             help="HIGH: apenas regras muito confiaveis. MEDIUM: inclui regras que precisam revisao.",
         )
+    with _batch_c2:
+        st.caption("")  # spacer for alignment
+        _batch_clicked = st.button(
+            f"Calibrar {_batch_n_cols} colunas e adicionar ao carrinho",
+            key="btn_batch_calibrate_top",
+            type="primary",
+        )
 
-        if st.button("Calibrar todas", key="btn_batch_calibrate_top", type="primary"):
-            _batch_cols = [p.column_name for p in numeric_profiles]
-            if not _batch_cols:
-                st.warning("Nenhuma coluna numerica encontrada.")
-            else:
-                _batch_progress = st.progress(0, text="Iniciando...")
-                _batch_results = []
+    if _batch_clicked:
+        _batch_cols = [p.column_name for p in numeric_profiles]
+        _batch_progress = st.progress(0, text="Iniciando...")
+        _batch_results = []
 
-                for _bi, _bc in enumerate(_batch_cols):
-                    _batch_progress.progress(
-                        (_bi + 1) / len(_batch_cols),
-                        text=f"Calibrando {_bc} ({_bi + 1}/{len(_batch_cols)})...",
-                    )
-                    try:
-                        _bh = fetch_numeric_history(config_dict, _bc)
-                        if _bh.empty or len(_bh) < _grain_policy.batch_min_periods:
-                            _batch_results.append({"column": _bc, "status": "skip", "reason": "dados insuficientes"})
-                            continue
+        for _bi, _bc in enumerate(_batch_cols):
+            _batch_progress.progress(
+                (_bi + 1) / len(_batch_cols),
+                text=f"Calibrando {_bc} ({_bi + 1}/{len(_batch_cols)})...",
+            )
+            try:
+                _bh = fetch_numeric_history(config_dict, _bc)
+                if _bh.empty or len(_bh) < _grain_policy.batch_min_periods:
+                    _batch_results.append({"column": _bc, "status": "skip", "reason": "dados insuficientes"})
+                    continue
 
-                        _bvals = _bh["mean"].tolist()
-                        _bdates = _bh["period"].astype(str).tolist()
-                        _bbest = calibrate(
-                            values=_bvals, dates=_bdates,
-                            grain=_grain_type,
-                            seasonality_enabled=_grain_policy.seasonality_enabled,
-                        )
+                _bvals = _bh["mean"].tolist()
+                _bdates = _bh["period"].astype(str).tolist()
+                _bbest = calibrate(
+                    values=_bvals, dates=_bdates,
+                    grain=_grain_type,
+                    seasonality_enabled=_grain_policy.seasonality_enabled,
+                )
 
-                        if _bbest.confidence == ConfidenceLevel.LOW:
-                            _batch_results.append({"column": _bc, "status": "skip", "reason": "confianca LOW"})
-                            continue
-                        if _batch_min == "HIGH" and _bbest.confidence != ConfidenceLevel.HIGH:
-                            _batch_results.append({"column": _bc, "status": "skip", "reason": f"confianca {_bbest.confidence.value}"})
-                            continue
+                if _bbest.confidence == ConfidenceLevel.LOW:
+                    _batch_results.append({"column": _bc, "status": "skip", "reason": "confianca LOW"})
+                    continue
+                if _batch_min == "HIGH" and _bbest.confidence != ConfidenceLevel.HIGH:
+                    _batch_results.append({"column": _bc, "status": "skip", "reason": f"confianca {_bbest.confidence.value}"})
+                    continue
 
-                        _bbl = BaselineStrategy(
-                            n_periods=_bbest.n_periods, n_sigma=_bbest.n_sigma,
-                            margin_pct=_bbest.margin_pct, margin_enabled=_bbest.margin_enabled,
-                            min_history_points=_grain_policy.min_history,
-                        )
-                        _bprops = proposal_svc.propose_numeric_rules(
-                            history=_bh, column=_bc,
-                            table=config_dict.get("table", ""), baseline=_bbl,
-                        )
-                        _bcart = st.session_state.get("rule_cart", [])
-                        _badded = 0
-                        for _bp in _bprops:
-                            if _bp.rule_type in (RuleType.MEAN_DUAL_GUARD, RuleType.STDDEV_DUAL_GUARD):
-                                if not any(
-                                    r.proposal.rule_type == _bp.rule_type
-                                    and r.proposal.target_column == _bp.target_column
-                                    for r in _bcart
-                                ):
-                                    _bcart.append(RuleSelection(
-                                        proposal_id=_bp.id, proposal=_bp,
-                                        final_gdq_syntax=_bp.gdq_syntax_preview,
-                                    ))
-                                    _badded += 1
-                        st.session_state["rule_cart"] = _bcart
-                        _batch_results.append({
-                            "column": _bc, "status": "added" if _badded > 0 else "exists",
-                            "confidence": _bbest.confidence.value,
-                            "coverage": _bbest.coverage_pct,
-                            "n": _bbest.n_periods, "sigma": _bbest.n_sigma,
-                            "added": _badded,
-                        })
-                    except Exception as e:
-                        _batch_results.append({"column": _bc, "status": "error", "reason": str(e)})
+                _bbl = BaselineStrategy(
+                    n_periods=_bbest.n_periods, n_sigma=_bbest.n_sigma,
+                    margin_pct=_bbest.margin_pct, margin_enabled=_bbest.margin_enabled,
+                    min_history_points=_grain_policy.min_history,
+                )
+                _bprops = proposal_svc.propose_numeric_rules(
+                    history=_bh, column=_bc,
+                    table=config_dict.get("table", ""), baseline=_bbl,
+                )
+                _bcart = st.session_state.get("rule_cart", [])
+                _badded = 0
+                for _bp in _bprops:
+                    if _bp.rule_type in (RuleType.MEAN_DUAL_GUARD, RuleType.STDDEV_DUAL_GUARD):
+                        if not any(
+                            r.proposal.rule_type == _bp.rule_type
+                            and r.proposal.target_column == _bp.target_column
+                            for r in _bcart
+                        ):
+                            _bcart.append(RuleSelection(
+                                proposal_id=_bp.id, proposal=_bp,
+                                final_gdq_syntax=_bp.gdq_syntax_preview,
+                            ))
+                            _badded += 1
+                st.session_state["rule_cart"] = _bcart
+                _batch_results.append({
+                    "column": _bc, "status": "added" if _badded > 0 else "exists",
+                    "confidence": _bbest.confidence.value,
+                    "coverage": _bbest.coverage_pct,
+                    "n": _bbest.n_periods, "sigma": _bbest.n_sigma,
+                    "added": _badded,
+                })
+            except Exception as e:
+                _batch_results.append({"column": _bc, "status": "error", "reason": str(e)})
 
-                _batch_progress.empty()
-                _total_added = sum(r.get("added", 0) for r in _batch_results)
-                if _total_added > 0:
-                    st.success(f"{_total_added} regras adicionadas de {len(_batch_cols)} colunas.")
-                with st.expander(f"Detalhes: {len(_batch_results)} colunas", expanded=_total_added > 0):
-                    for _br in _batch_results:
-                        if _br["status"] == "added":
-                            st.caption(f":green[+{_br['added']}] **{_br['column']}** -- {_br['confidence']}, cob. {_br['coverage']:.1f}%")
-                        elif _br["status"] == "exists":
-                            st.caption(f":blue[=] **{_br['column']}** -- ja no carrinho")
-                        elif _br["status"] == "skip":
-                            st.caption(f":orange[-] **{_br['column']}** -- {_br['reason']}")
-                        elif _br["status"] == "error":
-                            st.caption(f":red[!] **{_br['column']}** -- erro: {_br['reason']}")
+        _batch_progress.empty()
+        _total_added = sum(r.get("added", 0) for r in _batch_results)
+        _total_skipped = sum(1 for r in _batch_results if r["status"] == "skip")
+        _total_errors = sum(1 for r in _batch_results if r["status"] == "error")
+
+        if _total_added > 0:
+            st.success(
+                f"{_total_added} regras adicionadas ao carrinho. "
+                f"Veja o resultado na pagina Review."
+            )
+        if _total_skipped > 0:
+            st.info(f"{_total_skipped} colunas ignoradas (confianca insuficiente ou dados escassos).")
+        if _total_errors > 0:
+            st.warning(f"{_total_errors} colunas com erro.")
+
+        with st.expander(f"Resultado por coluna ({len(_batch_results)})", expanded=_total_added > 0):
+            for _br in _batch_results:
+                if _br["status"] == "added":
+                    st.caption(f":green[+{_br['added']}] **{_br['column']}** — {_br['confidence']}, cobertura {_br['coverage']:.1f}%, N={_br['n']}, sigma={_br['sigma']}")
+                elif _br["status"] == "exists":
+                    st.caption(f":blue[=] **{_br['column']}** — ja no carrinho")
+                elif _br["status"] == "skip":
+                    st.caption(f":orange[-] **{_br['column']}** — {_br['reason']}")
+                elif _br["status"] == "error":
+                    st.caption(f":red[!] **{_br['column']}** — erro: {_br['reason']}")
+
+    st.markdown("---")
 
 # ---------------------------------------------------------------------------
 # Tabs
@@ -1217,15 +1176,15 @@ with tab_numericas:
                         margin_enabled=mean_margin_on,
                     )
 
+                _render_backtest_metrics(proposal)
+
+                if values and dates:
                     _render_calibration(
                         proposal_svc, values, dates,
                         f"{_fp}_mean_{selected_col}", metric_kind="numeric",
                         grain=_grain_type, series_profile=series_profile,
                     )
 
-                # Metricas do backtest (ocultar se calibracao ja exibe metricas)
-                if f"autotune_{_fp}_mean_{selected_col}" not in st.session_state:
-                    _render_backtest_metrics(proposal)
                 _render_add_to_cart(
                     proposal, "Mean",
                     f"mean_{selected_col}",
@@ -1275,14 +1234,15 @@ with tab_numericas:
                         margin_enabled=std_margin_on,
                     )
 
+                _render_backtest_metrics(proposal)
+
+                if values and dates:
                     _render_calibration(
                         proposal_svc, values, dates,
                         f"{_fp}_stddev_{selected_col}", metric_kind="numeric",
                         grain=_grain_type, series_profile=series_profile,
                     )
 
-                if f"autotune_{_fp}_stddev_{selected_col}" not in st.session_state:
-                    _render_backtest_metrics(proposal)
                 _render_add_to_cart(
                     proposal, "StdDev",
                     f"stddev_{selected_col}",
@@ -2009,14 +1969,16 @@ with tab_tabela:
                     values, dates, rc_n, rc_k, rc_margin, "Row Count",
                     margin_enabled=rc_margin_on,
                 )
+
+            _render_backtest_metrics(rc_proposal)
+
+            if values and dates:
                 _render_calibration(
                     proposal_svc, values, dates,
                     f"{_fp}_rowcount", metric_kind="numeric",
                     grain=_grain_type, series_profile=rc_series_profile,
                 )
 
-            if "autotune_rowcount" not in st.session_state:
-                _render_backtest_metrics(rc_proposal)
             _render_add_to_cart(rc_proposal, "RowCount", "rowcount", profile=rc_series_profile, fp=_fp)
         else:
             st.warning(

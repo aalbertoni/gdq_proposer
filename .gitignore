@@ -38,5 +38,8 @@ presets/*.json
 logs/*
 !logs/.gitkeep
 
+# Governance artifacts (local-only, never committed)
+reviews/latest/
+
 # Claude Code
 .claude/

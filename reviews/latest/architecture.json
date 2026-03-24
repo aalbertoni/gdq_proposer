@@ -1,6 +1,0 @@
-{
-  "status": "APROVADO",
-  "blockers": [],
-  "warnings": [],
-  "summary": "Teste unitario puro adicionado ao modulo de explicabilidade, sem impacto em source, deploy, runtime ou secrets."
-}

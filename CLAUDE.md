@@ -76,6 +76,9 @@ Regras obrigatorias:
 5. Nunca considerar staging ou producao aprovados sem gravar evidencia em `reviews/latest/`.
 6. Se houver duvida sobre o estado dos gates, parar e reportar o bloqueio em vez de continuar.
 7. O staging nao deve ser derrubado logo apos o deploy de producao. So pode ser desligado depois de `task verify-prod`, `task verify-prod-governance-proof` e uma aprovacao explicita via `ALLOW_STAGING_CLEANUP=true`.
+8. `reviews/latest/` e gitignored — artefatos de governanca sao locais e NUNCA commitados. O pre-push hook bloqueia se `reviews/latest` estiver no commit.
+9. `review-agents-consensus` exige modo consenso (Claude + Codex). Rodar `review-agents` com `CODEX_REVIEW_ENABLED=false` NAO vale como Gate 2.
+10. Nunca usar `git push --no-verify` — o pre-push hook (`core.hooksPath`) e o enforcement real.
 
 Arquivos obrigatorios de evidencia:
 
@@ -107,21 +110,28 @@ verdict: <ok|warning|fail>
 
 Fluxo obrigatorio daqui pra frente:
 
-1. Rodar `task gate1`.
-2. Rodar `task snapshot`.
-3. Rodar `task review-agents-consensus`.
-4. Rodar `task build-release`.
-5. Rodar `task deploy-staging`.
-6. Rodar `task smoke-staging`.
-7. Gravar `reviews/latest/deploy-staging-check.md`.
-8. Rodar `task verify-staging-governance-proof`.
-9. Rodar `task push-after-staging`.
-10. So depois disso considerar staging apto e branch remota alinhada.
-11. Para producao, gravar `reviews/latest/deploy-prod-check.md`.
-12. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
-13. Rodar `task verify-prod`.
-14. Rodar `task verify-prod-governance-proof`.
-15. Opcionalmente, so depois de producao estavel, rodar `ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod`.
+1. Rodar `task plan-consensus` (plano revisado pelo Codex).
+2. Rodar `task gate1`.
+3. Rodar `task snapshot`.
+4. Rodar `task review-agents-consensus` (Gate 2 com Claude + Codex).
+5. Rodar `task build-release`.
+6. Rodar `task deploy-staging`.
+7. Rodar `task smoke-staging`.
+8. Gravar `reviews/latest/deploy-staging-check.md` (local, NAO commitar — gitignored).
+9. Rodar `task verify-staging-governance-proof`.
+10. Rodar `task push-after-staging` (push via pre-push hook com enforcement real).
+11. So depois disso considerar staging apto e branch remota alinhada.
+12. Para producao, gravar `reviews/latest/deploy-prod-check.md` (local, NAO commitar).
+13. Rodar `ALLOW_PROD_DEPLOY=true task promote-prod`.
+14. Rodar `task verify-prod`.
+15. Rodar `task verify-prod-governance-proof`.
+16. Opcionalmente, so depois de producao estavel, rodar `ALLOW_STAGING_CLEANUP=true task cleanup-staging-after-prod`.
+
+Nota: `reviews/latest/` esta no `.gitignore`. Artefatos de governanca (provas, summaries, reviews)
+ficam locais. O pre-push hook valida `gate1-summary.json` e `summary.json` sem precisar que
+estejam commitados. A prova de staging (`deploy-staging-check.md`) e validada pelo Taskfile
+antes do push, mas NAO precisa de commit — o `commit_sha` no arquivo aponta para o HEAD
+do snapshot, que e o mesmo HEAD que sera pushado.
 
 Quando o usuario disser “segue com o fluxo de deploy”, o agente deve responder executando ou orientando exatamente essa sequencia. Nao pode pular direto para `git status`, `git diff`, `git push` ou deploy.
 

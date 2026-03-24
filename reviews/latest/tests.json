@@ -1,8 +1,0 @@
-{
-  "status": "APROVADO",
-  "blockers": [],
-  "warnings": [
-    "Considerar adicionar caso onde margin_enabled=True para contraste expl\u00edcito com o novo teste"
-  ],
-  "summary": "Teste unit\u00e1rio simples e determin\u00edstico para caso de borda de percentile com margem desabilitada."
-}

@@ -1,8 +1,0 @@
-{
-  "status": "APROVADO",
-  "blockers": [],
-  "warnings": [
-    "O diff cobre apenas o ramo com margin_enabled=False; falta contraste explicito com margin_enabled=True no mesmo bloco para reduzir ambiguidade futura de regressao de texto."
-  ],
-  "summary": "O diff adiciona um teste unitario puro e deterministico para RuleType.NUMERIC_PERCENTILE_BAND com margem desabilitada, sem alterar codigo de producao, deploy, secrets, wrappers, jornada do hisbras-site ou comportamento operacional de release. Nao ha risco concreto de seguranca, regressao funcional importante ou quebra de deploy; o impacto fica restrito ao aumento de cobertura de um caso de borda na explicacao textual da regra."
-}
