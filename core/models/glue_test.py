@@ -133,6 +133,28 @@ class ThunderaPayload:
 
 
 @dataclass
+class GlueRuleResult:
+    """Resultado individual de uma regra GDQ executada pelo Thundera.
+
+    Attributes:
+        rule_syntax: Sintaxe GDQ completa da regra.
+        outcome: Resultado (Passed, Failed).
+        evaluated_metrics: Metricas avaliadas (ex: Dataset.*.CustomSQL -> valor).
+        failure_reason: Motivo da falha (se houver).
+        rule_label: Label curta para exibicao (ex: "Mean vlr_saldo").
+    """
+    rule_syntax: str = ""
+    outcome: str = ""
+    evaluated_metrics: dict[str, float] = field(default_factory=dict)
+    failure_reason: str = ""
+    rule_label: str = ""
+
+    @property
+    def passed(self) -> bool:
+        return self.outcome.lower() == "passed"
+
+
+@dataclass
 class GlueTestResult:
     """Resultado de uma execucao do Glue job de teste.
 
@@ -145,6 +167,7 @@ class GlueTestResult:
         duration_seconds: Duracao em segundos.
         error_message: Mensagem de erro (se houver).
         execution_log: Log completo da execucao.
+        rule_results: Resultados individuais por regra (parsed dos logs).
     """
     run_id: str = ""
     job_name: str = ""
@@ -154,3 +177,4 @@ class GlueTestResult:
     duration_seconds: int = 0
     error_message: str = ""
     execution_log: str = ""
+    rule_results: list[GlueRuleResult] = field(default_factory=list)

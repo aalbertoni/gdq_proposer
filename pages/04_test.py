@@ -3,6 +3,7 @@ Pagina 04 — Teste: Execucao de regras via Thundera (Glue DQ).
 
 Constroi o payload JSON para o Glue job Thundera, permite edicao
 dos campos classificatorios e dispara o teste das regras exportadas.
+Inclui parsing de logs para exibir resultados por regra.
 """
 
 import json
@@ -70,6 +71,21 @@ if not enabled_rules:
     if st.button("Ir para Review "):
         st.switch_page("pages/03_review.py")
     st.stop()
+
+
+# ---------------------------------------------------------------------------
+# Dynamic rules warning
+# ---------------------------------------------------------------------------
+
+_has_dynamic = any("last(" in s.final_gdq_syntax.lower() for s in enabled_rules)
+if _has_dynamic:
+    st.info(
+        "Regras dinamicas (com `last(N)`) dependem de historico interno do GDQ. "
+        "Na **primeira execucao**, essas regras geralmente falham porque o GDQ "
+        "ainda nao tem dados acumulados. Execute pelo menos **2 vezes** para "
+        "validar o comportamento real.",
+        icon="ℹ️",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -373,52 +389,185 @@ if validation_errors:
 
 run_disabled = bool(validation_errors)
 
-if st.button(
+# Execution lock: prevent double-run and persist across page navigation
+_run_state = st.session_state.get("glue_run_state", "idle")  # idle | running | done
+_run_result = st.session_state.get("glue_run_result")
+
+if _run_state == "running":
+    st.warning(
+        "Uma execucao esta em andamento. Aguarde a conclusao antes de disparar outra.",
+        icon="⏳",
+    )
+    run_disabled = True
+
+if _run_state != "running" and st.button(
     "Executar teste",
     type="primary",
     disabled=run_disabled,
     help="Dispara o Glue job Thundera com o payload configurado.",
 ):
-    with st.status("Executando teste...", expanded=True) as status:
-        status_messages = []
+    st.session_state["glue_run_state"] = "running"
+    st.session_state["glue_run_result"] = None
 
+    with st.status("Executando teste...", expanded=True) as status:
         def on_status(state, msg):
-            status_messages.append((state, msg))
             st.write(msg)
 
         try:
             result = glue_svc.run_test(payload, on_status=on_status)
 
+            st.session_state["glue_run_state"] = "done"
+            st.session_state["glue_run_result"] = result
+            st.session_state["glue_run_execution_num"] = st.session_state.get("glue_run_execution_num", 0) + 1
+
             if result.status == "SUCCEEDED":
                 status.update(label="Teste concluido com sucesso!", state="complete")
-                st.success(
-                    f"Job concluido: {result.run_id}\n\n"
-                    f"Duracao: {result.duration_seconds}s"
-                )
             elif result.status == "TIMEOUT":
                 status.update(label="Teste excedeu timeout", state="error")
-                st.error(result.error_message)
             else:
                 status.update(label=f"Teste finalizado: {result.status}", state="error")
-                st.error(
-                    f"Status: {result.status}\n\n"
-                    f"Erro: {result.error_message or 'Sem detalhes'}"
-                )
-
-            # Show result details
-            with st.expander("Detalhes da execucao", expanded=True):
-                st.markdown(f"- **Run ID:** `{result.run_id}`")
-                st.markdown(f"- **Job:** `{result.job_name}`")
-                st.markdown(f"- **Status:** `{result.status}`")
-                st.markdown(f"- **Inicio:** `{result.started_at}`")
-                st.markdown(f"- **Fim:** `{result.completed_at}`")
-                st.markdown(f"- **Duracao:** {result.duration_seconds}s")
-                if result.error_message:
-                    st.markdown(f"- **Erro:** {result.error_message}")
 
         except Exception as e:
+            st.session_state["glue_run_state"] = "done"
             status.update(label="Erro na execucao", state="error")
             st.error(f"Erro ao executar teste: {e}")
+
+    st.rerun()
+
+# Reset button
+if _run_state == "done":
+    if st.button("Nova execucao", help="Libera para uma nova execucao do teste."):
+        st.session_state["glue_run_state"] = "idle"
+        st.session_state["glue_run_result"] = None
+        st.rerun()
+
+# Show persisted result
+if _run_state == "done" and _run_result:
+    result = _run_result
+    exec_num = st.session_state.get("glue_run_execution_num", 1)
+
+    if result.status == "SUCCEEDED":
+        st.success(f"Execucao #{exec_num} concluida com sucesso ({result.duration_seconds}s)")
+    elif result.status == "TIMEOUT":
+        st.error(f"Execucao #{exec_num}: timeout ({result.error_message})")
+    else:
+        st.error(f"Execucao #{exec_num}: {result.status} — {result.error_message or 'Sem detalhes'}")
+
+    with st.expander("Detalhes da execucao", expanded=False):
+        st.markdown(f"- **Run ID:** `{result.run_id}`")
+        st.markdown(f"- **Job:** `{result.job_name}`")
+        st.markdown(f"- **Status:** `{result.status}`")
+        st.markdown(f"- **Inicio:** `{result.started_at}`")
+        st.markdown(f"- **Fim:** `{result.completed_at}`")
+        st.markdown(f"- **Duracao:** {result.duration_seconds}s")
+        if result.error_message:
+            st.markdown(f"- **Erro:** {result.error_message}")
+
+
+# ---------------------------------------------------------------------------
+# 7. Resultados por regra (parsed de logs)
+# ---------------------------------------------------------------------------
+
+st.header("6. Resultados por regra")
+
+st.caption(
+    "Cole o log do Glue job abaixo para visualizar o resultado individual "
+    "de cada regra. O parser extrai automaticamente os resultados GDQ "
+    "do output do Thundera."
+)
+
+log_input = st.text_area(
+    "Log do Glue job",
+    height=200,
+    key="glue_log_input",
+    placeholder="Cole aqui o log completo do Glue job (CloudWatch ou console)...",
+    help="Copie o log do CloudWatch Logs do Glue job e cole aqui. "
+         "O parser identifica os blocos 'Resultados GDQ' e 'BookQualidades'.",
+)
+
+if log_input.strip():
+    from core.glue_log_parser import parse_glue_log
+
+    rule_results = parse_glue_log(log_input)
+
+    if not rule_results:
+        st.warning(
+            "Nenhum resultado de regra encontrado no log. "
+            "Verifique se o log contem a linha 'Resultados GDQ:' ou 'BookQualidades:Salvando'."
+        )
+    else:
+        # Summary metrics
+        n_total = len(rule_results)
+        n_passed = sum(1 for r in rule_results if r.passed)
+        n_failed = n_total - n_passed
+
+        mc1, mc2, mc3 = st.columns(3)
+        with mc1:
+            st.metric("Total de regras", n_total)
+        with mc2:
+            st.metric("Aprovadas", n_passed)
+        with mc3:
+            st.metric("Reprovadas", n_failed)
+
+        if n_failed > 0 and _has_dynamic:
+            _exec_num = st.session_state.get("glue_run_execution_num", 1)
+            if _exec_num <= 1:
+                st.info(
+                    f"{n_failed} regra(s) reprovada(s). Se esta e a **primeira execucao**, "
+                    "regras dinamicas (`last(N)`) falham por falta de historico interno. "
+                    "Execute novamente para validar.",
+                    icon="ℹ️",
+                )
+
+        st.divider()
+
+        # Results table — failed first, then passed
+        sorted_results = sorted(rule_results, key=lambda r: (r.passed, r.rule_label))
+
+        for r in sorted_results:
+            status_icon = "✅" if r.passed else "❌"
+            outcome_label = "Aprovada" if r.passed else "Reprovada"
+
+            with st.container(border=True):
+                col_status, col_label = st.columns([1, 11])
+                with col_status:
+                    st.markdown(f"### {status_icon}")
+                with col_label:
+                    st.markdown(f"**{r.rule_label}** — {outcome_label}")
+
+                    # Metrics
+                    if r.evaluated_metrics:
+                        metrics_parts = []
+                        for k, v in r.evaluated_metrics.items():
+                            # Clean metric key: remove Dataset.*.hash prefix
+                            clean_key = k.split(".")[-1] if "." in k else k
+                            metrics_parts.append(f"`{clean_key}` = **{v:g}**")
+                        st.caption("Metricas: " + " · ".join(metrics_parts))
+
+                    # Failure reason
+                    if r.failure_reason:
+                        st.caption(f"Motivo: {r.failure_reason}")
+
+                    # Full syntax (collapsible)
+                    with st.expander("Sintaxe completa", expanded=False):
+                        st.code(r.rule_syntax, language=None)
+
+        # Cross-reference with cart
+        st.divider()
+        if n_failed > 0:
+            st.markdown("**Proximos passos:**")
+            st.markdown(
+                "- Revise as regras reprovadas e ajuste parametros na pagina **Explore**\n"
+                "- Desabilite regras problematicas na pagina **Review**\n"
+                "- Re-execute o teste apos ajustes"
+            )
+            col_nav1, col_nav2 = st.columns(2)
+            with col_nav1:
+                if st.button("Ir para Explore", key="nav_explore_results"):
+                    st.switch_page("pages/02_explore.py")
+            with col_nav2:
+                if st.button("Ir para Review", key="nav_review_results"):
+                    st.switch_page("pages/03_review.py")
 
 
 # ---------------------------------------------------------------------------
