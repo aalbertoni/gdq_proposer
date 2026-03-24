@@ -15,6 +15,8 @@ class MockGlueClient:
         return {"JobRunState": "SUCCEEDED", "StartedOn": "", "CompletedOn": "", "ExecutionTime": 60, "ErrorMessage": ""}
     def stop_job_run(self, job_name, run_id):
         return True
+    def get_job_logs(self, job_name, run_id):
+        return ""
 
 
 class MockConfig:
@@ -353,6 +355,8 @@ class TestRunTest:
                 return {"JobRunState": "RUNNING", "StartedOn": "", "CompletedOn": "", "ExecutionTime": 0, "ErrorMessage": ""}
             def stop_job_run(self, job_name, run_id):
                 return True
+            def get_job_logs(self, job_name, run_id):
+                return ""
 
         class FastTimeoutConfig:
             class glue_test:
@@ -391,9 +395,56 @@ class TestRunTest:
                 }
             def stop_job_run(self, job_name, run_id):
                 return True
+            def get_job_logs(self, job_name, run_id):
+                return ""
 
         svc = GlueTestService(FailClient(), MockConfig())
         payload = ThunderaPayload(nome_glue_job="test-job", regras_gdq=["Rule1"])
         result = svc.run_test(payload)
         assert result.status == "FAILED"
         assert "OutOfMemory" in result.error_message
+
+    def test_logs_fetched_and_parsed_after_success(self):
+        """After job succeeds, logs are fetched and rule results parsed."""
+
+        class ClientWithLogs:
+            def start_job_run(self, job_name, arguments):
+                return "jr_logs"
+            def get_job_run(self, job_name, run_id):
+                return {"JobRunState": "SUCCEEDED", "StartedOn": "", "CompletedOn": "", "ExecutionTime": 30, "ErrorMessage": ""}
+            def stop_job_run(self, job_name, run_id):
+                return True
+            def get_job_logs(self, job_name, run_id):
+                return (
+                    "INFO:DistribuicaoDeDados:Resultados GDQ:\n"
+                    "INFO:DistribuicaoDeDados:[{'rule': 'Completeness col1 >= 0.95', "
+                    "'outcome': 'Passed', 'evaluatedmetrics': {'Dataset.*.Completeness': 0.98}, "
+                    "'failurereason': ''}]"
+                )
+
+        svc = GlueTestService(ClientWithLogs(), MockConfig())
+        payload = ThunderaPayload(nome_glue_job="test-job", regras_gdq=["Completeness col1 >= 0.95"])
+        result = svc.run_test(payload)
+        assert result.status == "SUCCEEDED"
+        assert len(result.rule_results) == 1
+        assert result.rule_results[0].passed is True
+        assert result.execution_log != ""
+
+    def test_logs_fetch_failure_does_not_break(self):
+        """If log fetching fails, result is still returned without rule_results."""
+
+        class ClientBrokenLogs:
+            def start_job_run(self, job_name, arguments):
+                return "jr_nologs"
+            def get_job_run(self, job_name, run_id):
+                return {"JobRunState": "SUCCEEDED", "StartedOn": "", "CompletedOn": "", "ExecutionTime": 20, "ErrorMessage": ""}
+            def stop_job_run(self, job_name, run_id):
+                return True
+            def get_job_logs(self, job_name, run_id):
+                raise Exception("CloudWatch permission denied")
+
+        svc = GlueTestService(ClientBrokenLogs(), MockConfig())
+        payload = ThunderaPayload(nome_glue_job="test-job", regras_gdq=["Rule1"])
+        result = svc.run_test(payload)
+        assert result.status == "SUCCEEDED"
+        assert result.rule_results == []

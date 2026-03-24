@@ -409,28 +409,32 @@ if _run_state != "running" and st.button(
     st.session_state["glue_run_state"] = "running"
     st.session_state["glue_run_result"] = None
 
-    with st.status("Executando teste...", expanded=True) as status:
-        def on_status(state, msg):
-            st.write(msg)
+    status_placeholder = st.empty()
+    status_placeholder.info("Disparando Glue job...", icon="⏳")
 
-        try:
-            result = glue_svc.run_test(payload, on_status=on_status)
+    def on_status(state, msg):
+        if state in ("FETCHING_LOGS", "PARSING_LOGS", "NO_LOGS"):
+            status_placeholder.info(msg, icon="📋")
+        else:
+            status_placeholder.info(msg, icon="⏳")
 
-            st.session_state["glue_run_state"] = "done"
-            st.session_state["glue_run_result"] = result
-            st.session_state["glue_run_execution_num"] = st.session_state.get("glue_run_execution_num", 0) + 1
+    try:
+        result = glue_svc.run_test(payload, on_status=on_status)
 
-            if result.status == "SUCCEEDED":
-                status.update(label="Teste concluido com sucesso!", state="complete")
-            elif result.status == "TIMEOUT":
-                status.update(label="Teste excedeu timeout", state="error")
-            else:
-                status.update(label=f"Teste finalizado: {result.status}", state="error")
+        st.session_state["glue_run_state"] = "done"
+        st.session_state["glue_run_result"] = result
+        st.session_state["glue_run_execution_num"] = st.session_state.get("glue_run_execution_num", 0) + 1
 
-        except Exception as e:
-            st.session_state["glue_run_state"] = "done"
-            status.update(label="Erro na execucao", state="error")
-            st.error(f"Erro ao executar teste: {e}")
+        if result.status == "SUCCEEDED":
+            status_placeholder.success(f"Teste concluido com sucesso! ({result.duration_seconds}s)")
+        elif result.status == "TIMEOUT":
+            status_placeholder.error("Teste excedeu timeout")
+        else:
+            status_placeholder.error(f"Teste finalizado: {result.status}")
+
+    except Exception as e:
+        st.session_state["glue_run_state"] = "done"
+        status_placeholder.error(f"Erro ao executar teste: {e}")
 
     st.rerun()
 
@@ -465,35 +469,24 @@ if _run_state == "done" and _run_result:
 
 
 # ---------------------------------------------------------------------------
-# 7. Resultados por regra (parsed de logs)
+# 7. Resultados por regra (auto-parsed dos logs do CloudWatch)
 # ---------------------------------------------------------------------------
 
-st.header("6. Resultados por regra")
+if _run_state == "done" and _run_result:
+    st.header("6. Resultados por regra")
 
-st.caption(
-    "Cole o log do Glue job abaixo para visualizar o resultado individual "
-    "de cada regra. O parser extrai automaticamente os resultados GDQ "
-    "do output do Thundera."
-)
+    rule_results = _run_result.rule_results
 
-log_input = st.text_area(
-    "Log do Glue job",
-    height=200,
-    key="glue_log_input",
-    placeholder="Cole aqui o log completo do Glue job (CloudWatch ou console)...",
-    help="Copie o log do CloudWatch Logs do Glue job e cole aqui. "
-         "O parser identifica os blocos 'Resultados GDQ' e 'BookQualidades'.",
-)
-
-if log_input.strip():
-    from core.glue_log_parser import parse_glue_log
-
-    rule_results = parse_glue_log(log_input)
-
-    if not rule_results:
+    if not rule_results and _run_result.execution_log:
         st.warning(
-            "Nenhum resultado de regra encontrado no log. "
-            "Verifique se o log contem a linha 'Resultados GDQ:' ou 'BookQualidades:Salvando'."
+            "Logs coletados mas nenhum resultado de regra encontrado. "
+            "O log pode nao conter 'Resultados GDQ:' ou 'BookQualidades:Salvando'."
+        )
+    elif not rule_results:
+        st.warning(
+            "Logs nao disponiveis no CloudWatch. "
+            "Verifique as permissoes `logs:GetLogEvents` no perfil AWS "
+            "ou cole o log manualmente abaixo."
         )
     else:
         # Summary metrics
@@ -521,7 +514,7 @@ if log_input.strip():
 
         st.divider()
 
-        # Results table — failed first, then passed
+        # Results cards — failed first, then passed
         sorted_results = sorted(rule_results, key=lambda r: (r.passed, r.rule_label))
 
         for r in sorted_results:
@@ -535,24 +528,20 @@ if log_input.strip():
                 with col_label:
                     st.markdown(f"**{r.rule_label}** — {outcome_label}")
 
-                    # Metrics
                     if r.evaluated_metrics:
                         metrics_parts = []
                         for k, v in r.evaluated_metrics.items():
-                            # Clean metric key: remove Dataset.*.hash prefix
                             clean_key = k.split(".")[-1] if "." in k else k
                             metrics_parts.append(f"`{clean_key}` = **{v:g}**")
                         st.caption("Metricas: " + " · ".join(metrics_parts))
 
-                    # Failure reason
                     if r.failure_reason:
                         st.caption(f"Motivo: {r.failure_reason}")
 
-                    # Full syntax (collapsible)
                     with st.expander("Sintaxe completa", expanded=False):
                         st.code(r.rule_syntax, language=None)
 
-        # Cross-reference with cart
+        # Next steps
         st.divider()
         if n_failed > 0:
             st.markdown("**Proximos passos:**")
@@ -568,6 +557,36 @@ if log_input.strip():
             with col_nav2:
                 if st.button("Ir para Review", key="nav_review_results"):
                     st.switch_page("pages/03_review.py")
+
+    # Fallback: manual log paste (when auto-fetch fails)
+    if not rule_results:
+        with st.expander("Colar log manualmente", expanded=False):
+            st.caption(
+                "Se os logs nao foram coletados automaticamente, "
+                "cole o log do CloudWatch aqui."
+            )
+            log_input = st.text_area(
+                "Log do Glue job",
+                height=200,
+                key="glue_log_input",
+                placeholder="Cole aqui o log completo do Glue job...",
+            )
+            if log_input.strip():
+                from core.glue_log_parser import parse_glue_log
+
+                manual_results = parse_glue_log(log_input)
+                if manual_results:
+                    # Store parsed results and rerun to display them
+                    _run_result.rule_results = manual_results
+                    st.session_state["glue_run_result"] = _run_result
+                    st.rerun()
+                else:
+                    st.warning("Nenhum resultado encontrado no log colado.")
+
+    # Raw log viewer
+    if _run_result.execution_log:
+        with st.expander("Log completo", expanded=False):
+            st.code(_run_result.execution_log[-5000:], language=None)
 
 
 # ---------------------------------------------------------------------------

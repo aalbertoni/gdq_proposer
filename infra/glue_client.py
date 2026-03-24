@@ -117,6 +117,55 @@ class GlueClient:
         except Exception as e:
             raise GlueTestError(f"Erro ao consultar status do job: {e}")
 
+    def get_job_logs(self, job_name: str, run_id: str) -> str:
+        """Busca logs de output de uma execucao do Glue job via CloudWatch.
+
+        AWS Glue grava logs de output em /aws-glue/jobs/output com
+        log stream nomeado pelo run_id.
+
+        Args:
+            job_name: Nome do Glue job.
+            run_id: ID da execucao.
+
+        Returns:
+            Texto concatenado dos logs de output. String vazia se falhar.
+        """
+        try:
+            import boto3
+            region = self.config.glue_test.region or self.config.athena.region
+            if self.config.athena.aws_profile:
+                from infra.aws_session import create_session
+                session = create_session(self.config.athena.aws_profile)
+                logs_client = session.client("logs", region_name=region)
+            else:
+                logs_client = boto3.client("logs", region_name=region)
+
+            log_group = "/aws-glue/jobs/output"
+            log_stream = run_id
+
+            events = []
+            kwargs = {
+                "logGroupName": log_group,
+                "logStreamName": log_stream,
+                "startFromHead": True,
+            }
+            while True:
+                response = logs_client.get_log_events(**kwargs)
+                batch = response.get("events", [])
+                if not batch:
+                    break
+                events.extend(batch)
+                next_token = response.get("nextForwardToken")
+                if next_token == kwargs.get("nextToken"):
+                    break
+                kwargs["nextToken"] = next_token
+
+            return "\n".join(e.get("message", "") for e in events)
+
+        except Exception as e:
+            logger.warning("Falha ao buscar logs do CloudWatch para %s: %s", run_id, e)
+            return ""
+
     def stop_job_run(self, job_name: str, run_id: str) -> bool:
         """Cancela uma execucao do Glue job.
 

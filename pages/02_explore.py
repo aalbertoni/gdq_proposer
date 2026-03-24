@@ -98,54 +98,59 @@ def _render_rule_params(rule_key: str, n_min: int = 5, n_max: int = 90, n_defaul
     Returns:
         (n_periods, n_sigma, margin_pct, buffer, margin_enabled)
     """
+    _nk = f"n_{rule_key}"
+    _kk = f"k_{rule_key}"
+    _mk = f"margin_on_{rule_key}"
+    _mpk = f"margin_{rule_key}"
+    _bk = f"buffer_{rule_key}"
+
     col1, col2, col3, col4, col5 = st.columns([3, 2, 1, 3, 2])
     with col1:
-        n_periods = st.slider(
-            "N (periodos):", min_value=n_min, max_value=n_max, value=n_default,
-            key=f"n_{rule_key}",
-            help="Janela movel de historico para calcular media e desvio. "
-                 "Valores maiores suavizam variacao; menores reagem mais rapido a mudancas.",
-        )
+        _n_kwargs = {"label": "N (periodos):", "min_value": n_min, "max_value": n_max, "key": _nk,
+                     "help": "Janela movel de historico para calcular media e desvio. "
+                             "Valores maiores suavizam variacao; menores reagem mais rapido a mudancas."}
+        if _nk not in st.session_state:
+            _n_kwargs["value"] = n_default
+        n_periods = st.slider(**_n_kwargs)
     with col2:
-        n_sigma = st.select_slider(
-            "K (sigma):", options=[1.0, 1.5, 2.0, 2.5, 3.0], value=2.0,
-            key=f"k_{rule_key}",
-            help="Multiplicador de desvio padrao. "
-                 "2.0 = ~95% dos dados dentro da banda. 3.0 = ~99.7%. "
-                 "Valor menor = regra mais rigorosa.",
-        )
+        _k_kwargs = {"label": "K (sigma):", "options": [1.0, 1.5, 2.0, 2.5, 3.0], "key": _kk,
+                     "help": "Multiplicador de desvio padrao. "
+                             "2.0 = ~95% dos dados dentro da banda. 3.0 = ~99.7%. "
+                             "Valor menor = regra mais rigorosa."}
+        if _kk not in st.session_state:
+            _k_kwargs["value"] = 2.0
+        n_sigma = st.select_slider(**_k_kwargs)
     with col3:
-        margin_enabled = st.checkbox(
-            "Margem",
-            value=True,
-            key=f"margin_on_{rule_key}",
-            help="Ativar banda margem (dual guard). Quando ativada, a regra "
-                 "combina banda sigma OR banda margem, reduzindo falsos positivos "
-                 "em dados de baixa variabilidade. Desative para usar apenas sigma.",
-        )
+        _m_kwargs = {"label": "Margem", "key": _mk,
+                     "help": "Ativar banda margem (dual guard). Quando ativada, a regra "
+                             "combina banda sigma OR banda margem, reduzindo falsos positivos "
+                             "em dados de baixa variabilidade. Desative para usar apenas sigma."}
+        if _mk not in st.session_state:
+            _m_kwargs["value"] = True
+        margin_enabled = st.checkbox(**_m_kwargs)
     with col4:
         if margin_enabled:
-            margin_pct = st.slider(
-                "Margem %:", min_value=1, max_value=30, value=10,
-                key=f"margin_{rule_key}",
-                help="Porcentagem fixa da media para a banda alternativa.",
-            ) / 100.0
+            _mp_kwargs = {"label": "Margem %:", "min_value": 1, "max_value": 30, "key": _mpk,
+                          "help": "Porcentagem fixa da media para a banda alternativa."}
+            if _mpk not in st.session_state:
+                _mp_kwargs["value"] = 10
+            margin_pct = st.slider(**_mp_kwargs) / 100.0
         else:
-            margin_pct = st.session_state.get(f"margin_{rule_key}", 10) / 100.0
+            margin_pct = st.session_state.get(_mpk, 10) / 100.0
             st.caption("Margem desativada")
     with col5:
-        buffer = st.select_slider(
-            "Buffer:", options=[0.0, 0.001, 0.01, 0.1], value=0.01,
-            key=f"buffer_{rule_key}",
-            help="Valor minimo adicionado aos limites para evitar falsos positivos "
-                 "por arredondamento. 0.01 e adequado para a maioria dos casos.",
-        )
+        _b_kwargs = {"label": "Buffer:", "options": [0.0, 0.001, 0.01, 0.1], "key": _bk,
+                     "help": "Valor minimo adicionado aos limites para evitar falsos positivos "
+                             "por arredondamento. 0.01 e adequado para a maioria dos casos."}
+        if _bk not in st.session_state:
+            _b_kwargs["value"] = 0.01
+        buffer = st.select_slider(**_b_kwargs)
     return n_periods, n_sigma, margin_pct, buffer, margin_enabled
 
 
 def _render_rolling_chart(
     values, dates, n_periods, n_sigma, margin_pct, y_label,
-    margin_enabled=True,
+    margin_enabled=True, chart_key=None,
 ):
     """Renderiza grafico Plotly com bandas rolantes (media movel)."""
     from core.statistical_engine import compute_rolling_bands
@@ -204,7 +209,7 @@ def _render_rolling_chart(
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
 
 def _render_backtest_metrics(proposal):
@@ -1155,6 +1160,7 @@ with tab_numericas:
                     _render_rolling_chart(
                         values, dates, mean_n, mean_k, mean_margin, "Mean",
                         margin_enabled=mean_margin_on,
+                        chart_key=f"chart_mean_{selected_col}",
                     )
 
                 _render_backtest_metrics(proposal)
@@ -1213,6 +1219,7 @@ with tab_numericas:
                     _render_rolling_chart(
                         values, dates, std_n, std_k, std_margin, "StdDev",
                         margin_enabled=std_margin_on,
+                        chart_key=f"chart_stddev_{selected_col}",
                     )
 
                 _render_backtest_metrics(proposal)
@@ -1292,6 +1299,7 @@ with tab_numericas:
                             _render_rolling_chart(
                                 pct_vals, pct_dates, pct_n, pct_k, pct_margin,
                                 pct_label, margin_enabled=pct_margin_on,
+                                chart_key=f"chart_pct_{selected_col}_{pct_prop.metric_name}",
                             )
 
                         _render_backtest_metrics(pct_prop)
@@ -1346,7 +1354,7 @@ with tab_numericas:
                         yaxis_title="Completude (%)",
                         legend=dict(orientation="h", yanchor="bottom", y=1.02),
                     )
-                    st.plotly_chart(fig_comp, use_container_width=True)
+                    st.plotly_chart(fig_comp, use_container_width=True, key=f"chart_comp_{selected_col}")
 
                 _render_backtest_metrics(proposal)
                 _render_add_to_cart(
@@ -1480,7 +1488,7 @@ with tab_categoricas:
                     yaxis_title="Frequencia (%)",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_catfreq_{selected_cat_col}")
 
             # --- Default frequency mode selector (column-level) ---
             if is_low or is_mid:
@@ -1682,6 +1690,7 @@ with tab_categoricas:
                                 cat_n_periods, cat_n_sigma, margin_pct_chart,
                                 f"Freq % ({cat_val})",
                                 margin_enabled=cat_margin_enabled if cat_freq_mode != "static" else False,
+                                chart_key=f"chart_freq_{selected_cat_col}_{cat_val}",
                             )
 
                         _render_backtest_metrics(fp)
@@ -1740,7 +1749,7 @@ with tab_categoricas:
                         yaxis=dict(visible=False),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02),
                     )
-                    st.plotly_chart(fig_av, use_container_width=True)
+                    st.plotly_chart(fig_av, use_container_width=True, key=f"chart_av_{selected_cat_col}")
 
                 _render_backtest_metrics(av)
                 _render_add_to_cart(
@@ -1823,7 +1832,7 @@ with tab_categoricas:
                         xaxis_title="Periodo",
                         yaxis_title="Valores distintos",
                     )
-                    st.plotly_chart(fig_dc, use_container_width=True)
+                    st.plotly_chart(fig_dc, use_container_width=True, key=f"chart_dc_{selected_cat_col}")
 
                 _render_backtest_metrics(proposal)
                 _render_add_to_cart(
@@ -1865,7 +1874,7 @@ with tab_categoricas:
                         yaxis_title="Completude (%)",
                         legend=dict(orientation="h", yanchor="bottom", y=1.02),
                     )
-                    st.plotly_chart(fig_comp, use_container_width=True)
+                    st.plotly_chart(fig_comp, use_container_width=True, key=f"chart_catcomp_{selected_cat_col}")
 
                 _render_backtest_metrics(proposal)
                 _render_add_to_cart(
@@ -1974,6 +1983,7 @@ with tab_tabela:
                 _render_rolling_chart(
                     values, dates, rc_n, rc_k, rc_margin, "Row Count",
                     margin_enabled=rc_margin_on,
+                    chart_key="chart_rowcount",
                 )
 
             _render_backtest_metrics(rc_proposal)
@@ -2049,7 +2059,7 @@ with tab_tabela:
                 yaxis_title="Duplicatas (%)",
                 title="Duplicatas por periodo",
             )
-            st.plotly_chart(fig_pk, use_container_width=True)
+            st.plotly_chart(fig_pk, use_container_width=True, key="chart_pk_duplicates")
 
             # --- Chart 2: Null ratio per key column ---
             null_cols = [
@@ -2078,7 +2088,7 @@ with tab_tabela:
                     yaxis_title="Nulls (%)",
                     title="Nulls por coluna-chave por periodo",
                 )
-                st.plotly_chart(fig_nulls, use_container_width=True)
+                st.plotly_chart(fig_nulls, use_container_width=True, key="chart_pk_nulls")
 
             # --- Recommendation badge ---
             has_dupes = any(d > 0 for d in pk_dupes)

@@ -181,7 +181,7 @@ class GlueTestService:
                 on_status(state, f"Job {state}... ({elapsed}s)")
 
             if state in ("SUCCEEDED", "FAILED", "STOPPED", "ERROR", "TIMEOUT"):
-                return GlueTestResult(
+                result = GlueTestResult(
                     run_id=run_id,
                     job_name=job_name,
                     status=state,
@@ -190,6 +190,8 @@ class GlueTestService:
                     duration_seconds=status_info.get("ExecutionTime", 0),
                     error_message=status_info.get("ErrorMessage", ""),
                 )
+                self._fetch_and_parse_logs(result, on_status)
+                return result
 
         # Timeout — try to cancel
         self._client.stop_job_run(job_name, run_id)
@@ -200,3 +202,33 @@ class GlueTestService:
             duration_seconds=elapsed,
             error_message=f"Job excedeu timeout de {timeout}s. Cancelamento solicitado.",
         )
+
+    def _fetch_and_parse_logs(self, result, on_status=None):
+        """Busca logs do CloudWatch e faz parse dos resultados por regra.
+
+        Args:
+            result: GlueTestResult a ser enriquecido com logs e rule_results.
+            on_status: Callback opcional para atualizacao de UI.
+        """
+        from core.glue_log_parser import parse_glue_log
+
+        if on_status:
+            on_status("FETCHING_LOGS", "Buscando logs do CloudWatch...")
+
+        try:
+            log_text = self._client.get_job_logs(result.job_name, result.run_id)
+        except Exception as e:
+            logger.warning("Falha ao buscar logs: %s", e)
+            if on_status:
+                on_status("NO_LOGS", "Falha ao buscar logs do CloudWatch.")
+            return
+
+        result.execution_log = log_text
+
+        if log_text:
+            if on_status:
+                on_status("PARSING_LOGS", "Analisando resultados por regra...")
+            result.rule_results = parse_glue_log(log_text)
+        else:
+            if on_status:
+                on_status("NO_LOGS", "Logs nao disponiveis no CloudWatch.")
