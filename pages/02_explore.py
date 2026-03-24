@@ -21,8 +21,7 @@ from core.backtest_analysis import analyze_backtest, summarize_backtest_analysis
 from core.gdq_capability import capability_warning
 from core.calibration_advisor import calibrate, CalibrationResult
 from core.calibration_explainer import explain_calibration, explain_calibration_short, explain_step_detail
-from core.rule_explainer import explain_rule, explain_rule_detail, explain_regime_context, explain_trade_offs
-from core.rule_scoring import evaluate_proposal
+from core.rule_explainer import explain_rule
 from core.series_regime import classify_series
 from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
@@ -283,54 +282,36 @@ def _render_regime_panel(profile):
     st.caption(f"Regime da serie: {badge}{secondary}")
 
 
-def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, profile=None, fp=""):
-    """Renderiza badge de categoria, sintaxe e botao de adicionar ao carrinho."""
+def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, fp=""):
+    """Renderiza classificacao, sintaxe, explicacao e botao de adicionar ao carrinho."""
     from core.rule_recommender import category_badge as _cat_badge
     from core.models.enums import ProposalCategory
     # Namespace widget keys com fingerprint
     _wk = f"{fp}_{stable_key}" if fp else stable_key
 
-    # Unified category badge (replaces dual tier + capability badges)
+    # --- 1. Classificacao com prefixo ---
     cat = getattr(proposal, "proposal_category", ProposalCategory.STRONG)
-    st.caption(_cat_badge(proposal))
+    st.markdown(f"**Recomendacao:** {_cat_badge(proposal)}")
 
     reasons = getattr(proposal, "recommendation_reasons", [])
     if cat == ProposalCategory.NOT_RECOMMENDED:
         warning_text = capability_warning(proposal.rule_type)
         if warning_text:
             st.warning(warning_text)
-    if cat == ProposalCategory.NOT_RECOMMENDED and reasons:
+    if cat in (ProposalCategory.NOT_RECOMMENDED, ProposalCategory.NEEDS_REVIEW) and reasons:
         st.caption(f"Motivo: {'; '.join(reasons)}")
 
     if show_syntax:
-        st.code(proposal.gdq_syntax_preview)
+        # --- 2. Explicacao da regra (acima da sintaxe) ---
+        st.markdown("**O que faz a regra:**")
         st.info(explain_rule(proposal))
 
-        detail = explain_rule_detail(proposal)
-        has_detail = bool(detail and detail.strip())
-        has_regime = False
-        has_trade_off = False
+        # --- 3. Sintaxe GDQ com label ---
+        st.markdown("**Sintaxe GDQ:**")
+        st.code(proposal.gdq_syntax_preview)
 
-        if profile is not None:
-            regime_ctx = explain_regime_context(proposal, profile)
-            has_regime = bool(regime_ctx)
-            ev = evaluate_proposal(proposal, profile=profile)
-            trade_off_text = explain_trade_offs(proposal, ev)
-            has_trade_off = bool(trade_off_text)
 
-        if has_detail or has_regime or has_trade_off:
-            with st.expander("Detalhes", expanded=False):
-                if has_detail:
-                    st.markdown(detail)
-
-                if has_regime:
-                    st.markdown("---")
-                    st.markdown(regime_ctx)
-
-                if has_trade_off:
-                    st.markdown("---")
-                    st.markdown(trade_off_text)
-
+    # --- 5. Botao de adicionar ao carrinho ---
     existing_ids = {s.proposal_id for s in st.session_state["rule_cart"]}
     if proposal.id in existing_ids:
         st.success(f"Regra {label} ja esta no carrinho.")
@@ -1188,7 +1169,7 @@ with tab_numericas:
                 _render_add_to_cart(
                     proposal, "Mean",
                     f"mean_{selected_col}",
-                    profile=series_profile, fp=_fp,
+                    fp=_fp,
                 )
 
             st.divider()
@@ -1246,7 +1227,6 @@ with tab_numericas:
                 _render_add_to_cart(
                     proposal, "StdDev",
                     f"stddev_{selected_col}",
-                    profile=series_profile,
                     fp=_fp,
                 )
 
@@ -1318,7 +1298,6 @@ with tab_numericas:
                         _render_add_to_cart(
                             pct_prop, f"Percentil {pct_label}",
                             f"pct_{selected_col}_{pct_prop.metric_name}",
-                            profile=series_profile,
                             fp=_fp,
                         )
 
@@ -1979,7 +1958,7 @@ with tab_tabela:
                     grain=_grain_type, series_profile=rc_series_profile,
                 )
 
-            _render_add_to_cart(rc_proposal, "RowCount", "rowcount", profile=rc_series_profile, fp=_fp)
+            _render_add_to_cart(rc_proposal, "RowCount", "rowcount", fp=_fp)
         else:
             st.warning(
                 "Dados insuficientes para gerar regra RowCount. "
