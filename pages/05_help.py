@@ -7,6 +7,8 @@ de conceitos, fluxo de trabalho e perguntas frequentes.
 
 import streamlit as st
 
+from pages.components.breadcrumb import render_breadcrumb
+
 
 st.set_page_config(
     page_title="Ajuda - GDQ Rule Proposer",
@@ -14,6 +16,7 @@ st.set_page_config(
 )
 
 st.title("Ajuda")
+render_breadcrumb("Ajuda")
 st.caption(
     "Documentacao completa do GDQ Rule Proposer. "
     "Use as secoes abaixo para entender como a ferramenta funciona "

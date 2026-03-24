@@ -9,6 +9,8 @@ Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2).
 
 import streamlit as st
 
+from pages.components.breadcrumb import render_breadcrumb
+
 from core.models.enums import ConfidenceLevel, get_rule_label
 from core.gdq_capability import capability_badge, capability_warning
 from core.rule_explainer import explain_rule, explain_rule_detail
@@ -22,6 +24,7 @@ from services.export_service import ExportService
 st.set_page_config(page_title="Review - GDQ Rule Proposer", page_icon=":clipboard:")
 
 st.title("Review & Export")
+render_breadcrumb("Review")
 st.caption(
     "Revise as regras do carrinho, habilite ou desabilite individualmente, "
     "e exporte a sintaxe GDQ final para usar no AWS Glue Data Quality."
@@ -56,6 +59,11 @@ export_svc = ExportService()
 # ---------------------------------------------------------------------------
 
 st.header(f"Carrinho ({len(cart)} regras)")
+
+_enabled_ct = sum(1 for s in cart if s.enabled)
+_disabled_ct = len(cart) - _enabled_ct
+if _disabled_ct:
+    st.caption(f"{_enabled_ct} habilitadas · {_disabled_ct} desabilitadas")
 
 # Ordenar cart por prioridade (maior priority_score primeiro, agrupado por tier)
 from core.rule_recommender import _TIER_RANK
@@ -130,12 +138,29 @@ with act_col1:
         st.switch_page("pages/02_explore.py")
 with act_col2:
     disabled_count = sum(1 for s in cart if not s.enabled)
-    if st.button(
-        f"Remover desabilitadas ({disabled_count})",
-        disabled=disabled_count == 0,
-    ):
-        st.session_state["rule_cart"] = [s for s in cart if s.enabled]
-        st.rerun()
+    _confirm_key = "confirm_remove_disabled"
+    if _confirm_key not in st.session_state:
+        st.session_state[_confirm_key] = False
+
+    if not st.session_state[_confirm_key]:
+        if st.button(
+            f"Remover desabilitadas ({disabled_count})",
+            disabled=disabled_count == 0,
+        ):
+            st.session_state[_confirm_key] = True
+            st.rerun()
+    else:
+        st.warning(f"Remover {disabled_count} regras desabilitadas do carrinho?")
+        _cfm1, _cfm2 = st.columns(2)
+        with _cfm1:
+            if st.button("Confirmar", key="confirm_remove_yes"):
+                st.session_state["rule_cart"] = [s for s in cart if s.enabled]
+                st.session_state[_confirm_key] = False
+                st.rerun()
+        with _cfm2:
+            if st.button("Cancelar", key="confirm_remove_no"):
+                st.session_state[_confirm_key] = False
+                st.rerun()
 
 
 # ---------------------------------------------------------------------------

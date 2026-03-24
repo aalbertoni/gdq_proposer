@@ -10,6 +10,8 @@ import json
 
 import streamlit as st
 
+from pages.components.breadcrumb import render_breadcrumb
+
 from core.models.enums import get_rule_label
 
 
@@ -91,6 +93,7 @@ def _render_rule_result_card(r, idx: int):
 st.set_page_config(page_title="Teste - GDQ Rule Proposer", page_icon=":test_tube:")
 
 st.title("Teste via Thundera")
+render_breadcrumb("Teste")
 st.caption(
     "Execute as regras do carrinho em um Glue job de teste (Thundera) "
     "para validar o comportamento antes de implantar em producao."
@@ -150,7 +153,7 @@ if not enabled_rules:
 
 _has_dynamic = any("last(" in s.final_gdq_syntax.lower() for s in enabled_rules)
 if _has_dynamic:
-    st.info(
+    st.warning(
         "Regras dinamicas (com `last(N)`) dependem de historico interno do GDQ. "
         "Na **primeira execucao**, essas regras geralmente falham porque o GDQ "
         "ainda nao tem dados acumulados. Execute pelo menos **2 vezes** para "
@@ -368,6 +371,21 @@ with st.expander("Opcoes avancadas", expanded=False):
 
 
 # ---------------------------------------------------------------------------
+# Inline form validation
+# ---------------------------------------------------------------------------
+
+_form_warnings = []
+if not squad.strip():
+    _form_warnings.append("Squad e obrigatorio para o payload Thundera.")
+if not racf.strip():
+    _form_warnings.append("RACF e obrigatorio para o payload Thundera.")
+if not nome_glue_job.strip():
+    _form_warnings.append("Nome do Glue Job e obrigatorio.")
+for w in _form_warnings:
+    st.warning(w, icon="⚠️")
+
+
+# ---------------------------------------------------------------------------
 # 5. Build payload + JSON preview
 # ---------------------------------------------------------------------------
 
@@ -449,8 +467,12 @@ st.caption(
 
 # Validation
 validation_errors = []
+if not squad.strip():
+    validation_errors.append("Squad e obrigatorio para o payload Thundera.")
+if not racf.strip():
+    validation_errors.append("RACF e obrigatorio para o payload Thundera.")
 if not nome_glue_job.strip():
-    validation_errors.append("Nome do Glue job e obrigatorio.")
+    validation_errors.append("Nome do Glue Job e obrigatorio.")
 if not payload.regras_gdq:
     validation_errors.append("Nenhuma regra GDQ no payload.")
 

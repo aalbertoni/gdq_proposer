@@ -11,6 +11,7 @@ import streamlit as st
 
 from config import load_config
 from infra.athena_client import AthenaClient
+from pages.components.breadcrumb import render_breadcrumb
 
 __version__ = "0.2.0"
 
@@ -91,6 +92,7 @@ def main():
     header_col, status_col = st.columns([4, 1])
     with header_col:
         st.title("GDQ Rule Proposer")
+        render_breadcrumb("Dashboard")
         st.caption(
             f"v{__version__} — Proposta automatica de regras AWS Glue Data Quality"
         )

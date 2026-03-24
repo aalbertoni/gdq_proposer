@@ -15,6 +15,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from pages.components.breadcrumb import render_breadcrumb
+
 from config import load_config
 from core.models.dataset_config import DatasetConfig
 from core.models.enums import (
@@ -244,6 +246,7 @@ def _activate_config():
 st.set_page_config(page_title="Setup - GDQ Rule Proposer", page_icon=":gear:")
 
 st.title("Setup da Tabela")
+render_breadcrumb("Setup")
 st.caption(
     "Configure a tabela alvo, eixo temporal e colunas para analise. "
     "Ao final, ative a configuracao para ir para a calibracao de regras."

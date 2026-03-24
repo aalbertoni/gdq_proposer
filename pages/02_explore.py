@@ -13,6 +13,8 @@ Definido conforme docs/technical_spec_v1.md secao 12.
 import streamlit as st
 import plotly.graph_objects as go
 
+from pages.components.breadcrumb import render_breadcrumb
+
 from config import load_config
 from core.models.baseline import BaselineStrategy
 from core.models.enums import BaselineMethod, ConfidenceLevel, RuleType, SemanticType, get_rule_label
@@ -148,6 +150,19 @@ def _render_rule_params(rule_key: str, n_min: int = 5, n_max: int = 90, n_defaul
     return n_periods, n_sigma, margin_pct, buffer, margin_enabled
 
 
+def _render_reset_params(rule_key: str) -> bool:
+    """Renderiza botao compacto para resetar parametros ao default.
+
+    Returns:
+        True se parametros foram resetados (caller deve parar e fazer rerun).
+    """
+    if st.button("Resetar parametros", key=f"reset_{rule_key}", type="secondary"):
+        for prefix in ("n_", "k_", "margin_on_", "margin_", "buffer_"):
+            st.session_state.pop(f"{prefix}{rule_key}", None)
+        st.rerun()
+    return False
+
+
 def _render_rolling_chart(
     values, dates, n_periods, n_sigma, margin_pct, y_label,
     margin_enabled=True, chart_key=None,
@@ -255,7 +270,9 @@ def _render_backtest_metrics(proposal):
         analysis = analyze_backtest(bt)
         summary = summarize_backtest_analysis(analysis)
         if summary:
-            with st.expander("Analise do backtest", expanded=False):
+            _is_critical = analysis.max_fail_streak >= 3 or analysis.tail_risk > 0.30
+            _label = "Analise do backtest" + (" :red[ATENCAO]" if _is_critical else "")
+            with st.expander(_label, expanded=_is_critical):
                 st.markdown(summary)
 
     if proposal.warnings:
@@ -265,7 +282,7 @@ def _render_backtest_metrics(proposal):
 
 def _render_regime_panel(profile):
     """Renderiza painel compacto do regime detectado."""
-    if profile is None or (profile.regime.value == "stable" and not profile.secondary_regimes):
+    if profile is None:
         return
 
     regime_badges = {
@@ -494,6 +511,7 @@ if _pending:
         del st.session_state[k]
 
 st.title("Calibracao de Regras")
+render_breadcrumb("Explore")
 st.caption(
     "Ajuste os parametros de cada regra e visualize o impacto no historico. "
     "Adicione as regras aprovadas ao carrinho para exportar na pagina Review."
@@ -1124,11 +1142,13 @@ with tab_numericas:
             # ---- Mean ----
             st.subheader(f"Mean -- {selected_col}")
 
+            _mean_rk = f"{_fp}_mean_{selected_col}"
             mean_n, mean_k, mean_margin, mean_buffer, mean_margin_on = _render_rule_params(
-                f"{_fp}_mean_{selected_col}",
+                _mean_rk,
                 n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
                 n_default=_grain_policy.slider_n_default,
             )
+            _render_reset_params(_mean_rk)
 
             mean_baseline = BaselineStrategy(
                 method=BaselineMethod.LAST_N_PERIODS,
@@ -1183,11 +1203,13 @@ with tab_numericas:
             # ---- StdDev ----
             st.subheader(f"StdDev -- {selected_col}")
 
+            _std_rk = f"{_fp}_stddev_{selected_col}"
             std_n, std_k, std_margin, std_buffer, std_margin_on = _render_rule_params(
-                f"{_fp}_stddev_{selected_col}",
+                _std_rk,
                 n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
                 n_default=_grain_policy.slider_n_default,
             )
+            _render_reset_params(_std_rk)
 
             std_baseline = BaselineStrategy(
                 method=BaselineMethod.LAST_N_PERIODS,
@@ -1237,6 +1259,41 @@ with tab_numericas:
                     fp=_fp,
                 )
 
+            # ---- Comparacao Mean vs StdDev ----
+            mean_cache_key_prefix = f"proposal_mean_{selected_col}_"
+            std_cache_key_prefix = f"proposal_stddev_{selected_col}_"
+            _mean_p = next(
+                (st.session_state[k][0] for k in st.session_state
+                 if isinstance(k, str) and k.startswith(mean_cache_key_prefix)
+                 and st.session_state[k]),
+                None,
+            )
+            _std_p = next(
+                (st.session_state[k][0] for k in st.session_state
+                 if isinstance(k, str) and k.startswith(std_cache_key_prefix)
+                 and st.session_state[k]),
+                None,
+            )
+            if _mean_p and _std_p and _mean_p.backtest and _std_p.backtest:
+                with st.expander("Comparar Mean vs StdDev", expanded=False):
+                    from core.proposal_comparator import compare_proposals
+                    _cmp = compare_proposals(_mean_p, _std_p, profile=series_profile)
+
+                    _ca, _cb = st.columns(2)
+                    with _ca:
+                        _winner_a = " :green[MELHOR]" if _cmp.winner == "A" else ""
+                        st.markdown(f"**Mean** — Score: {_cmp.score_a:.2f}{_winner_a}")
+                        for adv in _cmp.advantages_a:
+                            st.caption(f":green[+] {adv}")
+                    with _cb:
+                        _winner_b = " :green[MELHOR]" if _cmp.winner == "B" else ""
+                        st.markdown(f"**StdDev** — Score: {_cmp.score_b:.2f}{_winner_b}")
+                        for adv in _cmp.advantages_b:
+                            st.caption(f":green[+] {adv}")
+
+                    if _cmp.summary:
+                        st.caption(_cmp.summary)
+
             st.divider()
 
             # ---- Percentil (D.1b) ----
@@ -1260,11 +1317,13 @@ with tab_numericas:
             )
 
             if selected_pcts:
+                _pct_rk = f"{_fp}_pct_{selected_col}"
                 pct_n, pct_k, pct_margin, pct_buffer, pct_margin_on = _render_rule_params(
-                    f"{_fp}_pct_{selected_col}",
+                    _pct_rk,
                     n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
                     n_default=_grain_policy.slider_n_default,
                 )
+                _render_reset_params(_pct_rk)
 
                 pct_baseline = BaselineStrategy(
                     method=BaselineMethod.LAST_N_PERIODS,
@@ -1943,11 +2002,13 @@ with tab_tabela:
                 f"Calibracao automatica: {explain_calibration_short(_at_rc_cached)} — "
                 f"{_confidence_badge(_at_rc_cached.confidence)}"
             )
+        _rc_rk = f"{_fp}_rowcount"
         rc_n, rc_k, rc_margin, rc_buffer, rc_margin_on = _render_rule_params(
-            f"{_fp}_rowcount",
+            _rc_rk,
             n_min=_grain_policy.slider_n_min, n_max=_grain_policy.slider_n_max,
             n_default=_grain_policy.slider_n_default,
         )
+        _render_reset_params(_rc_rk)
 
         _rc_profile_key = f"series_profile_rowcount_{effective_lookback}"
         if _rc_profile_key not in st.session_state and _rc_vals:

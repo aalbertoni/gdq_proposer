@@ -7,6 +7,8 @@ motivo, detalhes de erro e SQL completo.
 
 import streamlit as st
 
+from pages.components.breadcrumb import render_breadcrumb
+
 st.set_page_config(
     page_title="Query Log — GDQ",
     page_icon=":memo:",
@@ -14,6 +16,7 @@ st.set_page_config(
 )
 
 st.title("Query Log")
+render_breadcrumb("Query Log")
 st.caption("Historico completo de queries executadas nesta sessao.")
 
 # ---------------------------------------------------------------------------

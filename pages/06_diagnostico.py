@@ -12,6 +12,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from pages.components.breadcrumb import render_breadcrumb
+
 from config import load_config
 
 
@@ -21,6 +23,7 @@ st.set_page_config(
 )
 
 st.title("Diagnostico do Ambiente")
+render_breadcrumb("Diagnostico")
 st.caption(
     "Verificacao automatica do ambiente de execucao. "
     "Use esta pagina para identificar problemas de configuracao."
