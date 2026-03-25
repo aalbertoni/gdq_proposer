@@ -82,16 +82,16 @@ def _cached_get_date_range(_client_id, config_dict):
     return svc.get_date_range(config)
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_resource(ttl=1800, show_spinner=False)
 def _cached_profile_column(_client_id, config_dict, col_name, col_type, sample_periods):
-    """Cached single-column profiling. Returns copies (cache_data serializes)."""
+    """Cached single-column profiling."""
     svc = st.session_state["profiling_service"]
     config = _build_config_from_dict(config_dict)
     col_info = {"name": col_name, "type": col_type}
     return svc.profile_columns(config, [col_info], sample_periods=sample_periods)
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_resource(ttl=1800, show_spinner=False)
 def _cached_batch_profile(_client_id, config_dict, _col_names_frozen, _col_types_frozen, sample_periods):
     """Cached batch profiling. 1 query para todas as colunas."""
     svc = st.session_state["profiling_service"]
