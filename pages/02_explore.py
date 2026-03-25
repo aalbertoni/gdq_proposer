@@ -1311,9 +1311,9 @@ with tab_numericas:
             selected_pcts = st.multiselect(
                 "Percentis a monitorar:",
                 options=list(pct_options.keys()),
-                default=["P10", "P90"],
+                default=["P99"],
                 key=f"pct_select_{selected_col}",
-                help="Selecione quais percentis gerar regras. P10/P90 sao os mais comuns.",
+                help="Selecione quais percentis gerar regras. P99 detecta valores extremos na cauda superior.",
             )
 
             if selected_pcts:
