@@ -240,13 +240,20 @@ def _parse_info_prefix_list(log_text: str) -> list[GlueRuleResult]:
 
 
 def _parse_book_qualidades(log_text: str) -> list[GlueRuleResult]:
-    """Parse individual 'Salvando {...}' dicts from BookQualidades lines."""
-    results = []
-    pattern = re.compile(r"BookQualidades:Salvando\s+(\{.*?\})\s", re.DOTALL)
+    """Parse individual 'Salvando {...}' dicts from BookQualidades lines.
 
-    for match in pattern.finditer(log_text):
-        raw = match.group(1)
-        parsed = _safe_eval_dict(raw)
+    Uses balanced brace matching instead of naive regex to handle nested
+    dicts (e.g., EvaluatedMetrics: {'key': value} inside the outer dict).
+    """
+    results = []
+
+    for m in re.finditer(r"BookQualidades:Salvando\s+\{", log_text):
+        # Start balanced extraction from the opening brace
+        start_pos = m.end() - 1  # position of '{'
+        dict_str = _extract_balanced_braces(log_text, start_pos)
+        if not dict_str:
+            continue
+        parsed = _safe_eval_dict(dict_str)
         if parsed:
             # BookQualidades uses Title Case keys: Rule, Outcome, FailureReason, EvaluatedMetrics
             normalized = {k.lower(): v for k, v in parsed.items()}
@@ -281,8 +288,10 @@ def _dict_to_rule_result(d: dict) -> GlueRuleResult:
             except (ValueError, TypeError):
                 metrics[k] = 0.0
 
-    # Clean up failure reason (may have \n separators)
-    if isinstance(failure, str):
+    # Clean up failure reason (may have \n separators, or be None from ast.literal_eval)
+    if failure is None:
+        failure = ""
+    elif isinstance(failure, str):
         failure = failure.replace("\n", " | ").strip()
 
     return GlueRuleResult(
@@ -505,6 +514,43 @@ def _extract_limits_from_evaluated_rule(r: GlueRuleResult, evaluated_rule: str) 
             r.compiled_upper = float(upper_m.group(1))
         except ValueError:
             pass
+
+
+def _extract_balanced_braces(text: str, start_pos: int) -> Optional[str]:
+    """Extract a balanced {...} expression from text starting at start_pos.
+
+    Handles nested braces and ignores braces inside quoted strings.
+    Similar to _extract_balanced_list but for curly braces.
+    """
+    if start_pos >= len(text) or text[start_pos] != '{':
+        return None
+
+    depth = 0
+    in_single_quote = False
+    in_double_quote = False
+    i = start_pos
+    while i < len(text):
+        ch = text[i]
+
+        if ch == '\\' and (in_single_quote or in_double_quote):
+            i += 2
+            continue
+
+        if ch == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif ch == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif not in_single_quote and not in_double_quote:
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return text[start_pos:i + 1]
+
+        i += 1
+
+    return None
 
 
 def _safe_eval_dict(raw: str) -> Optional[dict]:

@@ -765,6 +765,144 @@ class TestInfoPrefixLogFormat:
         assert results[0].evaluated_metrics == {"Dataset.*.RowCount": 1395227.0}
 
 
+class TestBookQualidadesNestedDict:
+    """Tests for BookQualidades with nested dicts (EvaluatedMetrics + EvaluatedRule)."""
+
+    def test_nested_metrics_and_evaluated_rule(self):
+        """Real-world log: nested EvaluatedMetrics dict + EvaluatedRule field."""
+        log = (
+            "INFO:BookQualidades:Salvando {'Rule': "
+            "'(Mean VLR_CNTR_OPCR >= (avg(last(30)) - (2.5 * std(last(30))) - 0.01)) "
+            "AND (Mean VLR_CNTR_OPCR <= (avg(last(30)) + (2.5 * std(last(30))) + 0.01))', "
+            "'Outcome': 'Passed', 'FailureReason': None, "
+            "'EvaluatedMetrics': {'Column.VLR_CNTR_OPCR.Mean': 61646.02100276873}, "
+            "'EvaluatedRule': '(Mean VLR_CNTR_OPCR >= 61636.17) AND "
+            "(Mean VLR_CNTR_OPCR <= 61653.81)'}\n"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 1
+        r = results[0]
+        assert r.passed is True
+        assert r.evaluated_metrics == {"Column.VLR_CNTR_OPCR.Mean": 61646.02100276873}
+        assert r.evaluated_rule == (
+            "(Mean VLR_CNTR_OPCR >= 61636.17) AND (Mean VLR_CNTR_OPCR <= 61653.81)"
+        )
+        assert r.compiled_lower == 61636.17
+        assert r.compiled_upper == 61653.81
+        assert r.rule_category == "Mean"
+        assert r.target_column == "VLR_CNTR_OPCR"
+
+    def test_stddev_with_nested_dict(self):
+        """StandardDeviation with nested EvaluatedMetrics and EvaluatedRule."""
+        log = (
+            "INFO:BookQualidades:Salvando {'Rule': "
+            "'((StandardDeviation VLR >= (avg(last(30)) - (2.5 * std(last(30)))) - 0.01)) "
+            "AND (StandardDeviation VLR <= (avg(last(30)) + (2.5 * std(last(30))) + 0.01))', "
+            "'Outcome': 'Passed', 'FailureReason': None, "
+            "'EvaluatedMetrics': {'Column.VLR.StandardDeviation': 136179.47}, "
+            "'EvaluatedRule': '(StandardDeviation VLR >= 136162.41) AND "
+            "(StandardDeviation VLR <= 136209.97)'}\n"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 1
+        r = results[0]
+        assert r.evaluated_rule != ""
+        assert r.compiled_lower == 136162.41
+        assert r.compiled_upper == 136209.97
+
+    def test_customsql_dual_guard_with_nested_dict(self):
+        """CustomSql percentile dual guard — complex nested structure."""
+        log = (
+            "INFO:BookQualidades:Salvando {'Rule': "
+            "'((CustomSql \"select approx_percentile(cast(VLR as double), 0.99) "
+            "from primary\" >= (avg(last(20)) - (2 * std(last(20))) - 0.01)))', "
+            "'Outcome': 'Passed', 'FailureReason': 'Custom SQL response failed.', "
+            "'EvaluatedMetrics': {'Dataset.*.CustomSQL': 547258.05, "
+            "'Dataset.abc123.CustomSQL': 547258.05}, "
+            "'EvaluatedRule': '(((CustomSql \"select approx_percentile(cast(VLR as double), 0.99) "
+            "from primary\" >= 338092.54) AND (CustomSql \"select approx_percentile(cast(VLR "
+            "as double), 0.99) from primary\" <= 650811.43)))'}\n"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 1
+        r = results[0]
+        assert r.compiled_lower == 338092.54
+        assert r.compiled_upper == 650811.43
+        # Two metrics with same value — deduplication happens in UI, not parser
+        assert len(r.evaluated_metrics) == 2
+
+    def test_completeness_simple_dict(self):
+        """Completeness — no nested EvaluatedMetrics (single level)."""
+        log = (
+            "INFO:BookQualidades:Salvando {'Rule': 'Completeness VLR >= 1.00', "
+            "'Outcome': 'Passed', 'FailureReason': None, "
+            "'EvaluatedMetrics': {'Column.VLR.Completeness': 1.0}, "
+            "'EvaluatedRule': 'completeness VLR >= 1.00'}\n"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 1
+        r = results[0]
+        assert r.passed is True
+        assert r.evaluated_rule == "completeness VLR >= 1.00"
+        assert r.compiled_lower == 1.0
+
+    def test_multiple_book_qualidades_entries(self):
+        """Multiple BookQualidades entries, each with nested dicts."""
+        log = (
+            "INFO:BookQualidades:Salvando {'Rule': 'Mean A >= 1', 'Outcome': 'Passed', "
+            "'FailureReason': None, 'EvaluatedMetrics': {'Column.A.Mean': 10.0}, "
+            "'EvaluatedRule': '(Mean A >= 5) AND (Mean A <= 15)'}\n"
+            "INFO:BookQualidades:Salvando {'Rule': 'Mean B >= 1', 'Outcome': 'Failed', "
+            "'FailureReason': 'out of bounds', 'EvaluatedMetrics': {'Column.B.Mean': 100.0}, "
+            "'EvaluatedRule': '(Mean B >= 5) AND (Mean B <= 15)'}\n"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 2
+        assert results[0].passed is True
+        assert results[0].compiled_lower == 5.0
+        assert results[1].passed is False
+        assert results[1].compiled_upper == 15.0
+
+    def test_failure_reason_none_handled(self):
+        """FailureReason: None (Python None, not string) is handled."""
+        log = (
+            "INFO:BookQualidades:Salvando {'Rule': 'Mean A >= 1', 'Outcome': 'Passed', "
+            "'FailureReason': None, 'EvaluatedMetrics': {'Column.A.Mean': 10.0}, "
+            "'EvaluatedRule': '(Mean A >= 5) AND (Mean A <= 15)'}\n"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 1
+        # None should not cause crash
+        assert results[0].failure_reason == "" or results[0].failure_reason == "None"
+
+
+class TestExtractBalancedBraces:
+    """Tests for _extract_balanced_braces."""
+
+    def test_simple_dict(self):
+        from core.glue_log_parser import _extract_balanced_braces
+        text = "{'a': 1, 'b': 2} rest"
+        assert _extract_balanced_braces(text, 0) == "{'a': 1, 'b': 2}"
+
+    def test_nested_dict(self):
+        from core.glue_log_parser import _extract_balanced_braces
+        text = "{'a': {'inner': 1}, 'b': 2} rest"
+        assert _extract_balanced_braces(text, 0) == "{'a': {'inner': 1}, 'b': 2}"
+
+    def test_braces_in_strings_ignored(self):
+        from core.glue_log_parser import _extract_balanced_braces
+        text = "{'a': 'has } brace', 'b': 2} rest"
+        assert _extract_balanced_braces(text, 0) == "{'a': 'has } brace', 'b': 2}"
+
+    def test_not_starting_with_brace(self):
+        from core.glue_log_parser import _extract_balanced_braces
+        assert _extract_balanced_braces("no brace", 0) is None
+
+    def test_unbalanced(self):
+        from core.glue_log_parser import _extract_balanced_braces
+        assert _extract_balanced_braces("{'a': 1", 0) is None
+
+
 class TestExplainResult:
     """Tests for explain_result()."""
 

@@ -66,6 +66,10 @@ def _render_rule_result_card(r, idx: int):
         if compiled_summary:
             st.markdown(compiled_summary)
 
+        # Compiled rule: show the actual bounds prominently (not hidden in expander)
+        if r.evaluated_rule:
+            st.code(r.evaluated_rule, language=None)
+
         # Metrics row: deduplicated, main metric first, then limits
         _metric_items = []
         _seen_names = set()
@@ -95,13 +99,9 @@ def _render_rule_result_card(r, idx: int):
         elif r.failure_reason and r.failure_reason != "None":
             st.caption(f"Detalhe: {r.failure_reason}")
 
-        # Syntax details (collapsible)
-        with st.expander("Sintaxe GDQ", expanded=False):
-            st.markdown("**Regra enviada:**")
+        # Original syntax (collapsible — less important now that compiled is visible)
+        with st.expander("Regra original (como enviada)", expanded=False):
             st.code(r.rule_syntax, language=None)
-            if r.evaluated_rule:
-                st.markdown("**Regra compilada pelo GDQ** (com valores reais):")
-                st.code(r.evaluated_rule, language=None)
 
 
 # ---------------------------------------------------------------------------
