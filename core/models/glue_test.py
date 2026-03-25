@@ -137,20 +137,22 @@ class GlueRuleResult:
     """Resultado individual de uma regra GDQ executada pelo Thundera.
 
     Attributes:
-        rule_syntax: Sintaxe GDQ completa da regra.
+        rule_syntax: Sintaxe GDQ completa da regra (como enviada no payload).
         outcome: Resultado (Passed, Failed).
         evaluated_metrics: Metricas avaliadas (ex: Dataset.*.CustomSQL -> valor).
         failure_reason: Motivo da falha (se houver).
+        evaluated_rule: Regra compilada pelo GDQ (limites expandidos de avg/std).
         rule_label: Label curta para exibicao (ex: "Mean vlr_saldo").
         rule_category: Categoria da regra (Mean, StandardDeviation, Completeness, etc).
         target_column: Coluna alvo da regra.
-        compiled_lower: Limite inferior compilado (extraido do failure_reason).
-        compiled_upper: Limite superior compilado (extraido do failure_reason).
+        compiled_lower: Limite inferior compilado (extraido do evaluated_rule ou failure_reason).
+        compiled_upper: Limite superior compilado (extraido do evaluated_rule ou failure_reason).
     """
     rule_syntax: str = ""
     outcome: str = ""
     evaluated_metrics: dict[str, float] = field(default_factory=dict)
     failure_reason: str = ""
+    evaluated_rule: str = ""
     rule_label: str = ""
     rule_category: str = ""
     target_column: str = ""

@@ -65,6 +65,28 @@ _disabled_ct = len(cart) - _enabled_ct
 if _disabled_ct:
     st.caption(f"{_enabled_ct} habilitadas · {_disabled_ct} desabilitadas")
 
+# --- Glue test coverage indicator ---
+_tested_ct = sum(1 for s in cart if s.enabled and s.has_test_result)
+_tested_passed = sum(1 for s in cart if s.enabled and s.has_test_result and s.glue_test_result.passed)
+_tested_failed = _tested_ct - _tested_passed
+_stale_ct = sum(1 for s in cart if s.enabled and s.has_test_result and s.is_test_stale)
+
+if _tested_ct > 0:
+    if _tested_failed == 0 and _stale_ct == 0:
+        st.success(
+            f"Todas as {_tested_ct} regras testadas foram aprovadas no Glue."
+        )
+    elif _tested_failed > 0:
+        st.warning(
+            f"{_tested_ct} de {_enabled_ct} regras testadas no Glue "
+            f"({_tested_passed} aprovadas, {_tested_failed} reprovadas)"
+        )
+    if _stale_ct > 0:
+        st.info(
+            f"{_stale_ct} regra(s) com resultado desatualizado "
+            f"(sintaxe alterada apos o teste)."
+        )
+
 # Ordenar cart por prioridade (maior priority_score primeiro, agrupado por tier)
 from core.rule_recommender import _TIER_RANK
 _sorted_cart = sorted(
@@ -93,7 +115,40 @@ for i, selection in _sorted_cart:
     with col2:
         label = get_rule_label(p.rule_type)
         target = p.target_column or "(tabela)"
-        st.markdown(f"**{label}** — `{target}`")
+
+        # Glue test badge (inline after rule name)
+        _test_badge = ""
+        if selection.has_test_result:
+            if selection.is_test_stale:
+                _test_badge = (
+                    " <span style='background-color:#fff3cd;color:#856404;"
+                    "padding:1px 6px;border-radius:3px;font-size:0.75em'>"
+                    "Resultado desatualizado</span>"
+                )
+            elif selection.glue_test_result.passed:
+                _test_badge = (
+                    " <span style='background-color:#d4edda;color:#155724;"
+                    "padding:1px 6px;border-radius:3px;font-size:0.75em'>"
+                    "Validada no Glue</span>"
+                )
+            else:
+                # Check if first execution + dynamic rule
+                _is_dynamic = "last(" in selection.final_gdq_syntax.lower()
+                _exec_num = st.session_state.get("glue_run_execution_num", 1)
+                if _is_dynamic and _exec_num <= 1:
+                    _test_badge = (
+                        " <span style='background-color:#fff3cd;color:#856404;"
+                        "padding:1px 6px;border-radius:3px;font-size:0.75em'>"
+                        "Falha esperada (1a execucao)</span>"
+                    )
+                else:
+                    _test_badge = (
+                        " <span style='background-color:#f8d7da;color:#721c24;"
+                        "padding:1px 6px;border-radius:3px;font-size:0.75em'>"
+                        "Falhou no Glue</span>"
+                    )
+
+        st.markdown(f"**{label}** — `{target}`{_test_badge}", unsafe_allow_html=True)
         warning_text = capability_warning(p.rule_type)
         if warning_text:
             st.caption(warning_text)
@@ -120,6 +175,39 @@ for i, selection in _sorted_cart:
     with st.expander("Sintaxe GDQ e detalhes", expanded=False):
         st.code(selection.final_gdq_syntax)
         st.markdown(explain_rule_detail(p))
+
+        # Inline Glue test feedback
+        if selection.has_test_result:
+            _gr = selection.glue_test_result
+            st.markdown("---")
+            st.markdown("**Resultado do teste Glue:**")
+            if selection.is_test_stale:
+                st.warning(
+                    "Sintaxe alterada apos o teste — "
+                    "resultado pode nao refletir a regra atual.",
+                    icon="⚠️",
+                )
+            _metric_cols = st.columns(3)
+            with _metric_cols[0]:
+                _val = _gr.metric_value
+                st.metric(
+                    "Valor medido",
+                    f"{_val:,.4f}" if _val is not None else "—",
+                )
+            with _metric_cols[1]:
+                st.metric(
+                    "Limite inferior",
+                    f"{_gr.compiled_lower:,.4f}" if _gr.compiled_lower is not None else "—",
+                )
+            with _metric_cols[2]:
+                st.metric(
+                    "Limite superior",
+                    f"{_gr.compiled_upper:,.4f}" if _gr.compiled_upper is not None else "—",
+                )
+            if _gr.failure_reason and not _gr.passed:
+                st.error(f"**Motivo:** {_gr.failure_reason}")
+            if selection.glue_tested_at:
+                st.caption(f"Testado em: {selection.glue_tested_at[:19]}")
 
     if p.warnings:
         for w in p.warnings:

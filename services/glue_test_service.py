@@ -2,15 +2,33 @@
 
 Orquestra: construcao do payload JSON, execucao do Glue job,
 polling de status e coleta de resultados.
+Inclui correlacao de resultados com o carrinho (write-back).
 """
 
 import logging
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional, Callable
 
 from core.models.enums import RuleType
+from core.models.rule_selection import _syntax_hash
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_syntax(syntax: str) -> str:
+    """Normalize GDQ syntax for matching: collapse whitespace, strip."""
+    return " ".join(syntax.split())
+
+
+@dataclass
+class CorrelationReport:
+    """Result of correlating Glue test results with cart items."""
+    matched: int = 0
+    unmatched: int = 0
+    orphaned: int = 0
+    orphaned_results: list = field(default_factory=list)
 
 
 class GlueTestService:
@@ -109,27 +127,27 @@ class GlueTestService:
     def _extract_columns(self, selections: list) -> list[str]:
         """Extrai nomes unicos de colunas referenciadas nas regras.
 
-        Formato Thundera: lowercase entre aspas duplas (ex: '"vlr_saldo"').
+        Formato Thundera: UPPERCASE sem aspas (ex: 'VLR_SALDO').
+        As aspas sao adicionadas pela serializacao JSON.
 
         Args:
             selections: Lista de RuleSelection.
 
         Returns:
-            Lista ordenada de nomes de colunas formatados.
+            Lista ordenada de nomes de colunas em UPPERCASE.
         """
         columns: set[str] = set()
         for sel in selections:
             if not sel.enabled:
                 continue
             p = sel.proposal
-            if not p.target_column:
-                continue
             if p.rule_type == RuleType.IS_PRIMARY_KEY:
-                # IsPrimaryKey has space-separated columns
-                columns.update(p.target_column.split())
-            else:
+                # IsPrimaryKey: columns in suggested_values (target_column is None)
+                if p.suggested_values:
+                    columns.update(p.suggested_values)
+            elif p.target_column:
                 columns.add(p.target_column)
-        return sorted(f'"{c.lower()}"' for c in columns)
+        return sorted(c.upper() for c in columns)
 
     def run_test(
         self,
@@ -234,3 +252,158 @@ class GlueTestService:
         else:
             if on_status:
                 on_status("NO_LOGS", "Logs nao disponiveis no CloudWatch.")
+
+    # --- Correlation & Write-back ---
+
+    def correlate_results(
+        self,
+        cart: list,
+        glue_results: list,
+    ) -> tuple[dict[str, "GlueRuleResult"], CorrelationReport]:
+        """Correlate GlueRuleResults with cart RuleSelections.
+
+        Uses cascading match strategy:
+        1. Exact normalized syntax match
+        2. Fallback: rule_category + target_column (if unique in cart)
+        3. Orphaned: result without match
+
+        Args:
+            cart: list[RuleSelection] from session_state.
+            glue_results: list[GlueRuleResult] from test execution.
+
+        Returns:
+            Tuple of (correlation_map, report).
+            correlation_map: {proposal_id: GlueRuleResult}
+        """
+        from core.models.glue_test import GlueRuleResult
+
+        report = CorrelationReport()
+        correlation_map: dict[str, GlueRuleResult] = {}
+
+        # Build lookup index: normalized syntax -> RuleSelection
+        syntax_index: dict[str, list] = {}
+        for sel in cart:
+            if sel.enabled and sel.final_gdq_syntax.strip():
+                norm = normalize_syntax(sel.final_gdq_syntax)
+                syntax_index.setdefault(norm, []).append(sel)
+
+        # Build category+column index for fallback
+        cat_col_index: dict[str, list] = {}
+        for sel in cart:
+            if sel.enabled and sel.final_gdq_syntax.strip():
+                p = sel.proposal
+                key = f"{p.rule_type.value}|{(p.target_column or '').lower()}"
+                cat_col_index.setdefault(key, []).append(sel)
+
+        matched_ids: set[str] = set()
+
+        for gr in glue_results:
+            matched = False
+
+            # Strategy 1: exact syntax match
+            norm_result = normalize_syntax(gr.rule_syntax)
+            candidates = syntax_index.get(norm_result, [])
+            for sel in candidates:
+                if sel.proposal_id not in matched_ids:
+                    correlation_map[sel.proposal_id] = gr
+                    matched_ids.add(sel.proposal_id)
+                    report.matched += 1
+                    matched = True
+                    break
+
+            if matched:
+                continue
+
+            # Strategy 2: category + column fallback (only if unique)
+            cat_key = f"{gr.rule_category.lower()}|{(gr.target_column or '').lower()}"
+            # Normalize rule_category to match RuleType values
+            cat_candidates = self._find_by_category_column(
+                cat_col_index, gr, matched_ids,
+            )
+            if cat_candidates:
+                sel = cat_candidates[0]
+                correlation_map[sel.proposal_id] = gr
+                matched_ids.add(sel.proposal_id)
+                report.matched += 1
+                logger.info(
+                    "Fallback match: %s -> %s (by category+column)",
+                    gr.rule_label, sel.proposal_id,
+                )
+                continue
+
+            # No match — orphaned
+            report.orphaned += 1
+            report.orphaned_results.append(gr)
+
+        # Count unmatched cart items (enabled, with syntax, not matched)
+        for sel in cart:
+            if sel.enabled and sel.final_gdq_syntax.strip():
+                if sel.proposal_id not in matched_ids:
+                    report.unmatched += 1
+
+        return correlation_map, report
+
+    def _find_by_category_column(
+        self, cat_col_index: dict, gr, matched_ids: set,
+    ) -> list:
+        """Find cart items by rule category + target column.
+
+        Maps GlueRuleResult.rule_category to RuleType values for lookup.
+        Only returns candidates that are unique for the category+column
+        combination (avoids ambiguous assignment).
+        """
+        # Map common Glue log categories to RuleType enum values
+        category_map = {
+            "mean": "mean_dual_guard",
+            "standarddeviation": "stddev_dual_guard",
+            "rowcount": "row_count_dual_guard",
+            "completeness": "completeness",
+            "columnvalues": "allowed_values",
+            "distinctvaluescount": "distinct_count_exact",
+            "isprimarykey": "is_primary_key",
+            "customsql": "custom_sql",
+        }
+
+        glue_cat = (gr.rule_category or "").lower().replace(" ", "")
+        mapped_cat = category_map.get(glue_cat, glue_cat)
+        target = (gr.target_column or "").lower()
+
+        key = f"{mapped_cat}|{target}"
+        candidates = cat_col_index.get(key, [])
+
+        # Filter out already matched
+        available = [s for s in candidates if s.proposal_id not in matched_ids]
+
+        # Only return if unique (avoid ambiguous assignment)
+        if len(available) == 1:
+            return available
+        return []
+
+    def apply_results_to_cart(
+        self,
+        cart: list,
+        correlation_map: dict[str, "GlueRuleResult"],
+    ) -> tuple[int, int]:
+        """Write Glue test results back to cart RuleSelections.
+
+        Args:
+            cart: list[RuleSelection] (mutated in-place).
+            correlation_map: {proposal_id: GlueRuleResult} from correlate_results.
+
+        Returns:
+            Tuple of (applied, skipped) counts.
+        """
+        applied = 0
+        skipped = 0
+        now = datetime.now(timezone.utc).isoformat()
+
+        for sel in cart:
+            if sel.proposal_id in correlation_map:
+                sel.glue_test_result = correlation_map[sel.proposal_id]
+                sel.glue_tested_at = now
+                sel.glue_tested_syntax_hash = _syntax_hash(sel.final_gdq_syntax)
+                applied += 1
+            else:
+                skipped += 1
+
+        return applied, skipped

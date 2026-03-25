@@ -27,12 +27,12 @@ def _render_rule_result_card(r, idx: int):
     outcome_text = "Aprovada" if passed else "Reprovada"
 
     # Rule title: Category + Column
-    title = r.rule_category or "Regra"
-    if r.target_column:
-        title += f" — {r.target_column}"
+    category = r.rule_category or "Regra"
+    column = r.target_column or ""
+    title = f"{category} — {column}" if column else category
 
     with st.container(border=True):
-        # Header row: icon + title + outcome badge
+        # Header row: icon + category/column + outcome badge
         hcol1, hcol2 = st.columns([1, 11])
         with hcol1:
             st.markdown(f"<div style='font-size:2rem;text-align:center'>{status_icon}</div>",
@@ -46,44 +46,59 @@ def _render_rule_result_card(r, idx: int):
                 f"{outcome_text}</span>",
                 unsafe_allow_html=True,
             )
+            # Rule label (short human-readable name)
+            if r.rule_label and r.rule_label != category:
+                st.caption(f"Regra: {r.rule_label}")
 
-        # Metrics row
-        metric_cols = st.columns(4)
-        with metric_cols[0]:
-            val = r.metric_value
-            if val is not None:
-                st.metric("Valor medido", f"{val:,.4f}")
-            else:
-                st.metric("Valor medido", "—")
-        with metric_cols[1]:
+        # Metrics: show all evaluated metrics as individual st.metric cards
+        if r.evaluated_metrics:
+            _metrics_list = []
+            for k, v in r.evaluated_metrics.items():
+                # Clean metric key: Column.COL.Mean -> Mean, Dataset.*.RowCount -> RowCount
+                parts = k.split(".")
+                clean_name = parts[-1] if len(parts) > 1 else k
+                _metrics_list.append((clean_name, v))
+
+            # Add compiled band if available
+            extra_cols = []
             if r.compiled_lower is not None:
-                st.metric("Limite inferior", f"{r.compiled_lower:,.4f}")
-            else:
-                st.metric("Limite inferior", "—")
-        with metric_cols[2]:
+                extra_cols.append(("Limite inferior", r.compiled_lower))
             if r.compiled_upper is not None:
-                st.metric("Limite superior", f"{r.compiled_upper:,.4f}")
-            else:
-                st.metric("Limite superior", "—")
-        with metric_cols[3]:
-            # Metric key (cleaned)
-            if r.evaluated_metrics:
-                clean_keys = []
-                for k in r.evaluated_metrics:
-                    clean_keys.append(k.split(".")[-1] if "." in k else k)
-                st.metric("Metrica GDQ", ", ".join(clean_keys))
-            else:
-                st.metric("Metrica GDQ", "—")
+                extra_cols.append(("Limite superior", r.compiled_upper))
+
+            all_items = _metrics_list + extra_cols
+            n_cols = min(len(all_items), 4)
+            if n_cols > 0:
+                metric_cols = st.columns(n_cols)
+                for i, (name, val) in enumerate(all_items[:4]):
+                    with metric_cols[i % n_cols]:
+                        st.metric(name, f"{val:,.6g}")
+        else:
+            # No metrics parsed — show compiled band if available
+            band_items = []
+            if r.compiled_lower is not None:
+                band_items.append(("Limite inferior", r.compiled_lower))
+            if r.compiled_upper is not None:
+                band_items.append(("Limite superior", r.compiled_upper))
+            if band_items:
+                bcols = st.columns(len(band_items))
+                for i, (name, val) in enumerate(band_items):
+                    with bcols[i]:
+                        st.metric(name, f"{val:,.6g}")
 
         # Failure reason (prominent when failed)
-        if r.failure_reason and not passed:
+        if r.failure_reason and r.failure_reason != "None" and not passed:
             st.error(f"**Motivo:** {r.failure_reason}", icon="⚠️")
-        elif r.failure_reason:
+        elif r.failure_reason and r.failure_reason != "None":
             st.caption(f"Detalhe: {r.failure_reason}")
 
         # GDQ Syntax (collapsible)
         with st.expander("Sintaxe GDQ", expanded=False):
+            st.markdown("**Regra enviada:**")
             st.code(r.rule_syntax, language=None)
+            if r.evaluated_rule:
+                st.markdown("**Regra compilada pelo GDQ** (limites expandidos):")
+                st.code(r.evaluated_rule, language=None)
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +516,7 @@ if _run_state != "running" and st.button(
 ):
     st.session_state["glue_run_state"] = "running"
     st.session_state["glue_run_result"] = None
+    st.session_state["glue_writeback_done"] = False
 
     status_placeholder = st.empty()
     status_placeholder.info("Disparando Glue job...", icon="⏳")
@@ -560,6 +576,15 @@ if _run_state == "done" and _run_result:
         if result.error_message:
             st.markdown(f"- **Erro:** {result.error_message}")
 
+        # Link to AWS Glue console
+        if result.job_name and result.run_id:
+            _region = glue_cfg.region or app_config.athena.region or "sa-east-1"
+            _console_url = (
+                f"https://{_region}.console.aws.amazon.com/gluestudio/home"
+                f"?region={_region}#/job/{result.job_name}/run/{result.run_id}"
+            )
+            st.link_button("Abrir no console AWS Glue", _console_url)
+
 
 # ---------------------------------------------------------------------------
 # 7. Resultados por regra (auto-parsed dos logs do CloudWatch)
@@ -612,6 +637,41 @@ if _run_state == "done" and _run_result:
 
         for idx, r in enumerate(sorted_results):
             _render_rule_result_card(r, idx)
+
+        # Write-back results to cart
+        st.divider()
+        st.subheader("Atualizar carrinho")
+
+        _wb_done = st.session_state.get("glue_writeback_done", False)
+
+        if _wb_done:
+            _wb_applied = st.session_state.get("glue_writeback_applied", 0)
+            _wb_orphaned = st.session_state.get("glue_writeback_orphaned", 0)
+            st.success(
+                f"Carrinho atualizado: {_wb_applied} regra(s) com resultado de teste."
+            )
+            if _wb_orphaned > 0:
+                st.warning(
+                    f"{_wb_orphaned} resultado(s) do Glue nao corresponderam a nenhuma regra do carrinho."
+                )
+            if st.button("Ir para Review", key="nav_review_writeback", type="primary"):
+                st.switch_page("pages/03_review.py")
+        else:
+            st.caption(
+                "Vincule os resultados do teste ao carrinho para ver badges e metricas "
+                "na pagina Review."
+            )
+            if st.button(
+                "Atualizar carrinho com resultados",
+                type="secondary",
+                key="btn_writeback",
+            ):
+                corr_map, report = glue_svc.correlate_results(cart, rule_results)
+                applied, skipped = glue_svc.apply_results_to_cart(cart, corr_map)
+                st.session_state["glue_writeback_done"] = True
+                st.session_state["glue_writeback_applied"] = applied
+                st.session_state["glue_writeback_orphaned"] = report.orphaned
+                st.rerun()
 
         # Next steps
         st.divider()
