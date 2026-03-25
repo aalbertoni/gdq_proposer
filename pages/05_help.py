@@ -387,16 +387,23 @@ def _render_guia_passo_a_passo():
     with st.expander("Deteccao de particao"):
         st.markdown(
             "A ferramenta detecta automaticamente as **colunas de particao** "
-            "da tabela a partir do catalogo Glue. Se uma particao for encontrada, "
-            "voce vera o nome da coluna e podera escolher o metodo de particao:\n\n"
+            "da tabela a partir do catalogo Glue. Se uma ou mais particoes forem "
+            "encontradas, voce podera escolher quais usar e o metodo de particao:\n\n"
             "- **Incremental:** cada particao contem dados novos daquele periodo. "
             "Exemplo: `dt_ref=2024-01-15` contem apenas as operacoes do dia 15. "
             "E o tipo mais comum.\n"
             "- **Full Snapshot:** cada particao contem a foto completa dos dados "
             "naquele momento. Exemplo: `dt_carga=2024-01-15` contem todos os "
             "clientes ativos ate o dia 15.\n\n"
-            "Se a tabela nao tem particao, ela sera tratada como **nao-particionada** "
-            "e o eixo temporal sera determinado por uma coluna interna de data."
+            "**Multiplas colunas de particao:** algumas tabelas usam particoes "
+            "separadas por ano, mes e dia (ex: `ano_particao=2026/mes_particao=03/"
+            "dia_particao=25`). A ferramenta suporta selecionar multiplas colunas "
+            "de particao, cada uma com seu formato e tipo. O sistema gera um "
+            "predicado AND combinado para pruning de custo.\n\n"
+            "**Tabelas nao-particionadas:** se a tabela nao tem particao, ela sera "
+            "tratada como **nao-particionada** e o eixo temporal sera determinado "
+            "por uma coluna interna de data. Neste caso nao ha pruning de particao "
+            "— todas as queries usam apenas o filtro de data."
         )
 
     with st.expander("Formato de data para colunas string"):
@@ -1064,7 +1071,7 @@ def _render_faq_glossario():
         ("Margem %", "Porcentagem fixa usada para calcular a banda margem do dual guard (ex: 10%). Funciona como rede de seguranca quando a banda sigma e muito estreita."),
         ("N (periodos)", "Tamanho da janela movel de historico usada para calcular media e desvio padrao. Valores tipicos: 10 a 60."),
         ("Outlier", "Valor atipico que se destaca significativamente do padrao normal dos dados. Detectado pelo backtest usando heuristica de 4 sigma global."),
-        ("Particao", "Organizacao fisica dos dados em pastas por periodo (ex: dt_ref=2024-01-15/). Otimiza custo e performance no Athena."),
+        ("Particao", "Organizacao fisica dos dados em pastas por periodo (ex: dt_ref=2024-01-15/ ou ano=2024/mes=01/dia=15/). Pode ser uma ou multiplas colunas. Otimiza custo e performance no Athena via partition pruning."),
         ("Percentil", "Ponto de corte que divide a distribuicao em partes. P5 e P95 delimitam os extremos. Usado como analise complementar para calibracao."),
         ("Preset", "Configuracao salva em arquivo JSON que pode ser reutilizada em futuras analises. Inclui tabela, eixo temporal, lookback, filtro e colunas."),
         ("Profiling", "Processo de classificacao automatica das colunas (numerico, categorico, data, etc.) com base no tipo Athena e heuristicas estatisticas."),

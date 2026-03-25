@@ -23,11 +23,17 @@ class DatasetConfig:
     """Configuração da tabela alvo para análise.
 
     Conceitos-chave:
-    - partition_column: coluna física de partição no S3/Glue (pode ser None)
+    - partition_columns: lista de colunas fisicas de particao no S3/Glue
+    - partition_column: atalho legacy para partition_columns[0] (backward compat)
     - partition_method: como os dados são organizados na partição
     - date_column: coluna que define o eixo temporal para análise/GDQ
     - Quando method=INCREMENTAL: partition_column == date_column (geralmente)
     - Quando method=FULL_SNAPSHOT: partition_column != date_column
+
+    Multi-partition: partition_columns pode ter N colunas (ex: ano, mes, dia).
+    Cada coluna tem seu formato em partition_formats e tipo em partition_is_integer_map.
+    Os campos legacy (partition_column, partition_format, partition_is_integer) sao
+    mantidos para backward compat e retornam o valor da primeira coluna.
     """
 
     # === Identificação da tabela ===
@@ -36,29 +42,28 @@ class DatasetConfig:
 
     # === Particionamento ===
     partition_method: PartitionMethod = PartitionMethod.INCREMENTAL
+
+    # --- Legacy fields (backward compat — usados por callers existentes) ---
+    # Quando fornecidos, sao migrados para partition_columns no __post_init__.
     partition_column: Optional[str] = None
-    # Nome da coluna de partição (ex: "dt_ref", "dt_carga")
-    # None se non_partitioned
+    partition_format: Optional[str] = None
+    partition_is_integer: bool = False
+
+    # --- Canonical multi-partition fields (source of truth) ---
+    partition_columns: list[str] = field(default_factory=list)
+    partition_formats: dict[str, Optional[str]] = field(default_factory=dict)
+    partition_is_integer_map: dict[str, bool] = field(default_factory=dict)
 
     # === Eixo temporal (para análise e regras GDQ) ===
     date_column: str = ""
     # Coluna que define o "processamento" para fins de regras.
-    # Em INCREMENTAL: geralmente = partition_column (ex: "dt_ref")
-    # Em FULL_SNAPSHOT: = partition_column (dt_carga) para eixo temporal
-    # OU = coluna interna (DT_ABERTURA) para análise de conteúdo
 
     temporal_axis_column: Optional[str] = None
     # Coluna usada como eixo temporal no GROUP BY das queries de histórico.
-    # Se None, usa partition_column (INCREMENTAL) ou date_column.
-    # Em FULL_SNAPSHOT: normalmente = partition_column (cada snapshot = 1 ponto)
-    # Isso garante que cada "período" no histórico = 1 execução do GDQ.
 
     grain_type: GrainType = GrainType.DAILY
     date_expression: Optional[str] = None
     # Expressão SQL para normalizar a coluna de data.
-    # Ex.: "date_parse(dt_ref, '%Y.%m.%d')"
-    # Ex.: "date_trunc('month', dt_evento)"
-    # Se None, usa a coluna diretamente.
 
     # === Lookback ===
     lookback_mode: LookbackMode = LookbackMode.LAST_N_PERIODS
@@ -66,38 +71,16 @@ class DatasetConfig:
 
     # === Filtros ===
     base_filter_sql: Optional[str] = None
-    # Filtro WHERE aplicado em TODAS as queries.
-    # Ex.: "IND_ATIVO = 1"
-    # Ex.: "COD_SEGMENTO != 'TESTE'"
-    # Muito usado em FULL_SNAPSHOT para filtrar registros relevantes.
-
-    # === Partition pruning ===
-    partition_format: Optional[str] = None
-    partition_is_integer: bool = False
-    # True quando a coluna de particao e armazenada como inteiro (bigint, int, etc.)
-    # Afeta o literal de pruning: 20260218 (sem aspas) vs '20260218' (com aspas).
-    # Formato fisico da coluna de particao para pruning.
-    # Ex: "%Y-%m-%d", "%Y%m%d", "%Y%m", "%Y.%m.%d"
-    # None = tipo nativo (date/timestamp) — comparacao direta com DATE literal.
-    # Usado APENAS para pruning fisico, NAO para analise temporal.
 
     # === Data ancora ===
     reference_date: Optional[str] = None
-    # Data mais recente da tabela (YYYY-MM-DD), usada como ancora para lookback
-    # em vez de CURRENT_DATE. Preenchida automaticamente apos validar eixo temporal.
-    # Se None, usa CURRENT_DATE (comportamento padrao).
 
     # === Colunas selecionadas ===
     selected_columns: list[str] = field(default_factory=list)
     unique_key_columns: list[str] = field(default_factory=list)
 
     def __post_init__(self):
-        """Validate and cap lookback_value at MAX_LOOKBACK_VALUE.
-
-        If the user provides a lookback_value exceeding the maximum, it is
-        silently capped and a warning is logged.  This prevents runaway
-        Athena queries that scan excessive time ranges.
-        """
+        """Validate, cap lookback, and migrate legacy partition fields."""
         if self.lookback_value > MAX_LOOKBACK_VALUE:
             logger.warning(
                 "lookback_value %d exceeds maximum %d — capping to %d",
@@ -113,6 +96,42 @@ class DatasetConfig:
                 self.lookback_value,
             )
             self.lookback_value = 1
+
+        # --- Migration: legacy single → canonical list ---
+        if self.partition_column and not self.partition_columns:
+            self.partition_columns = [self.partition_column]
+            if self.partition_column not in self.partition_formats:
+                self.partition_formats[self.partition_column] = self.partition_format
+            if self.partition_column not in self.partition_is_integer_map:
+                self.partition_is_integer_map[self.partition_column] = self.partition_is_integer
+
+        # --- Sync: canonical list → legacy fields (keep in sync) ---
+        if self.partition_columns:
+            first = self.partition_columns[0]
+            self.partition_column = first
+            self.partition_format = self.partition_formats.get(first)
+            self.partition_is_integer = self.partition_is_integer_map.get(first, False)
+        else:
+            # NON_PARTITIONED or no partition info
+            self.partition_column = None
+            self.partition_format = None
+            self.partition_is_integer = False
+
+    @property
+    def partition_is_temporal(self) -> bool:
+        """True se a partição contém dados temporais e pruning é aplicável.
+
+        Heurística:
+        - partition_format explícito → caller confirmou que é temporal
+        - Sem formato: temporal apenas se partition_column == date_column
+          (cobre native date onde ambos coincidem)
+        - Sem partition_column → False
+        """
+        if not self.partition_column:
+            return False
+        if self.partition_format is not None:
+            return True
+        return self.partition_column == self.date_column
 
     @property
     def effective_temporal_axis(self) -> str:
@@ -132,6 +151,10 @@ class DatasetConfig:
             return self.partition_column or self.date_column
         return self.date_column
 
+    @property
+    def is_multi_partition(self) -> bool:
+        """True se a tabela tem mais de uma coluna de particao."""
+        return len(self.partition_columns) > 1
 
     @property
     def grain_policy(self):
@@ -146,13 +169,22 @@ class DatasetConfig:
         filtros ou colunas selecionadas gera um fingerprint diferente.
         Usado para invalidacao de estado analitico no session_state.
         """
+        # Partition columns (canonical) — sorted for determinism
+        pcols = ",".join(sorted(self.partition_columns))
+        pfmts = ",".join(
+            f"{k}={v or ''}" for k, v in sorted(self.partition_formats.items())
+        )
+        pints = ",".join(
+            f"{k}={v}" for k, v in sorted(self.partition_is_integer_map.items())
+        )
+
         parts = [
             self.schema,
             self.table,
             self.partition_method.value,
-            self.partition_column or "",
-            self.partition_format or "",
-            str(self.partition_is_integer),
+            pcols,
+            pfmts,
+            pints,
             self.date_column,
             self.temporal_axis_column or "",
             self.grain_type.value,

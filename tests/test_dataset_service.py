@@ -150,6 +150,36 @@ class TestGetDateRange:
         result = service.get_date_range(config)
         assert result["n_periods"] == 30
 
+    def test_non_temporal_partition_falls_back_to_sql(self, tmp_path):
+        """Particao nao-temporal (ex: flag s/n) faz fallback para SQL."""
+        from tests.conftest import DuckDBTestClient
+        client = DuckDBTestClient()
+        df = pd.DataFrame({
+            "flag_ativo": ["s"] * 15 + ["n"] * 15,
+            "dt_ref": pd.date_range("2026-01-01", periods=30, freq="D").astype(str),
+            "VLR": [100.0 + i for i in range(30)],
+        })
+        parquet_path = tmp_path / "tb_flag.parquet"
+        df.to_parquet(parquet_path)
+        client.load_table("mock_db", "tb_flag", str(parquet_path))
+
+        builder = QueryBuilder(dialect=SQLDialect.DUCKDB)
+        svc = DatasetService(client=client, builder=builder)
+
+        config = DatasetConfig(
+            schema="mock_db",
+            table="tb_flag",
+            partition_method=PartitionMethod.INCREMENTAL,
+            partition_column="flag_ativo",
+            date_column="dt_ref",
+            temporal_axis_column="dt_ref",
+            reference_date="2026-01-30",
+            lookback_value=60,
+        )
+        result = svc.get_date_range(config)
+        assert result["n_periods"] == 30
+        assert "2026-01-01" in result["min_date"]
+
     def test_invalid_temporal_col_raises(self, service):
         config = DatasetConfig(
             schema="mock_db",

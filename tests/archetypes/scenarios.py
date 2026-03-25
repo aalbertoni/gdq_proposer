@@ -616,6 +616,137 @@ def arch_partition_string_yyyymm() -> Archetype:
 
 
 # ---------------------------------------------------------------------------
+# 10. multi_partition_ymd — ano/mes/dia em colunas separadas
+# ---------------------------------------------------------------------------
+
+def arch_multi_partition_ymd() -> Archetype:
+    """Tabela com 3 colunas de particao: ano, mes, dia (inteiros).
+
+    Cenario real: tabelas com estrutura S3 particionada por
+    ano_particao=2026/mes_particao=03/dia_particao=25.
+    O pruning deve gerar predicado AND combinado.
+    O eixo temporal usa uma coluna date separada.
+    """
+    n_periods = 30
+    rows_per_period = 100
+    dates = make_date_range(n_periods)
+    n_rows = n_periods * rows_per_period
+
+    rng = random.Random(42)
+
+    # Gerar colunas de particao ano/mes/dia como inteiros
+    import pandas as _pd
+    date_series = _pd.to_datetime(repeat_for_rows(dates, rows_per_period))
+
+    df = pd.DataFrame({
+        "dt_ref": repeat_for_rows(dates, rows_per_period),
+        "ano_particao": date_series.year.tolist(),
+        "mes_particao": date_series.month.tolist(),
+        "dia_particao": date_series.day.tolist(),
+        "VLR_SALDO": [100.0 + rng.gauss(0, 5) for _ in range(n_rows)],
+        "COD_TIPO": [rng.choice(["A", "B", "C"]) for _ in range(n_rows)],
+    })
+
+    config = DatasetConfig(
+        schema="test_db",
+        table="tb_multi_partition",
+        partition_method=PartitionMethod.INCREMENTAL,
+        partition_columns=["ano_particao", "mes_particao", "dia_particao"],
+        partition_formats={
+            "ano_particao": "%Y",
+            "mes_particao": "%m",
+            "dia_particao": "%d",
+        },
+        partition_is_integer_map={
+            "ano_particao": True,
+            "mes_particao": True,
+            "dia_particao": True,
+        },
+        date_column="dt_ref",
+        temporal_axis_column="dt_ref",
+        grain_type=GrainType.DAILY,
+        lookback_value=30,
+        # reference_date=2026-01-31 com lookback=30 → cutoff=2026-01-01
+        # Pruning: ano>=2026 AND mes>=01 AND dia>=01 → all Jan data passes
+        reference_date="2026-01-31",
+        selected_columns=["VLR_SALDO", "COD_TIPO"],
+    )
+
+    return Archetype(
+        name="multi_partition_ymd",
+        description="3 colunas de particao (ano/mes/dia int) — pruning AND combinado",
+        category="partitioning",
+        behavior=AdversarialBehavior.SUPPORTED,
+        df=df,
+        config=config,
+        expected_types={
+            "VLR_SALDO": SemanticType.NUMERIC,
+            "COD_TIPO": SemanticType.CATEGORICAL_LOW_CARDINALITY,
+        },
+        notes=(
+            "Valida multi-partition pruning: predicado AND com 3 colunas inteiras. "
+            "Eixo temporal usa dt_ref (coluna date separada). "
+            "Pruning: \"ano_particao\" >= 2026 AND \"mes_particao\" >= 01 AND \"dia_particao\" >= 01. "
+            "reference_date escolhido para que cutoff nao cruze fronteira de mes "
+            "(AND conservador filtraria dados validos em cenario cross-month)."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 11. non_partitioned — tabela sem particao
+# ---------------------------------------------------------------------------
+
+def arch_non_partitioned() -> Archetype:
+    """Tabela sem particao, usando apenas date_column como eixo temporal.
+
+    Cenario real: tabelas em banco de dados sem estrutura de particao
+    fisica. Todas as queries usam date_column no WHERE sem pruning.
+    """
+    n_periods = 30
+    rows_per_period = 100
+    dates = make_date_range(n_periods)
+    n_rows = n_periods * rows_per_period
+
+    rng = random.Random(42)
+
+    df = pd.DataFrame({
+        "dt_evento": repeat_for_rows(dates, rows_per_period),
+        "VLR_TRANSACAO": [50.0 + rng.gauss(0, 3) for _ in range(n_rows)],
+        "COD_CANAL": [rng.choice(["WEB", "APP", "ATM"]) for _ in range(n_rows)],
+    })
+
+    config = DatasetConfig(
+        schema="test_db",
+        table="tb_non_partitioned",
+        partition_method=PartitionMethod.NON_PARTITIONED,
+        date_column="dt_evento",
+        grain_type=GrainType.DAILY,
+        lookback_value=30,
+        reference_date="2026-01-30",
+        selected_columns=["VLR_TRANSACAO", "COD_CANAL"],
+    )
+
+    return Archetype(
+        name="non_partitioned",
+        description="Tabela sem particao — eixo temporal via date_column apenas",
+        category="partitioning",
+        behavior=AdversarialBehavior.SUPPORTED,
+        df=df,
+        config=config,
+        expected_types={
+            "VLR_TRANSACAO": SemanticType.NUMERIC,
+            "COD_CANAL": SemanticType.CATEGORICAL_LOW_CARDINALITY,
+        },
+        notes=(
+            "Valida que tabelas NON_PARTITIONED funcionam corretamente: "
+            "partition_filter vazio, eixo temporal via date_column, "
+            "queries sem pruning."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -629,6 +760,8 @@ ALL_ARCHETYPES: list[Archetype] = [
     arch_combo_codes_as_integers(),
     arch_volume_tiny_5_periods(),
     arch_partition_string_yyyymm(),
+    arch_multi_partition_ymd(),
+    arch_non_partitioned(),
 ]
 
 ARCHETYPES_BY_NAME: dict[str, Archetype] = {a.name: a for a in ALL_ARCHETYPES}

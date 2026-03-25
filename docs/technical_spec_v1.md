@@ -200,11 +200,17 @@ class DatasetConfig:
     """Configuração da tabela alvo para análise.
 
     Conceitos-chave:
-    - partition_column: coluna física de partição no S3/Glue (pode ser None)
+    - partition_columns: lista de colunas físicas de partição no S3/Glue
+    - partition_column: atalho legacy para partition_columns[0] (backward compat)
     - partition_method: como os dados são organizados na partição
     - date_column: coluna que define o eixo temporal para análise/GDQ
     - Quando method=INCREMENTAL: partition_column == date_column (geralmente)
     - Quando method=FULL_SNAPSHOT: partition_column ≠ date_column
+
+    Multi-partition: partition_columns pode ter N colunas (ex: ano, mes, dia).
+    Cada coluna tem seu formato em partition_formats e tipo em partition_is_integer_map.
+    Os campos legacy (partition_column, partition_format, partition_is_integer) são
+    mantidos para backward compat e refletem o valor da primeira coluna.
     """
 
     # === Identificação da tabela ===
@@ -213,9 +219,20 @@ class DatasetConfig:
 
     # === Particionamento ===
     partition_method: PartitionMethod = PartitionMethod.INCREMENTAL
+
+    # --- Legacy fields (backward compat — sincronizados via __post_init__) ---
     partition_column: Optional[str] = None
-    # Nome da coluna de partição (ex: "dt_ref", "dt_carga")
-    # None se non_partitioned
+    partition_format: Optional[str] = None
+    partition_is_integer: bool = False
+
+    # --- Campos canônicos multi-partição (source of truth) ---
+    partition_columns: list[str] = field(default_factory=list)
+    # Lista de colunas de partição (ex: ["ano_particao", "mes_particao", "dia_particao"])
+    partition_formats: dict[str, Optional[str]] = field(default_factory=dict)
+    # Formato strftime por coluna (ex: {"ano_particao": "%Y", "mes_particao": "%m"})
+    # None para colunas com tipo nativo (date/timestamp)
+    partition_is_integer_map: dict[str, bool] = field(default_factory=dict)
+    # True se a coluna de partição é inteira (ex: 20260315 em vez de "2026-03-15")
 
     # === Eixo temporal (para análise e regras GDQ) ===
     date_column: str = ""
@@ -271,24 +288,16 @@ class DatasetConfig:
         return self.date_column
 
     @property
-    def effective_partition_filter(self) -> Optional[str]:
-        """Gera filtro de partição para otimizar queries.
-
-        Se a tabela é particionada, gerar WHERE partition_col >= ...
-        para que o Athena faça partition pruning (reduz custo).
-        """
-        if not self.partition_column:
-            return None
-        if self.date_expression:
-            return (
-                f"{self.date_expression} >= "
-                f"DATE_ADD('day', -{self.lookback_value}, CURRENT_DATE)"
-            )
-        return (
-            f'"{self.partition_column}" >= '
-            f"CAST(DATE_ADD('day', -{self.lookback_value}, CURRENT_DATE) AS VARCHAR)"
-        )
+    def is_multi_partition(self) -> bool:
+        """True se a tabela tem mais de uma coluna de partição."""
+        return len(self.partition_columns) > 1
 ```
+
+**Partition pruning** é implementado em `infra/partition_pruning.py`:
+- Suporta partição única e múltiplas colunas (ex: ano/mes/dia)
+- Multi-coluna gera predicado AND combinado: `"ano" >= 2026 AND "mes" >= 01 AND "dia" >= 25`
+- NUNCA aplica função sobre a coluna de partição (preserva pruning do Athena)
+- `QueryBuilder.resolve_partition_filter()` é o ponto de entrada para gerar o predicado
 
 ### Exemplos de configuração por cenário
 
@@ -339,6 +348,32 @@ config_non_partitioned = DatasetConfig(
     date_expression="date_trunc('day', dt_evento)",
     lookback_value=30,
 )
+
+# === Cenário 4: Multi-partição (ano/mes/dia em colunas separadas) ===
+# tb_operacoes: partições S3 = ano_particao=2026/mes_particao=03/dia_particao=25
+# Eixo temporal = coluna de data separada (dt_ref)
+config_multi_partition = DatasetConfig(
+    schema="datalake_raw",
+    table="tb_operacoes_ymd",
+    partition_method=PartitionMethod.INCREMENTAL,
+    partition_columns=["ano_particao", "mes_particao", "dia_particao"],
+    partition_formats={
+        "ano_particao": "%Y",
+        "mes_particao": "%m",
+        "dia_particao": "%d",
+    },
+    partition_is_integer_map={
+        "ano_particao": True,
+        "mes_particao": True,
+        "dia_particao": True,
+    },
+    date_column="dt_ref",
+    temporal_axis_column="dt_ref",    # eixo temporal = coluna date, não partição
+    grain_type=GrainType.DAILY,
+    lookback_value=30,
+    selected_columns=["VLR_SALDO", "COD_TIPO"],
+)
+# Pruning gerado: "ano_particao" >= 2026 AND "mes_particao" >= 02 AND "dia_particao" >= 23
 ```
 
 ### 3.2 ColumnProfile

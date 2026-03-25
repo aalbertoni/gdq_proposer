@@ -115,3 +115,45 @@ class TestPresetManagerWithValidation:
         assert loaded.table == "mytable"
         assert loaded.lookback_value == 45
         assert loaded.selected_columns == ["A", "B"]
+
+    def test_roundtrip_new_partition_fields(self, tmp_path):
+        """Preset com novos campos de particao faz round-trip correto."""
+        mgr = PresetManager(str(tmp_path))
+        preset = Preset(
+            name="partition_test", schema="db", table="tb",
+            partition_column="dt_ref",
+            partition_format="%Y-%m-%d",
+            partition_is_integer=False,
+            temporal_axis_column="dt_ref",
+            partition_columns=["dt_ref"],
+            partition_formats={"dt_ref": "%Y-%m-%d"},
+            partition_is_integer_map={"dt_ref": False},
+        )
+        mgr.save(preset)
+        loaded = mgr.load("partition_test")
+        assert loaded.partition_format == "%Y-%m-%d"
+        assert loaded.partition_is_integer is False
+        assert loaded.temporal_axis_column == "dt_ref"
+        assert loaded.partition_columns == ["dt_ref"]
+        assert loaded.partition_formats == {"dt_ref": "%Y-%m-%d"}
+        assert loaded.partition_is_integer_map == {"dt_ref": False}
+
+    def test_load_legacy_preset_without_new_fields(self, tmp_path):
+        """Preset antigo (sem novos campos) carrega com defaults."""
+        import json
+        path = tmp_path / "legacy.json"
+        legacy_data = {
+            "schema": "db", "table": "tb",
+            "partition_column": "dt_ref",
+            "date_column": "dt_ref",
+            "selected_columns": ["A"],
+        }
+        path.write_text(json.dumps(legacy_data))
+        mgr = PresetManager(str(tmp_path))
+        loaded = mgr.load("legacy")
+        assert loaded.partition_format is None
+        assert loaded.partition_is_integer is False
+        assert loaded.temporal_axis_column is None
+        assert loaded.partition_columns == []
+        assert loaded.partition_formats == {}
+        assert loaded.partition_is_integer_map == {}

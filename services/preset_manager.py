@@ -56,6 +56,12 @@ class Preset:
     table: str
     partition_method: str = "incremental"
     partition_column: Optional[str] = None
+    partition_format: Optional[str] = None
+    partition_is_integer: bool = False
+    temporal_axis_column: Optional[str] = None
+    partition_columns: list[str] = field(default_factory=list)
+    partition_formats: dict = field(default_factory=dict)
+    partition_is_integer_map: dict = field(default_factory=dict)
     date_column: str = ""
     grain_type: str = "daily"
     lookback_mode: str = "last_n_periods"
@@ -152,6 +158,8 @@ class PresetManager:
         diffs = []
         compare_fields = [
             "schema", "table", "partition_method", "partition_column",
+            "partition_format", "partition_is_integer", "temporal_axis_column",
+            "partition_columns", "partition_formats", "partition_is_integer_map",
             "date_column", "grain_type", "lookback_mode", "lookback_value",
             "date_expression", "base_filter_sql", "selected_columns",
             "unique_key_columns",

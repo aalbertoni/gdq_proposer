@@ -630,10 +630,15 @@ if needs_date_expression:
         st.caption("Expressao SQL gerada automaticamente para o Athena.")
 
     # Feedback de pruning
-    if _partition_format and partition_col:
+    if _partition_format and partition_col and partition_col == date_col:
         from datetime import date as _d
         _preview_cutoff = _d.today().strftime(_partition_format)
         st.caption(f"Partition pruning: `\"{partition_col}\" >= '{_preview_cutoff}'`")
+    elif partition_col and partition_col != date_col:
+        st.caption(
+            "Particao sem formato de data — "
+            "pruning de custo nao sera aplicado nesta coluna."
+        )
     elif partition_col:
         st.warning(
             "Este formato nao permite partition pruning otimizado. "
@@ -687,12 +692,13 @@ dataset_config = DatasetConfig(
     table=table,
     partition_method=PartitionMethod(partition_method),
     partition_column=partition_col,
-    partition_format=_partition_format if partition_col else None,
+    partition_format=_partition_format if (partition_col and partition_col == date_col) else None,
     partition_is_integer=(
         partition_col is not None
         and _base_type(col_type_map.get(partition_col, "")) in _INTEGER_TYPES
     ),
     date_column=date_col,
+    temporal_axis_column=date_col if (partition_col and partition_col != date_col) else None,
     grain_type=GrainType(grain_type),
     lookback_mode=LookbackMode(lookback_mode),
     lookback_value=lookback_value,
@@ -710,6 +716,7 @@ if st.button("Validar Eixo Temporal", type="primary"):
         "partition_format": dataset_config.partition_format,
         "partition_is_integer": dataset_config.partition_is_integer,
         "date_column": dataset_config.date_column,
+        "temporal_axis_column": dataset_config.temporal_axis_column,
         "date_expression": dataset_config.date_expression,
         "lookback_value": dataset_config.lookback_value,
         "grain_type": dataset_config.grain_type.value,
@@ -874,6 +881,7 @@ if st.button("Executar Profiling", type="primary"):
         "partition_format": dataset_config.partition_format,
         "partition_is_integer": dataset_config.partition_is_integer,
         "date_column": dataset_config.date_column,
+        "temporal_axis_column": dataset_config.temporal_axis_column,
         "date_expression": dataset_config.date_expression,
         "lookback_value": dataset_config.lookback_value,
         "grain_type": dataset_config.grain_type.value,
@@ -1155,6 +1163,12 @@ if save_preset:
                 table=dataset_config.table,
                 partition_method=dataset_config.partition_method.value,
                 partition_column=dataset_config.partition_column,
+                partition_format=dataset_config.partition_format,
+                partition_is_integer=dataset_config.partition_is_integer,
+                temporal_axis_column=dataset_config.temporal_axis_column,
+                partition_columns=dataset_config.partition_columns,
+                partition_formats=dataset_config.partition_formats,
+                partition_is_integer_map=dataset_config.partition_is_integer_map,
                 date_column=dataset_config.date_column,
                 grain_type=dataset_config.grain_type.value,
                 lookback_mode=dataset_config.lookback_mode.value,

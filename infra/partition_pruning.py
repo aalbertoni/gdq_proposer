@@ -68,3 +68,38 @@ def build_partition_predicate(
 
     # String — literal com aspas
     return f"{col} >= '{formatted}'"
+
+
+def build_multi_column_predicate(
+    partition_columns: list[str],
+    partition_formats: dict[str, str | None],
+    partition_is_integer_map: dict[str, bool],
+    cutoff: date,
+    dialect: SQLDialect = SQLDialect.ATHENA,
+) -> str:
+    """Gera predicado AND combinando multiplas colunas de particao.
+
+    Cada coluna gera um predicado individual via build_partition_predicate().
+    Predicados sao combinados com AND.
+
+    Args:
+        partition_columns: Lista de colunas de particao.
+        partition_formats: Formato por coluna (chave=coluna, valor=strftime ou None).
+        partition_is_integer_map: Tipo por coluna (chave=coluna, valor=True se inteiro).
+        cutoff: Data de corte calculada.
+        dialect: Dialeto SQL (Athena ou DuckDB).
+
+    Returns:
+        Predicado SQL combinado, ou "" se lista vazia.
+    """
+    if not partition_columns:
+        return ""
+
+    predicates = []
+    for col in partition_columns:
+        fmt = partition_formats.get(col)
+        is_int = partition_is_integer_map.get(col, False)
+        pred = build_partition_predicate(col, fmt, cutoff, dialect=dialect, is_integer=is_int)
+        predicates.append(pred)
+
+    return " AND ".join(predicates)

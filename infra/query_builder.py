@@ -128,25 +128,48 @@ class QueryBuilder:
 
     def resolve_partition_filter(
         self,
-        partition_column: str | None,
+        partition_column: str | None = None,
         partition_format: str | None = None,
         lookback_value: int = 30,
         reference_date: str = "",
         partition_is_integer: bool = False,
         # Deprecated — ignorado. Mantido para retrocompatibilidade de assinatura.
         date_expression: str | None = None,
+        # --- Multi-partition fields (canonical) ---
+        partition_columns: list[str] | None = None,
+        partition_formats: dict[str, str | None] | None = None,
+        partition_is_integer_map: dict[str, bool] | None = None,
     ) -> str:
         """Gera filtro de particao fisico para pruning de custo.
 
         O predicado NUNCA aplica funcao sobre a coluna de particao.
         Calcula o cutoff em Python e formata no layout fisico da particao.
 
+        Suporta dois modos:
+        - Multi-column (canonical): partition_columns + partition_formats + partition_is_integer_map
+        - Single-column (legacy): partition_column + partition_format + partition_is_integer
+
         Returns:
             String SQL para WHERE ou string vazia se nao aplicavel.
         """
+        from infra.partition_pruning import (
+            compute_cutoff_date, build_partition_predicate, build_multi_column_predicate,
+        )
+
+        # Multi-column path (canonical)
+        if partition_columns:
+            cutoff = compute_cutoff_date(reference_date or None, lookback_value)
+            return build_multi_column_predicate(
+                partition_columns,
+                partition_formats or {},
+                partition_is_integer_map or {},
+                cutoff,
+                dialect=self.dialect,
+            )
+
+        # Single-column path (legacy)
         if not partition_column:
             return ""
-        from infra.partition_pruning import compute_cutoff_date, build_partition_predicate
         cutoff = compute_cutoff_date(reference_date or None, lookback_value)
         return build_partition_predicate(
             partition_column, partition_format, cutoff, self.dialect,

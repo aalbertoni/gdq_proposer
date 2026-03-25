@@ -194,8 +194,12 @@ class DatasetService:
         validate_identifier(config.table)
 
         # --- Caminho A: metadata de particoes (zero scan no Athena) ---
-        if config.partition_column:
-            # Fail-closed: se metadata falha, NAO cair para SQL (full scan)
+        # Multi-partition: fallback to SQL (reconstructing composite date is fragile)
+        if config.is_multi_partition:
+            return self._get_date_range_sql(config)
+
+        # Partição temporal: metadata-first (zero scan no Athena)
+        if config.partition_column and config.partition_is_temporal:
             result = self._get_date_range_from_partitions(config)
             if result and result["n_periods"] > 0:
                 return result
@@ -206,7 +210,7 @@ class DatasetService:
                 f"e o formato '{config.partition_format}' estao corretos."
             )
 
-        # --- Tabela nao particionada: SQL sem pruning (unico caminho) ---
+        # Não particionada ou partição não-temporal: SQL direto
         return self._get_date_range_sql(config)
 
     def _get_date_range_from_partitions(self, config: DatasetConfig) -> dict | None:
@@ -307,13 +311,24 @@ class DatasetService:
         validate_identifier(config.schema)
         validate_identifier(config.table)
 
-        partition_filter = self.builder.resolve_partition_filter(
-            partition_column=config.partition_column,
-            partition_format=config.partition_format,
-            lookback_value=config.lookback_value,
-            reference_date=config.reference_date or "",
-            partition_is_integer=config.partition_is_integer,
-        )
+        if not config.partition_is_temporal:
+            partition_filter = ""
+        elif config.partition_columns:
+            partition_filter = self.builder.resolve_partition_filter(
+                partition_columns=config.partition_columns,
+                partition_formats=config.partition_formats,
+                partition_is_integer_map=config.partition_is_integer_map,
+                lookback_value=config.lookback_value,
+                reference_date=config.reference_date or "",
+            )
+        else:
+            partition_filter = self.builder.resolve_partition_filter(
+                partition_column=config.partition_column,
+                partition_format=config.partition_format,
+                lookback_value=config.lookback_value,
+                reference_date=config.reference_date or "",
+                partition_is_integer=config.partition_is_integer,
+            )
 
         from infra.sql_dialect import adapt_function
         table_ref = adapt_function(
@@ -370,13 +385,24 @@ class DatasetService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
-        partition_filter = self.builder.resolve_partition_filter(
-            partition_column=config.partition_column,
-            partition_format=config.partition_format,
-            lookback_value=config.lookback_value,
-            reference_date=config.reference_date or "",
-            partition_is_integer=config.partition_is_integer,
-        )
+        if not config.partition_is_temporal:
+            partition_filter = ""
+        elif config.partition_columns:
+            partition_filter = self.builder.resolve_partition_filter(
+                partition_columns=config.partition_columns,
+                partition_formats=config.partition_formats,
+                partition_is_integer_map=config.partition_is_integer_map,
+                lookback_value=config.lookback_value,
+                reference_date=config.reference_date or "",
+            )
+        else:
+            partition_filter = self.builder.resolve_partition_filter(
+                partition_column=config.partition_column,
+                partition_format=config.partition_format,
+                lookback_value=config.lookback_value,
+                reference_date=config.reference_date or "",
+                partition_is_integer=config.partition_is_integer,
+            )
 
         sql = self.builder.build_volume_by_period(
             schema=config.schema,

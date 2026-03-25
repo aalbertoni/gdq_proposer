@@ -94,7 +94,21 @@ class AnalysisService:
         self.builder = builder
 
     def _resolve_partition_filter(self, config: DatasetConfig) -> str:
-        """Resolve filtro de particao para partition pruning nas queries de analise."""
+        """Resolve filtro de particao para partition pruning nas queries de analise.
+
+        Retorna string vazia quando a partição não é temporal (ex: flag "s"/"n"),
+        evitando predicados absurdos como '"flag_ativo" >= "2026-02-18"'.
+        """
+        if not config.partition_is_temporal:
+            return ""
+        if config.partition_columns:
+            return self.builder.resolve_partition_filter(
+                partition_columns=config.partition_columns,
+                partition_formats=config.partition_formats,
+                partition_is_integer_map=config.partition_is_integer_map,
+                lookback_value=config.lookback_value,
+                reference_date=config.reference_date or "",
+            )
         return self.builder.resolve_partition_filter(
             partition_column=config.partition_column,
             partition_format=config.partition_format,

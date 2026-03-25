@@ -10,7 +10,11 @@ Valida que o partition pruning fisico:
 import pytest
 from datetime import date
 
-from infra.partition_pruning import build_partition_predicate, compute_cutoff_date
+from infra.partition_pruning import (
+    build_partition_predicate,
+    build_multi_column_predicate,
+    compute_cutoff_date,
+)
 from infra.query_builder import QueryBuilder
 from infra.sql_dialect import SQLDialect
 
@@ -244,3 +248,161 @@ class TestDateExpressionPreserved:
         )
         # date_expression para analise temporal — deve estar no WHERE
         assert 'CAST("dt_ref" AS DATE)' in sql
+
+
+# ---------------------------------------------------------------------------
+# build_multi_column_predicate
+# ---------------------------------------------------------------------------
+
+class TestBuildMultiColumnPredicate:
+    def test_empty_columns_returns_empty(self):
+        result = build_multi_column_predicate([], {}, {}, date(2026, 2, 23))
+        assert result == ""
+
+    def test_single_column_same_as_single_predicate(self):
+        result = build_multi_column_predicate(
+            ["dt_ref"], {"dt_ref": "%Y-%m-%d"}, {"dt_ref": False},
+            date(2026, 2, 23),
+        )
+        expected = build_partition_predicate("dt_ref", "%Y-%m-%d", date(2026, 2, 23))
+        assert result == expected
+
+    def test_golden_output_ymd_integer(self):
+        """Golden output: ano/mes/dia como inteiros."""
+        result = build_multi_column_predicate(
+            ["ano", "mes", "dia"],
+            {"ano": "%Y", "mes": "%m", "dia": "%d"},
+            {"ano": True, "mes": True, "dia": True},
+            date(2026, 2, 23),
+        )
+        assert result == '"ano" >= 2026 AND "mes" >= 02 AND "dia" >= 23'
+
+    def test_two_columns(self):
+        result = build_multi_column_predicate(
+            ["ano", "mes"],
+            {"ano": "%Y", "mes": "%m"},
+            {"ano": True, "mes": True},
+            date(2026, 2, 23),
+        )
+        assert result == '"ano" >= 2026 AND "mes" >= 02'
+
+    def test_mixed_types_int_and_string(self):
+        """ano integer, mes string."""
+        result = build_multi_column_predicate(
+            ["ano", "mes"],
+            {"ano": "%Y", "mes": "%m"},
+            {"ano": True, "mes": False},
+            date(2026, 2, 23),
+        )
+        assert '"ano" >= 2026' in result
+        assert "\"mes\" >= '02'" in result
+        assert " AND " in result
+
+    def test_native_date_column(self):
+        """Coluna com tipo nativo (formato None)."""
+        result = build_multi_column_predicate(
+            ["dt_ref"], {"dt_ref": None}, {},
+            date(2026, 2, 23), dialect=SQLDialect.ATHENA,
+        )
+        assert "DATE '2026-02-23'" in result
+
+    def test_duckdb_dialect(self):
+        result = build_multi_column_predicate(
+            ["ano", "mes"],
+            {"ano": "%Y", "mes": "%m"},
+            {"ano": True, "mes": True},
+            date(2026, 2, 23),
+            dialect=SQLDialect.DUCKDB,
+        )
+        assert '"ano" >= 2026' in result
+        assert '"mes" >= 02' in result
+
+    def test_no_function_on_columns(self):
+        """Multi-column predicates must never apply functions on columns."""
+        result = build_multi_column_predicate(
+            ["ano", "mes", "dia"],
+            {"ano": "%Y", "mes": "%m", "dia": "%d"},
+            {"ano": True, "mes": True, "dia": True},
+            date(2026, 2, 23),
+        )
+        assert "CAST" not in result
+        assert "DATE_PARSE" not in result
+
+    def test_missing_format_defaults_native(self):
+        """Column not in formats dict uses None (native date)."""
+        result = build_multi_column_predicate(
+            ["dt_ref"], {}, {},
+            date(2026, 2, 23), dialect=SQLDialect.ATHENA,
+        )
+        assert "DATE '2026-02-23'" in result
+
+    def test_missing_is_integer_defaults_false(self):
+        """Column not in is_integer map defaults to False (string)."""
+        result = build_multi_column_predicate(
+            ["dt_ref"], {"dt_ref": "%Y%m%d"}, {},
+            date(2026, 2, 23),
+        )
+        assert "'" in result  # string literal with quotes
+
+
+# ---------------------------------------------------------------------------
+# QueryBuilder.resolve_partition_filter — multi-column path
+# ---------------------------------------------------------------------------
+
+class TestResolvePartitionFilterMultiColumn:
+    def test_multi_col_generates_and_predicate(self, qb_athena):
+        result = qb_athena.resolve_partition_filter(
+            partition_columns=["ano", "mes"],
+            partition_formats={"ano": "%Y", "mes": "%m"},
+            partition_is_integer_map={"ano": True, "mes": True},
+            lookback_value=30,
+            reference_date="2026-03-20",
+        )
+        assert " AND " in result
+        assert '"ano"' in result
+        assert '"mes"' in result
+
+    def test_multi_col_takes_priority_over_single(self, qb_athena):
+        """When both partition_columns and partition_column given, multi wins."""
+        result = qb_athena.resolve_partition_filter(
+            partition_column="dt_ref",
+            partition_format="%Y-%m-%d",
+            partition_columns=["ano", "mes"],
+            partition_formats={"ano": "%Y", "mes": "%m"},
+            partition_is_integer_map={"ano": True, "mes": True},
+            lookback_value=30,
+            reference_date="2026-03-20",
+        )
+        assert " AND " in result
+        assert '"ano"' in result
+        assert "dt_ref" not in result
+
+    def test_empty_multi_col_falls_to_single(self, qb_athena):
+        """Empty partition_columns falls back to single partition_column."""
+        result = qb_athena.resolve_partition_filter(
+            partition_column="dt_ref",
+            partition_format="%Y-%m-%d",
+            partition_columns=[],
+            lookback_value=30,
+            reference_date="2026-03-20",
+        )
+        assert "dt_ref" in result
+        assert " AND " not in result
+
+    def test_both_empty_returns_empty(self, qb_athena):
+        result = qb_athena.resolve_partition_filter(
+            partition_columns=[],
+            lookback_value=30,
+        )
+        assert result == ""
+
+    def test_duckdb_multi_col(self, qb_duckdb):
+        result = qb_duckdb.resolve_partition_filter(
+            partition_columns=["ano", "mes", "dia"],
+            partition_formats={"ano": "%Y", "mes": "%m", "dia": "%d"},
+            partition_is_integer_map={"ano": True, "mes": True, "dia": True},
+            lookback_value=30,
+            reference_date="2026-03-20",
+        )
+        assert " AND " in result
+        assert '"ano"' in result

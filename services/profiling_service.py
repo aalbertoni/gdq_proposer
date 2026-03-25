@@ -60,13 +60,24 @@ class ProfilingService:
         if config.base_filter_sql:
             base_filter = sanitize_filter(config.base_filter_sql)
 
-        partition_filter = self.builder.resolve_partition_filter(
-            partition_column=config.partition_column,
-            partition_format=config.partition_format,
-            lookback_value=config.lookback_value,
-            reference_date=config.reference_date or "",
-            partition_is_integer=config.partition_is_integer,
-        )
+        if not config.partition_is_temporal:
+            partition_filter = ""
+        elif config.partition_columns:
+            partition_filter = self.builder.resolve_partition_filter(
+                partition_columns=config.partition_columns,
+                partition_formats=config.partition_formats,
+                partition_is_integer_map=config.partition_is_integer_map,
+                lookback_value=config.lookback_value,
+                reference_date=config.reference_date or "",
+            )
+        else:
+            partition_filter = self.builder.resolve_partition_filter(
+                partition_column=config.partition_column,
+                partition_format=config.partition_format,
+                lookback_value=config.lookback_value,
+                reference_date=config.reference_date or "",
+                partition_is_integer=config.partition_is_integer,
+            )
 
         # Auto-ajuste de sample_periods para granularidade mensal.
         # sample_periods é usado como dias no date_lookback_expr.

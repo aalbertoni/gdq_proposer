@@ -134,3 +134,204 @@ class TestDefaults:
         assert config_non_partitioned.partition_column is None
         assert config_non_partitioned.date_column == "dt_evento"
         assert config_non_partitioned.date_expression is not None
+
+
+# ---------------------------------------------------------------------------
+# Multi-partition migration and sync
+# ---------------------------------------------------------------------------
+
+class TestMultiPartitionMigration:
+    def test_single_to_list_migration(self):
+        """Legacy partition_column auto-migrates to partition_columns."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="dt_ref",
+            partition_format="%Y-%m-%d",
+            partition_is_integer=False,
+        )
+        assert cfg.partition_columns == ["dt_ref"]
+        assert cfg.partition_formats == {"dt_ref": "%Y-%m-%d"}
+        assert cfg.partition_is_integer_map == {"dt_ref": False}
+
+    def test_list_already_populated_no_overwrite(self):
+        """If partition_columns already set, migration does not overwrite."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="old_col",
+            partition_columns=["ano", "mes"],
+            partition_formats={"ano": "%Y", "mes": "%m"},
+            partition_is_integer_map={"ano": True, "mes": True},
+        )
+        assert cfg.partition_columns == ["ano", "mes"]
+        # Legacy fields synced from first in list
+        assert cfg.partition_column == "ano"
+        assert cfg.partition_format == "%Y"
+        assert cfg.partition_is_integer is True
+
+    def test_list_syncs_to_legacy(self):
+        """Canonical list syncs first element to legacy fields."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["ano", "mes", "dia"],
+            partition_formats={"ano": "%Y", "mes": "%m", "dia": "%d"},
+            partition_is_integer_map={"ano": True, "mes": True, "dia": True},
+        )
+        assert cfg.partition_column == "ano"
+        assert cfg.partition_format == "%Y"
+        assert cfg.partition_is_integer is True
+
+    def test_non_partitioned_legacy_none(self):
+        """NON_PARTITIONED: all partition fields are None/empty."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_method=PartitionMethod.NON_PARTITIONED,
+        )
+        assert cfg.partition_columns == []
+        assert cfg.partition_column is None
+        assert cfg.partition_format is None
+        assert cfg.partition_is_integer is False
+
+    def test_is_multi_partition(self):
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["ano", "mes"],
+        )
+        assert cfg.is_multi_partition is True
+
+    def test_is_multi_partition_single(self):
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["dt_ref"],
+        )
+        assert cfg.is_multi_partition is False
+
+    def test_is_multi_partition_empty(self):
+        cfg = DatasetConfig(schema="db", table="tb")
+        assert cfg.is_multi_partition is False
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint sensitivity for multi-partition fields
+# ---------------------------------------------------------------------------
+
+class TestFingerprintMultiPartition:
+    def test_partition_columns_change_fingerprint(self):
+        base = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["ano", "mes"],
+            partition_formats={"ano": "%Y", "mes": "%m"},
+        )
+        changed = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["ano", "mes", "dia"],
+            partition_formats={"ano": "%Y", "mes": "%m", "dia": "%d"},
+        )
+        assert base.analysis_fingerprint() != changed.analysis_fingerprint()
+
+    def test_partition_formats_change_fingerprint(self):
+        base = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["dt_ref"],
+            partition_formats={"dt_ref": "%Y-%m-%d"},
+        )
+        changed = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["dt_ref"],
+            partition_formats={"dt_ref": "%Y%m%d"},
+        )
+        assert base.analysis_fingerprint() != changed.analysis_fingerprint()
+
+    def test_partition_is_integer_map_change_fingerprint(self):
+        base = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["dt_ref"],
+            partition_formats={"dt_ref": "%Y%m%d"},
+            partition_is_integer_map={"dt_ref": False},
+        )
+        changed = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["dt_ref"],
+            partition_formats={"dt_ref": "%Y%m%d"},
+            partition_is_integer_map={"dt_ref": True},
+        )
+        assert base.analysis_fingerprint() != changed.analysis_fingerprint()
+
+    def test_single_vs_multi_same_column_same_fingerprint(self):
+        """Single partition_column migrated should match direct partition_columns."""
+        single = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="dt_ref",
+            partition_format="%Y-%m-%d",
+        )
+        multi = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["dt_ref"],
+            partition_formats={"dt_ref": "%Y-%m-%d"},
+            partition_is_integer_map={"dt_ref": False},
+        )
+        assert single.analysis_fingerprint() == multi.analysis_fingerprint()
+
+
+# ---------------------------------------------------------------------------
+# partition_is_temporal
+# ---------------------------------------------------------------------------
+
+class TestPartitionIsTemporal:
+    def test_true_with_explicit_format(self):
+        """partition_format explícito → temporal."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="dt_ref",
+            partition_format="%Y-%m-%d",
+            date_column="dt_ref",
+        )
+        assert cfg.partition_is_temporal is True
+
+    def test_true_partition_equals_date_no_format(self):
+        """partition == date_column, format None (native date) → temporal."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="dt_ref",
+            partition_format=None,
+            date_column="dt_ref",
+        )
+        assert cfg.partition_is_temporal is True
+
+    def test_false_non_temporal_flag(self):
+        """partition="flag_ativo", date="dt_ref", no format → not temporal."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="flag_ativo",
+            date_column="dt_ref",
+        )
+        assert cfg.partition_is_temporal is False
+
+    def test_false_non_partitioned(self):
+        """Sem partition_column → not temporal."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_method=PartitionMethod.NON_PARTITIONED,
+            date_column="dt_ref",
+        )
+        assert cfg.partition_is_temporal is False
+
+    def test_full_snapshot_with_format(self):
+        """FULL_SNAPSHOT com partition_format explícito → temporal."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_method=PartitionMethod.FULL_SNAPSHOT,
+            partition_column="dt_carga",
+            partition_format="%Y-%m-%d",
+            date_column="DT_ABERTURA",
+        )
+        assert cfg.partition_is_temporal is True
+
+    def test_full_snapshot_without_format_different_cols(self):
+        """FULL_SNAPSHOT sem formato, partition != date → not temporal."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_method=PartitionMethod.FULL_SNAPSHOT,
+            partition_column="dt_carga",
+            date_column="DT_ABERTURA",
+        )
+        assert cfg.partition_is_temporal is False
