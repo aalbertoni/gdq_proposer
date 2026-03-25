@@ -375,11 +375,89 @@ def _update_col_health(column: str, rule_key: str, confidence: ConfidenceLevel) 
     st.session_state[health_key][column][rule_key] = confidence
 
 
+def _build_parameter_tips(result: CalibrationResult) -> list[str]:
+    """Gera dicas contextuais baseadas no resultado da calibracao e regime da serie."""
+    tips: list[str] = []
+    profile = result.profile
+
+    # -- N (janela) --
+    if profile and profile.has_structural_break:
+        tips.append(
+            f"**N={result.n_periods}:** Limitado a dados pos-mudanca de regime. "
+            f"Aumentar N incluiria dados do patamar anterior, gerando falsos positivos."
+        )
+    elif profile and profile.is_seasonal:
+        tips.append(
+            f"**N={result.n_periods}:** Multiplo de 7 para neutralizar efeito semanal. "
+            f"N fora de multiplo de 7 pode gerar viés por dia da semana."
+        )
+    elif result.n_periods < 15:
+        tips.append(
+            f"**N={result.n_periods}:** Janela curta — serie tem poucos dados. "
+            f"Considere coletar mais historico para maior confiabilidade."
+        )
+    else:
+        tips.append(
+            f"**N={result.n_periods}:** Janela padrao. "
+            f"Reduzir reage mais rapido a mudancas; aumentar suaviza ruido."
+        )
+
+    # -- Sigma --
+    if result.n_sigma <= 2.0:
+        tips.append(
+            f"**Sigma={result.n_sigma}:** Regra rigorosa (~95% dos dados). "
+            f"Bom para series estaveis. Risco de FP em series com variacao natural."
+        )
+    elif result.n_sigma <= 3.0:
+        tips.append(
+            f"**Sigma={result.n_sigma}:** Equilibrio entre rigor e tolerancia. "
+            f"Cobre ~99% dos dados normais."
+        )
+    else:
+        tips.append(
+            f"**Sigma={result.n_sigma}:** Mais permissivo (~99.7% dos dados). "
+            f"Util para series com variabilidade natural. So detecta desvios extremos."
+        )
+
+    # -- Margem --
+    if result.margin_enabled:
+        tips.append(
+            f"**Margem={result.margin_pct*100:.0f}%:** Dual guard ativo — "
+            f"a banda sigma sozinha nao cobria dados normais suficientes. "
+            f"A margem fixa protege contra baixa variabilidade historica."
+        )
+    else:
+        tips.append(
+            "**Margem desativada:** Sigma sozinho ja atinge cobertura suficiente. "
+            "Ativar margem so adiciona complexidade sem beneficio."
+        )
+
+    # -- Backtest --
+    if result.false_positives == 0 and result.coverage_pct >= 95:
+        tips.append(
+            f"**Backtest:** Excelente — {result.coverage_pct:.1f}% cobertura sem falsos positivos. "
+            f"Parametros bem calibrados."
+        )
+    elif result.false_positives > 0:
+        tips.append(
+            f"**Backtest:** {result.false_positives} falso(s) positivo(s) detectado(s). "
+            f"Considere relaxar sigma ou ativar margem para reduzir alertas falsos."
+        )
+    elif result.coverage_pct < 80:
+        tips.append(
+            f"**Backtest:** Cobertura baixa ({result.coverage_pct:.1f}%). "
+            f"A serie pode ser muito volatil para regra automatica. Considere regra manual."
+        )
+
+    return tips
+
+
 def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="numeric",
                         grain=None, series_profile=None):
     """Renderiza expander de calibracao automatica com botoes, resultado e justificativa."""
     from core.models.enums import GrainType
     cache_key = f"autotune_{rule_key}"
+    expander_key = f"autotune_expanded_{rule_key}"
 
     if grain is None:
         grain = GrainType.DAILY
@@ -389,7 +467,10 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
         and isinstance(st.session_state.get(cache_key), CalibrationResult)
     )
 
-    with st.expander("Calibracao automatica", expanded=False):
+    # Manter expander aberto quando ha resultado ou acabou de calibrar
+    should_expand = has_result or st.session_state.get(expander_key, False)
+
+    with st.expander("Calibracao automatica", expanded=should_expand):
         st.caption(
             "Analisa a serie e sugere a melhor combinacao de parametros. "
             "Clique em **Aplicar** para atualizar os sliders e o grafico acima."
@@ -414,6 +495,7 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
             )
 
         if calibrate_clicked:
+            st.session_state[expander_key] = True
             with st.spinner("Calibrando..."):
                 result = calibrate(
                     values=values, dates=dates,
@@ -425,13 +507,20 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
 
         if apply_clicked and apply_enabled:
             result = st.session_state[cache_key]
+            # Clampar sigma ao maximo do slider (3.0)
+            clamped_sigma = min(result.n_sigma, 3.0)
+            # Garantir que sigma esta na lista de opcoes do slider
+            _sigma_options = [1.0, 1.5, 2.0, 2.5, 3.0]
+            if clamped_sigma not in _sigma_options:
+                clamped_sigma = min(_sigma_options, key=lambda x: abs(x - clamped_sigma))
             st.session_state["_pending_autotune"] = {
                 "rule_key": rule_key,
                 "n_periods": result.n_periods,
-                "n_sigma": result.n_sigma,
+                "n_sigma": clamped_sigma,
                 "margin_pct": int(result.margin_pct * 100),
                 "margin_enabled": result.margin_enabled,
             }
+            st.session_state[expander_key] = False  # Fechar apos aplicar
             st.rerun()
 
         if has_result:
@@ -491,6 +580,14 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
                         f"— atencao, serie desestabilizando."
                     )
 
+            # -- Guia contextual por parametro --
+            _tips = _build_parameter_tips(result)
+            if _tips:
+                st.markdown("---")
+                st.markdown("**Guia de parametros:**")
+                for tip in _tips:
+                    st.caption(tip)
+
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -502,9 +599,10 @@ st.set_page_config(page_title="Explore - GDQ Rule Proposer", page_icon=":bar_cha
 _pending = st.session_state.pop("_pending_autotune", None)
 if _pending:
     rk = _pending["rule_key"]
-    st.session_state[f"n_{rk}"] = _pending["n_periods"]
-    st.session_state[f"k_{rk}"] = _pending["n_sigma"]
-    st.session_state[f"margin_{rk}"] = _pending["margin_pct"]
+    # Clampar valores aos limites dos sliders
+    st.session_state[f"n_{rk}"] = max(5, min(90, _pending["n_periods"]))
+    st.session_state[f"k_{rk}"] = _pending["n_sigma"]  # ja clampado na origem
+    st.session_state[f"margin_{rk}"] = max(1, min(30, _pending["margin_pct"]))
     st.session_state[f"margin_on_{rk}"] = _pending["margin_enabled"]
     # Limpar cache de proposals que dependem destes params
     for k in [k for k in list(st.session_state.keys()) if k.startswith("proposal_") and rk in k]:

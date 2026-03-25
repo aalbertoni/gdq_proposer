@@ -84,7 +84,7 @@ SIGMA_SUFFICIENT_THRESHOLD = 0.98
 MARGIN_SUFFICIENT_THRESHOLD = 0.98
 
 # Sigmas testados em ordem de preferencia (menor = mais restritivo)
-SIGMA_CANDIDATES = [2.0, 2.5, 3.0, 3.5]
+SIGMA_CANDIDATES = [2.0, 2.5, 3.0]
 
 # Margens testadas em ordem de preferencia (menor = mais restritivo)
 MARGIN_CANDIDATES = [0.05, 0.10, 0.15, 0.20]
@@ -472,30 +472,32 @@ def validate_with_backtest(
                 except Exception:
                     continue
         else:
-            # Tentar aumentar sigma
-            for try_sigma in [sigma + 0.5, sigma + 1.0]:
-                if try_sigma > 4.0:
-                    break
+            # Tentar aumentar margem (sigma max = 3.0, relaxamento via margem)
+            _try_margins = sorted(set(
+                m for m in [margin_pct + 0.05, margin_pct + 0.10, 0.20, 0.25, 0.30]
+                if m > margin_pct and m <= 0.30
+            ))
+            for try_margin in _try_margins:
                 try:
                     if metric_kind == "frequency":
                         bt2 = backtest_frequency_dual_guard(
                             pct_series=values, dates=dates,
-                            n_periods=n_periods, n_sigma=try_sigma,
-                            margin_pct=margin_pct, buffer=0.01,
+                            n_periods=n_periods, n_sigma=sigma,
+                            margin_pct=try_margin, buffer=0.01,
                             margin_enabled=True,
                         )
                     else:
                         bt2 = backtest_band(
                             values=values, dates=dates,
-                            n_periods=n_periods, n_sigma=try_sigma,
-                            margin_pct=margin_pct, margin_enabled=True,
+                            n_periods=n_periods, n_sigma=sigma,
+                            margin_pct=try_margin, margin_enabled=True,
                         )
                     if _recent_fps(bt2, 7) == 0:
                         bt = bt2
-                        sigma = try_sigma
+                        margin_pct = try_margin
                         adjusted = True
                         adjust_reason = (
-                            f"FP recente detectado: sigma aumentado para {try_sigma} para eliminar."
+                            f"FP recente detectado: margem aumentada para {try_margin:.0%} para eliminar."
                         )
                         break
                 except Exception:
