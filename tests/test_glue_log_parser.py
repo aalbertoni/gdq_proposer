@@ -137,7 +137,7 @@ class TestExtractRuleLabel:
         assert _extract_rule_label("ColumnValues status in [1, 2, 3]") == "ColumnValues status"
 
     def test_short_syntax(self):
-        assert _extract_rule_label("RowCount >= 100") == "RowCount >="
+        assert _extract_rule_label("RowCount >= 100") == "RowCount"
 
 
 class TestExtractRuleCategoryAndColumn:

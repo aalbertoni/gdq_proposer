@@ -21,18 +21,27 @@ from core.models.enums import get_rule_label
 
 def _render_rule_result_card(r, idx: int):
     """Renderiza card visual completo para um resultado de regra."""
+    from core.glue_log_parser import explain_result, explain_compiled_rule, _fmt
+
     passed = r.passed
     status_icon = "✅" if passed else "❌"
-    status_color = "green" if passed else "red"
     outcome_text = "Aprovada" if passed else "Reprovada"
 
-    # Rule title: Category + Column
-    category = r.rule_category or "Regra"
-    column = r.target_column or ""
-    title = f"{category} — {column}" if column else category
+    # Title: Category + Column (fallback to rule_label or syntax excerpt)
+    category = r.rule_category
+    column = r.target_column
+    if category and column:
+        title = f"{category} — {column}"
+    elif category:
+        title = category
+    elif r.rule_label:
+        title = r.rule_label
+    else:
+        # Last resort: first meaningful tokens from syntax
+        title = r.rule_syntax[:60] + ("..." if len(r.rule_syntax) > 60 else "")
 
     with st.container(border=True):
-        # Header row: icon + category/column + outcome badge
+        # Header: icon + title + badge
         hcol1, hcol2 = st.columns([1, 11])
         with hcol1:
             st.markdown(f"<div style='font-size:2rem;text-align:center'>{status_icon}</div>",
@@ -46,58 +55,52 @@ def _render_rule_result_card(r, idx: int):
                 f"{outcome_text}</span>",
                 unsafe_allow_html=True,
             )
-            # Rule label (short human-readable name)
-            if r.rule_label and r.rule_label != category:
-                st.caption(f"Regra: {r.rule_label}")
 
-        # Metrics: show all evaluated metrics as individual st.metric cards
+        # Friendly description of what the rule does
+        friendly = explain_result(r)
+        if friendly:
+            st.caption(friendly)
+
+        # Compiled summary: metric value + compiled band + in/out
+        compiled_summary = explain_compiled_rule(r)
+        if compiled_summary:
+            st.markdown(compiled_summary)
+
+        # Metrics row: deduplicated, main metric first, then limits
+        _metric_items = []
+        _seen_names = set()
         if r.evaluated_metrics:
-            _metrics_list = []
             for k, v in r.evaluated_metrics.items():
-                # Clean metric key: Column.COL.Mean -> Mean, Dataset.*.RowCount -> RowCount
                 parts = k.split(".")
                 clean_name = parts[-1] if len(parts) > 1 else k
-                _metrics_list.append((clean_name, v))
+                # Skip duplicates (Dataset.*.X and Dataset.hash.X are the same)
+                if clean_name not in _seen_names:
+                    _seen_names.add(clean_name)
+                    _metric_items.append((clean_name, v))
+        if r.compiled_lower is not None:
+            _metric_items.append(("Lim. inferior", r.compiled_lower))
+        if r.compiled_upper is not None:
+            _metric_items.append(("Lim. superior", r.compiled_upper))
 
-            # Add compiled band if available
-            extra_cols = []
-            if r.compiled_lower is not None:
-                extra_cols.append(("Limite inferior", r.compiled_lower))
-            if r.compiled_upper is not None:
-                extra_cols.append(("Limite superior", r.compiled_upper))
+        if _metric_items:
+            n_cols = min(len(_metric_items), 4)
+            metric_cols = st.columns(n_cols)
+            for i, (name, val) in enumerate(_metric_items[:4]):
+                with metric_cols[i % n_cols]:
+                    st.metric(name, _fmt(val))
 
-            all_items = _metrics_list + extra_cols
-            n_cols = min(len(all_items), 4)
-            if n_cols > 0:
-                metric_cols = st.columns(n_cols)
-                for i, (name, val) in enumerate(all_items[:4]):
-                    with metric_cols[i % n_cols]:
-                        st.metric(name, f"{val:,.6g}")
-        else:
-            # No metrics parsed — show compiled band if available
-            band_items = []
-            if r.compiled_lower is not None:
-                band_items.append(("Limite inferior", r.compiled_lower))
-            if r.compiled_upper is not None:
-                band_items.append(("Limite superior", r.compiled_upper))
-            if band_items:
-                bcols = st.columns(len(band_items))
-                for i, (name, val) in enumerate(band_items):
-                    with bcols[i]:
-                        st.metric(name, f"{val:,.6g}")
-
-        # Failure reason (prominent when failed)
+        # Failure reason
         if r.failure_reason and r.failure_reason != "None" and not passed:
             st.error(f"**Motivo:** {r.failure_reason}", icon="⚠️")
         elif r.failure_reason and r.failure_reason != "None":
             st.caption(f"Detalhe: {r.failure_reason}")
 
-        # GDQ Syntax (collapsible)
+        # Syntax details (collapsible)
         with st.expander("Sintaxe GDQ", expanded=False):
             st.markdown("**Regra enviada:**")
             st.code(r.rule_syntax, language=None)
             if r.evaluated_rule:
-                st.markdown("**Regra compilada pelo GDQ** (limites expandidos):")
+                st.markdown("**Regra compilada pelo GDQ** (com valores reais):")
                 st.code(r.evaluated_rule, language=None)
 
 

@@ -314,14 +314,18 @@ def _extract_rule_label(syntax: str) -> str:
             expr = expr[:47] + "..."
         return f"CustomSql {expr}"
 
+    # RowCount (standalone or dual guard)
+    if re.search(r'\bRowCount\b', s):
+        return "RowCount"
+
     # Dual guard wrapped in ((...) OR (...))
     if s.startswith("(("):
-        inner = re.match(r'\(\((\w+)\s+(\S+)', s)
+        inner = re.match(r'\(\((\w+)\s+(\w+)', s)
         if inner:
             return f"{inner.group(1)} {inner.group(2)}"
 
-    # Standard: RuleName column_or_args
-    m = re.match(r'(\w+)\s+(\S+)', s)
+    # Standard: RuleName column_or_args (column must be a word, not an operator)
+    m = re.match(r'(\w+)\s+(\w+)', s)
     if m:
         return f"{m.group(1)} {m.group(2)}"
 
@@ -400,10 +404,23 @@ def _extract_rule_category_and_column(syntax: str) -> tuple[str, str]:
         cols = s.replace("IsPrimaryKey", "").strip()
         return "IsPrimaryKey", cols
 
+    # Single-paren wrapper: (Mean COL >= ...) AND ...
+    if s.startswith("(") and not s.startswith("(("):
+        m = re.match(r'\((\w+)\s+(\w+)', s)
+        if m:
+            return m.group(1), m.group(2)
+
     # Standard: RuleName column ...
     m = re.match(r'(\w+)\s+(\w+)', s)
     if m:
         return m.group(1), m.group(2)
+
+    # Deep search: find known rule names anywhere in the syntax
+    for rule_name in ("Mean", "StandardDeviation", "Completeness", "RowCount",
+                      "ColumnValues", "DistinctValuesCount", "IsPrimaryKey"):
+        m = re.search(rf'\b{rule_name}\s+(\w+)', s)
+        if m:
+            return rule_name, m.group(1)
 
     return "", ""
 
@@ -500,3 +517,99 @@ def _safe_eval_dict(raw: str) -> Optional[dict]:
         pass
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Friendly descriptions for GlueRuleResult
+# ---------------------------------------------------------------------------
+
+_CATEGORY_DESCRIPTIONS = {
+    "Mean": "Verifica se a media da coluna `{col}` esta dentro da faixa esperada.",
+    "StandardDeviation": "Verifica se o desvio padrao da coluna `{col}` esta dentro da faixa esperada.",
+    "Completeness": "Verifica se a coluna `{col}` nao possui valores nulos.",
+    "RowCount": "Verifica se a quantidade de linhas da tabela esta dentro da faixa esperada.",
+    "IsPrimaryKey": "Verifica se as colunas `{col}` formam uma chave primaria valida (sem duplicatas e sem nulos).",
+    "Percentil": "Verifica se o percentil 99 da coluna `{col}` esta dentro da faixa esperada.",
+    "Frequencia": "Verifica se a frequencia de um valor na coluna `{col}` esta dentro da faixa esperada.",
+    "CustomSql": "Executa uma consulta SQL customizada sobre a coluna `{col}`.",
+    "DistinctValuesCount": "Verifica se a quantidade de valores distintos da coluna `{col}` e a esperada.",
+    "ColumnValues": "Verifica se os valores da coluna `{col}` estao na lista permitida.",
+}
+
+
+def explain_result(r: GlueRuleResult) -> str:
+    """Generate a friendly one-line description of a GlueRuleResult.
+
+    Args:
+        r: Parsed rule result.
+
+    Returns:
+        Human-readable description in pt-BR.
+    """
+    cat = r.rule_category or ""
+    col = r.target_column or ""
+
+    template = _CATEGORY_DESCRIPTIONS.get(cat)
+    if template:
+        return template.format(col=col or "—")
+
+    # Fallback: generic description from label
+    if r.rule_label:
+        return f"Regra: {r.rule_label}"
+    return "Regra customizada."
+
+
+def _fmt(v: float) -> str:
+    """Format a number for display: large numbers with commas, small with precision."""
+    if abs(v) >= 1:
+        return f"{v:,.2f}"
+    return f"{v:.6g}"
+
+
+def explain_compiled_rule(r: GlueRuleResult) -> str:
+    """Generate a friendly description of the compiled rule with actual values.
+
+    Shows what the dynamic placeholders (avg/std/last) resolved to.
+
+    Args:
+        r: Parsed rule result with optional evaluated_rule and compiled limits.
+
+    Returns:
+        Human-readable description of the compiled limits, or empty string.
+    """
+    cat = r.rule_category or ""
+    mv = r.metric_value
+
+    parts = []
+
+    # Describe what was measured
+    if mv is not None:
+        _METRIC_LABELS = {
+            "Mean": "Media medida",
+            "StandardDeviation": "Desvio padrao medido",
+            "Completeness": "Completude medida",
+            "RowCount": "Contagem de linhas",
+            "Percentil": "Percentil 99 medido",
+            "Frequencia": "Frequencia medida",
+            "IsPrimaryKey": "Unicidade medida",
+        }
+        label = _METRIC_LABELS.get(cat, "Valor medido")
+        parts.append(f"**{label}:** {_fmt(mv)}")
+
+    # Describe compiled band
+    if r.compiled_lower is not None and r.compiled_upper is not None:
+        parts.append(f"**Faixa compilada:** {_fmt(r.compiled_lower)} a {_fmt(r.compiled_upper)}")
+    elif r.compiled_lower is not None:
+        parts.append(f"**Limite minimo compilado:** >= {_fmt(r.compiled_lower)}")
+    elif r.compiled_upper is not None:
+        parts.append(f"**Limite maximo compilado:** <= {_fmt(r.compiled_upper)}")
+
+    # If we have both metric and band, show whether it's inside
+    if mv is not None and r.compiled_lower is not None and r.compiled_upper is not None:
+        if r.compiled_lower <= mv <= r.compiled_upper:
+            parts.append("Valor dentro da faixa.")
+        else:
+            delta = min(abs(mv - r.compiled_lower), abs(mv - r.compiled_upper))
+            parts.append(f"Valor fora da faixa (distancia: {_fmt(delta)}).")
+
+    return " · ".join(parts) if parts else ""
