@@ -7,7 +7,9 @@ from core.glue_log_parser import (
     _extract_rule_category_and_column, _extract_compiled_range,
     _extract_balanced_list, _strip_log_prefix, _is_balanced,
     _dict_to_rule_result, _extract_limits_from_evaluated_rule,
+    explain_result, explain_compiled_rule, fmt_number,
 )
+from core.models.glue_test import GlueRuleResult
 
 
 class TestParseGlueLog:
@@ -761,3 +763,121 @@ class TestInfoPrefixLogFormat:
         assert len(results) == 1
         assert results[0].rule_category == "RowCount"
         assert results[0].evaluated_metrics == {"Dataset.*.RowCount": 1395227.0}
+
+
+class TestExplainResult:
+    """Tests for explain_result()."""
+
+    def test_mean(self):
+        r = GlueRuleResult(rule_category="Mean", target_column="VLR_SALDO")
+        assert "media" in explain_result(r).lower()
+        assert "VLR_SALDO" in explain_result(r)
+
+    def test_completeness(self):
+        r = GlueRuleResult(rule_category="Completeness", target_column="COL")
+        assert "nulos" in explain_result(r).lower()
+
+    def test_rowcount(self):
+        r = GlueRuleResult(rule_category="RowCount", target_column="")
+        assert "linhas" in explain_result(r).lower()
+
+    def test_isprimarykey(self):
+        r = GlueRuleResult(rule_category="IsPrimaryKey", target_column="A B C")
+        text = explain_result(r)
+        assert "chave primaria" in text.lower()
+        assert "A B C" in text
+
+    def test_unknown_category_with_label(self):
+        r = GlueRuleResult(rule_category="", rule_label="SomeRule COL")
+        assert "SomeRule COL" in explain_result(r)
+
+    def test_unknown_category_no_label(self):
+        r = GlueRuleResult(rule_category="", rule_label="")
+        assert "customizada" in explain_result(r).lower()
+
+
+class TestExplainCompiledRule:
+    """Tests for explain_compiled_rule()."""
+
+    def test_metric_only(self):
+        r = GlueRuleResult(
+            rule_category="Mean", target_column="COL",
+            evaluated_metrics={"Column.COL.Mean": 42.5},
+        )
+        text = explain_compiled_rule(r)
+        assert "42.50" in text
+        assert "Media medida" in text
+
+    def test_metric_and_band(self):
+        r = GlueRuleResult(
+            rule_category="Mean", target_column="COL",
+            evaluated_metrics={"Column.COL.Mean": 50.0},
+            compiled_lower=40.0, compiled_upper=60.0,
+        )
+        text = explain_compiled_rule(r)
+        assert "40.00" in text
+        assert "60.00" in text
+        assert "dentro da faixa" in text.lower()
+
+    def test_metric_outside_band(self):
+        r = GlueRuleResult(
+            rule_category="Mean", target_column="COL",
+            evaluated_metrics={"Column.COL.Mean": 100.0},
+            compiled_lower=40.0, compiled_upper=60.0,
+        )
+        text = explain_compiled_rule(r)
+        assert "fora da faixa" in text.lower()
+
+    def test_no_metrics(self):
+        r = GlueRuleResult(rule_category="Mean", target_column="COL")
+        assert explain_compiled_rule(r) == ""
+
+    def test_single_sided_lower(self):
+        r = GlueRuleResult(
+            rule_category="Completeness", target_column="COL",
+            evaluated_metrics={"Column.COL.Completeness": 1.0},
+            compiled_lower=0.95,
+        )
+        text = explain_compiled_rule(r)
+        assert "0.95" in text
+        assert "minimo" in text.lower()
+
+
+class TestFmtNumber:
+    """Tests for fmt_number()."""
+
+    def test_large_number(self):
+        assert fmt_number(1395227.0) == "1,395,227.00"
+
+    def test_small_number(self):
+        assert "0.000931" in fmt_number(0.000931748)
+
+    def test_one(self):
+        assert fmt_number(1.0) == "1.00"
+
+    def test_negative(self):
+        assert fmt_number(-42.5) == "-42.50"
+
+
+class TestExtractCategoryColumnEdgeCases:
+    """Tests for new branches in _extract_rule_category_and_column."""
+
+    def test_single_paren_wrapper(self):
+        syntax = "(Mean COL >= 100) AND (Mean COL <= 200)"
+        cat, col = _extract_rule_category_and_column(syntax)
+        assert cat == "Mean"
+        assert col == "COL"
+
+    def test_deep_search_fallback(self):
+        # Weird format that doesn't match standard patterns
+        syntax = "some_prefix Completeness MY_COL >= 0.95"
+        cat, col = _extract_rule_category_and_column(syntax)
+        # Standard match picks up "some_prefix" and "Completeness"
+        assert cat == "some_prefix"
+
+    def test_deep_search_when_no_standard_match(self):
+        # No standard match at all — deep search kicks in
+        syntax = "--- Mean VLR >= 100 ---"
+        cat, col = _extract_rule_category_and_column(syntax)
+        assert cat == "Mean"
+        assert col == "VLR"

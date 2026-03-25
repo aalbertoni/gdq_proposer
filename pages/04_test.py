@@ -21,7 +21,7 @@ from core.models.enums import get_rule_label
 
 def _render_rule_result_card(r, idx: int):
     """Renderiza card visual completo para um resultado de regra."""
-    from core.glue_log_parser import explain_result, explain_compiled_rule, _fmt
+    from core.glue_log_parser import explain_result, explain_compiled_rule, fmt_number
 
     passed = r.passed
     status_icon = "✅" if passed else "❌"
@@ -87,7 +87,7 @@ def _render_rule_result_card(r, idx: int):
             metric_cols = st.columns(n_cols)
             for i, (name, val) in enumerate(_metric_items[:4]):
                 with metric_cols[i % n_cols]:
-                    st.metric(name, _fmt(val))
+                    st.metric(name, fmt_number(val))
 
         # Failure reason
         if r.failure_reason and r.failure_reason != "None" and not passed:

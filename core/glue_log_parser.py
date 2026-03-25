@@ -559,7 +559,7 @@ def explain_result(r: GlueRuleResult) -> str:
     return "Regra customizada."
 
 
-def _fmt(v: float) -> str:
+def fmt_number(v: float) -> str:
     """Format a number for display: large numbers with commas, small with precision."""
     if abs(v) >= 1:
         return f"{v:,.2f}"
@@ -594,15 +594,15 @@ def explain_compiled_rule(r: GlueRuleResult) -> str:
             "IsPrimaryKey": "Unicidade medida",
         }
         label = _METRIC_LABELS.get(cat, "Valor medido")
-        parts.append(f"**{label}:** {_fmt(mv)}")
+        parts.append(f"**{label}:** {fmt_number(mv)}")
 
     # Describe compiled band
     if r.compiled_lower is not None and r.compiled_upper is not None:
-        parts.append(f"**Faixa compilada:** {_fmt(r.compiled_lower)} a {_fmt(r.compiled_upper)}")
+        parts.append(f"**Faixa compilada:** {fmt_number(r.compiled_lower)} a {fmt_number(r.compiled_upper)}")
     elif r.compiled_lower is not None:
-        parts.append(f"**Limite minimo compilado:** >= {_fmt(r.compiled_lower)}")
+        parts.append(f"**Limite minimo compilado:** >= {fmt_number(r.compiled_lower)}")
     elif r.compiled_upper is not None:
-        parts.append(f"**Limite maximo compilado:** <= {_fmt(r.compiled_upper)}")
+        parts.append(f"**Limite maximo compilado:** <= {fmt_number(r.compiled_upper)}")
 
     # If we have both metric and band, show whether it's inside
     if mv is not None and r.compiled_lower is not None and r.compiled_upper is not None:
@@ -610,6 +610,6 @@ def explain_compiled_rule(r: GlueRuleResult) -> str:
             parts.append("Valor dentro da faixa.")
         else:
             delta = min(abs(mv - r.compiled_lower), abs(mv - r.compiled_upper))
-            parts.append(f"Valor fora da faixa (distancia: {_fmt(delta)}).")
+            parts.append(f"Valor fora da faixa (distancia: {fmt_number(delta)}).")
 
     return " · ".join(parts) if parts else ""
