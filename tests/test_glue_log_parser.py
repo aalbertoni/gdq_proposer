@@ -81,6 +81,50 @@ class TestParseGlueLog:
         results = parse_glue_log(log)
         assert len(results) == 1
 
+    def test_dedup_pattern2_replaces_pattern1_with_evaluated_rule(self):
+        """Pattern 2 (BookQualidades) with EvaluatedRule replaces Pattern 1 without it."""
+        log = (
+            "INFO:DistribuicaoDeDados:Resultados GDQ:\n"
+            "INFO:DistribuicaoDeDados:[{'rule': 'Mean vlr_saldo >= 100', "
+            "'outcome': 'Passed', 'evaluatedmetrics': {'Dataset.*.Mean': 150.0}, "
+            "'failurereason': ''}]\n"
+            "INFO:BookQualidades:Salvando {'Rule': 'Mean vlr_saldo >= 100', "
+            "'Outcome': 'Passed', 'FailureReason': '', "
+            "'EvaluatedMetrics': {'Dataset.*.Mean': 150.0}, "
+            "'EvaluatedRule': 'Mean vlr_saldo >= 120.5'} end"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 1
+        assert results[0].evaluated_rule == "Mean vlr_saldo >= 120.5"
+
+    def test_dedup_pattern1_kept_when_both_have_evaluated_rule(self):
+        """When both patterns have evaluated_rule, Pattern 1 is kept (no replacement)."""
+        log = (
+            "INFO:DistribuicaoDeDados:Resultados GDQ:\n"
+            "INFO:DistribuicaoDeDados:[{'rule': 'Mean vlr_saldo >= 100', "
+            "'outcome': 'Passed', 'evaluatedmetrics': {'Dataset.*.Mean': 150.0}, "
+            "'failurereason': '', 'evaluatedrule': 'Mean vlr_saldo >= 110.0'}]\n"
+            "INFO:BookQualidades:Salvando {'Rule': 'Mean vlr_saldo >= 100', "
+            "'Outcome': 'Passed', 'FailureReason': '', "
+            "'EvaluatedMetrics': {'Dataset.*.Mean': 150.0}, "
+            "'EvaluatedRule': 'Mean vlr_saldo >= 120.5'} end"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 1
+        assert results[0].evaluated_rule == "Mean vlr_saldo >= 110.0"
+
+    def test_dedup_pattern2_only_with_evaluated_rule(self):
+        """Pattern 2 alone (no Pattern 1) correctly captures EvaluatedRule."""
+        log = (
+            "INFO:BookQualidades:Salvando {'Rule': 'Completeness col1 >= 0.95', "
+            "'Outcome': 'Passed', 'FailureReason': '', "
+            "'EvaluatedMetrics': {'Dataset.*.Completeness': 0.98}, "
+            "'EvaluatedRule': 'Completeness col1 >= 0.95'} end"
+        )
+        results = parse_glue_log(log)
+        assert len(results) == 1
+        assert results[0].evaluated_rule == "Completeness col1 >= 0.95"
+
     def test_failure_reason_newline_cleanup(self):
         log = (
             "INFO:DistribuicaoDeDados:Resultados GDQ:\n"
