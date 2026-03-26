@@ -33,22 +33,29 @@ def parse_glue_log(log_text: str) -> list[GlueRuleResult]:
         Lista de GlueRuleResult, um por regra encontrada.
     """
     results: list[GlueRuleResult] = []
-    seen_rules: set[str] = set()
+    seen_rules: dict[str, int] = {}  # key -> index in results
 
     # Pattern 1: "Resultados GDQ:" followed by a Python list of dicts
     results_from_block = _parse_resultados_gdq_block(log_text)
     for r in results_from_block:
         key = r.rule_syntax[:100]
         if key not in seen_rules:
-            seen_rules.add(key)
+            seen_rules[key] = len(results)
             results.append(r)
 
     # Pattern 2: "Salvando {" individual dicts from BookQualidades
+    # BookQualidades often has richer data (EvaluatedRule, full metrics).
+    # If a rule was already seen from Pattern 1 but Pattern 2 has more
+    # detail (evaluated_rule filled), replace the earlier result.
     results_from_book = _parse_book_qualidades(log_text)
     for r in results_from_book:
         key = r.rule_syntax[:100]
-        if key not in seen_rules:
-            seen_rules.add(key)
+        if key in seen_rules:
+            existing = results[seen_rules[key]]
+            if r.evaluated_rule and not existing.evaluated_rule:
+                results[seen_rules[key]] = r
+        else:
+            seen_rules[key] = len(results)
             results.append(r)
 
     # Pattern 3: "INFO:ModuleName:[{...}]" — direct list after log prefix
@@ -57,7 +64,7 @@ def parse_glue_log(log_text: str) -> list[GlueRuleResult]:
         for r in results_from_info:
             key = r.rule_syntax[:100]
             if key not in seen_rules:
-                seen_rules.add(key)
+                seen_rules[key] = len(results)
                 results.append(r)
 
     # Enrich with labels, category, column, and compiled range
