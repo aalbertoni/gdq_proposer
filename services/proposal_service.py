@@ -27,6 +27,7 @@ from core.backtest import (
     backtest_frequency_dual_guard,
     backtest_primary_key,
 )
+from core.gdq_filtered_rule_generator import generate_filtered_rule
 from core.gdq_rule_generator import GDQRuleGenerator
 from core.models.baseline import BaselineStrategy
 from core.models.enums import (
@@ -111,11 +112,37 @@ class ProposalService:
         # GrainPolicy defaults (daily). Atualizado por set_grain_policy().
         self._min_periods_dynamic = 10
         self._min_periods_possible = 5
+        # Filtro de data para regras GDQ (Spark WHERE clause).
+        # Setado via set_date_filter() quando config.has_date_filter.
+        self._date_filter_where: str | None = None
 
     def set_grain_policy(self, policy) -> None:
         """Atualiza thresholds de recomendacao a partir da GrainPolicy."""
         self._min_periods_dynamic = policy.min_valid_periods_dynamic
         self._min_periods_possible = policy.min_valid_periods_possible
+
+    def set_date_filter(self, date_filter_where: str | None) -> None:
+        """Define o filtro de data WHERE para regras GDQ filtradas.
+
+        Quando definido, regras built-in são convertidas para CustomSql
+        com cláusula WHERE. None desabilita o filtro.
+        """
+        self._date_filter_where = date_filter_where
+
+    def _generate_syntax(
+        self,
+        proposal: RuleProposal,
+        overrides: UserOverride | None = None,
+    ) -> str:
+        """Gera sintaxe GDQ, usando filtro de data quando configurado."""
+        if self._date_filter_where:
+            filtered = generate_filtered_rule(
+                proposal, self._date_filter_where, overrides,
+            )
+            if filtered is not None:
+                return filtered
+        # Fallback: regra original (sem filtro ou tipo não suportado)
+        return self.generator.generate(proposal, overrides)
 
     def _apply_recommendations(
         self,
@@ -301,7 +328,7 @@ class ProposalService:
                 av_score = score_proposal(av_proposal, av_proposal.history_values)
                 av_proposal.confidence = av_score.confidence
                 av_proposal.warnings = av_score.warnings
-            av_proposal.gdq_syntax_preview = self.generator.generate(av_proposal)
+            av_proposal.gdq_syntax_preview = self._generate_syntax(av_proposal)
             proposals.append(av_proposal)
 
         # --- DistinctValuesCount ---
@@ -326,7 +353,7 @@ class ProposalService:
                 dc_score = score_proposal(dc_proposal, dc_proposal.history_values)
                 dc_proposal.confidence = dc_score.confidence
                 dc_proposal.warnings = dc_score.warnings
-            dc_proposal.gdq_syntax_preview = self.generator.generate(dc_proposal)
+            dc_proposal.gdq_syntax_preview = self._generate_syntax(dc_proposal)
             proposals.append(dc_proposal)
         elif is_mid:
             # Range: +/- 10% or at least +/- 2
@@ -354,7 +381,7 @@ class ProposalService:
                 dc_score = score_proposal(dc_proposal, dc_proposal.history_values)
                 dc_proposal.confidence = dc_score.confidence
                 dc_proposal.warnings = dc_score.warnings
-            dc_proposal.gdq_syntax_preview = self.generator.generate(dc_proposal)
+            dc_proposal.gdq_syntax_preview = self._generate_syntax(dc_proposal)
             proposals.append(dc_proposal)
 
         # --- Category Frequency (static / dynamic / hybrid) ---
@@ -417,7 +444,7 @@ class ProposalService:
                     comp_proposal.confidence = ConfidenceLevel.MEDIUM
                 else:
                     comp_proposal.confidence = ConfidenceLevel.LOW
-            comp_proposal.gdq_syntax_preview = self.generator.generate(comp_proposal)
+            comp_proposal.gdq_syntax_preview = self._generate_syntax(comp_proposal)
             proposals.append(comp_proposal)
 
         return self._apply_recommendations(proposals)
@@ -551,7 +578,7 @@ class ProposalService:
         proposal.warnings = score.warnings
 
         # Sintaxe GDQ
-        proposal.gdq_syntax_preview = self.generator.generate(proposal)
+        proposal.gdq_syntax_preview = self._generate_syntax(proposal)
 
         return proposal
 
@@ -633,7 +660,7 @@ class ProposalService:
                 history_values=history_values_dup,
                 backtest=backtest_result,
             )
-            pk_proposal.gdq_syntax_preview = self.generator.generate(pk_proposal)
+            pk_proposal.gdq_syntax_preview = self._generate_syntax(pk_proposal)
             pk_score = score_proposal(pk_proposal, history_values_dup)
             pk_proposal.confidence = pk_score.confidence
             pk_proposal.warnings = pk_score.warnings
@@ -652,7 +679,7 @@ class ProposalService:
                 history_values=history_values_dup,
                 backtest=backtest_result,
             )
-            uq_proposal.gdq_syntax_preview = self.generator.generate(uq_proposal)
+            uq_proposal.gdq_syntax_preview = self._generate_syntax(uq_proposal)
             uq_score = score_proposal(uq_proposal, history_values_dup)
             uq_proposal.confidence = uq_score.confidence
             uq_proposal.warnings = uq_score.warnings
@@ -686,7 +713,7 @@ class ProposalService:
                                 for tr, nc in zip(total_rows, col_null_counts)
                             ],
                         )
-                        comp_proposal.gdq_syntax_preview = self.generator.generate(
+                        comp_proposal.gdq_syntax_preview = self._generate_syntax(
                             comp_proposal
                         )
                         comp_proposal.warnings.append(
@@ -709,7 +736,7 @@ class ProposalService:
                 backtest=backtest_result,
             )
             # Generate syntax for reference, even though not recommended
-            warn_proposal.gdq_syntax_preview = self.generator.generate(warn_proposal)
+            warn_proposal.gdq_syntax_preview = self._generate_syntax(warn_proposal)
             max_dup = max(int(d) for d in duplicate_counts)
             dup_periods = sum(1 for d in duplicate_counts if int(d) > 0)
             warn_proposal.warnings = [
@@ -838,7 +865,7 @@ class ProposalService:
         proposal.warnings = score.warnings
 
         # Syntax
-        proposal.gdq_syntax_preview = self.generator.generate(proposal)
+        proposal.gdq_syntax_preview = self._generate_syntax(proposal)
 
         return proposal
 
@@ -917,7 +944,7 @@ class ProposalService:
             custom_margin_pct=new_baseline.margin_pct,
             margin_enabled=margin_enabled,
         )
-        proposal.gdq_syntax_preview = self.generator.generate(proposal, overrides)
+        proposal.gdq_syntax_preview = self._generate_syntax(proposal, overrides)
 
         return proposal
 
@@ -975,7 +1002,7 @@ class ProposalService:
             custom_margin_pct=new_baseline.margin_pct,
             margin_enabled=margin_enabled,
         )
-        proposal.gdq_syntax_preview = self.generator.generate(proposal, overrides)
+        proposal.gdq_syntax_preview = self._generate_syntax(proposal, overrides)
 
         return proposal
 
@@ -1096,7 +1123,7 @@ class ProposalService:
         proposal.robust_info = robust_info
 
         # Sintaxe GDQ
-        proposal.gdq_syntax_preview = self.generator.generate(proposal)
+        proposal.gdq_syntax_preview = self._generate_syntax(proposal)
 
         return proposal
 
@@ -1482,5 +1509,5 @@ class ProposalService:
             else:
                 proposal.confidence = ConfidenceLevel.LOW
 
-        proposal.gdq_syntax_preview = self.generator.generate(proposal)
+        proposal.gdq_syntax_preview = self._generate_syntax(proposal)
         return proposal

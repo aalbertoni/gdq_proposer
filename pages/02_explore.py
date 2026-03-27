@@ -767,6 +767,7 @@ except CostGuardrailTriggered as e:
 analysis_svc = _get_analysis_service(client)
 proposal_svc = _get_proposal_service()
 proposal_svc.set_grain_policy(dataset_config.grain_policy)
+proposal_svc.set_date_filter(dataset_config.gdq_date_filter_expr)
 
 _grain_policy = dataset_config.grain_policy
 _grain_type = dataset_config.grain_type
