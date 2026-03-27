@@ -316,6 +316,42 @@ def _render_regime_panel(profile):
 
     st.caption(f"Regime da serie: {badge}{secondary}")
 
+    # --- Bundle advisory ---
+    if profile.regime.value != "stable":
+        from core.rule_strategy import select_strategy
+        from core.models.enums import RuleType
+
+        _rule_labels = {
+            RuleType.MEAN_DUAL_GUARD: "Mean (Dinamico)",
+            RuleType.STDDEV_DUAL_GUARD: "StdDev (Dinamico)",
+            RuleType.ROW_COUNT_DUAL_GUARD: "RowCount",
+            RuleType.COMPLETENESS: "Completeness",
+            RuleType.NUMERIC_PERCENTILE_BAND: "Percentil",
+        }
+
+        try:
+            bundle = select_strategy(profile)
+            with st.expander("Estrategia de regras sugerida", expanded=False):
+                st.markdown(f"**{bundle.explanation}**")
+                st.markdown("**Regras recomendadas:**")
+                for rc in bundle.rule_configs:
+                    label_text = _rule_labels.get(rc.rule_type, rc.rule_type.value)
+                    params = []
+                    if rc.suggested_n is not None:
+                        params.append(f"N={rc.suggested_n}")
+                    if rc.suggested_sigma is not None:
+                        params.append(f"sigma={rc.suggested_sigma}")
+                    param_str = f" ({', '.join(params)})" if params else ""
+                    st.markdown(f"- **{label_text}**{param_str}")
+                    if rc.note:
+                        st.caption(f"  {rc.note}")
+                if bundle.substitutions:
+                    st.markdown("**Ajustes vs padrao:**")
+                    for sub in bundle.substitutions:
+                        st.caption(f"- {sub}")
+        except Exception:
+            pass  # Silently skip if bundle fails — advisory only
+
 
 def _render_add_to_cart(proposal, label, stable_key, show_syntax=True, fp=""):
     """Renderiza classificacao, sintaxe, explicacao e botao de adicionar ao carrinho."""
