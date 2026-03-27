@@ -9,6 +9,9 @@ WHERE {{ date_expression }} >= {{ date_lookback_expr }}
 {% if partition_filter %}
   AND {{ partition_filter }}
 {% endif %}
+{% if date_filter %}
+  AND {{ date_filter }}
+{% endif %}
 {% if base_filter %}
   AND {{ base_filter }}
 {% endif %}

@@ -264,6 +264,7 @@ class QueryBuilder:
         base_filter: str = "",
         partition_filter: str = "",
         reference_date: str = "",
+        date_filter: str = "",
     ) -> str:
         """Query para row count por periodo (analise RowCount)."""
         template = self.env.get_template("row_count_history.sql")
@@ -275,6 +276,7 @@ class QueryBuilder:
             date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
+            date_filter=date_filter,
         )
 
     def build_distinct_count_history(
@@ -287,6 +289,7 @@ class QueryBuilder:
         base_filter: str = "",
         partition_filter: str = "",
         reference_date: str = "",
+        date_filter: str = "",
     ) -> str:
         """Query para contagem de valores distintos por periodo.
 
@@ -316,6 +319,7 @@ class QueryBuilder:
             ),
             base_filter=base_filter,
             partition_filter=partition_filter,
+            date_filter=date_filter,
         )
 
     def build_categorical_distribution(
@@ -328,6 +332,7 @@ class QueryBuilder:
         base_filter: str = "",
         partition_filter: str = "",
         reference_date: str = "",
+        date_filter: str = "",
     ) -> str:
         """Query para distribuicao de valores categoricos por periodo."""
         template = self.env.get_template("categorical_distribution.sql")
@@ -340,6 +345,7 @@ class QueryBuilder:
             date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
+            date_filter=date_filter,
         )
 
     def build_categorical_domain(
@@ -353,6 +359,7 @@ class QueryBuilder:
         partition_filter: str = "",
         limit: int = 0,
         reference_date: str = "",
+        date_filter: str = "",
     ) -> str:
         """Query para valores distintos e frequencia global."""
         template = self.env.get_template("categorical_domain.sql")
@@ -366,6 +373,7 @@ class QueryBuilder:
             base_filter=base_filter,
             partition_filter=partition_filter,
             limit=limit,
+            date_filter=date_filter,
         )
 
     def build_numeric_history(
@@ -378,6 +386,7 @@ class QueryBuilder:
         base_filter: str = "",
         partition_filter: str = "",
         reference_date: str = "",
+        date_filter: str = "",
     ) -> str:
         """Query para análise histórica de coluna numérica."""
         template = self.env.get_template("numeric_history.sql")
@@ -403,6 +412,7 @@ class QueryBuilder:
             date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
+            date_filter=date_filter,
         )
 
     def build_uniqueness_check(
@@ -415,6 +425,7 @@ class QueryBuilder:
         base_filter: str = "",
         partition_filter: str = "",
         reference_date: str = "",
+        date_filter: str = "",
     ) -> str:
         """Query para verificar unicidade e completude de colunas-chave por periodo.
 
@@ -463,4 +474,5 @@ class QueryBuilder:
             date_lookback_expr=self.date_lookback_expr(lookback_value, reference_date),
             base_filter=base_filter,
             partition_filter=partition_filter,
+            date_filter=date_filter,
         )

@@ -93,6 +93,36 @@ class AnalysisService:
         self.client = client
         self.builder = builder
 
+    def _resolve_date_filter(self, config: DatasetConfig) -> str:
+        """Resolve filtro de data de negocio para queries de analise.
+
+        Gera predicado WHERE adicional quando a coluna de data de negocio
+        e diferente da particao E diferente do eixo temporal do GROUP BY.
+        Evita analisar dados de todos os periodos de negocio quando so
+        queremos o subset relevante dentro de cada particao.
+
+        Returns:
+            Predicado SQL (sem WHERE), ou string vazia se nao aplicavel.
+        """
+        if not config.has_date_filter:
+            return ""
+        if not config.date_column or config.date_column == config.effective_temporal_axis:
+            return ""
+        # A coluna de data esta no GROUP BY via date_expression, que ja filtra
+        # pelo lookback. O date_filter adicional so e necessario quando
+        # effective_temporal_axis != date_column (ex: partition como eixo + date col separada).
+        # Neste caso, a filtragem pela coluna de data deve ser adicionada.
+        validate_identifier(config.date_column)
+        date_expr = config.date_expression
+        if date_expr:
+            date_expr = sanitize_expression(date_expr)
+        else:
+            date_expr = f'"{config.date_column}"'
+        lookback_expr = self.builder.date_lookback_expr(
+            config.lookback_value, config.reference_date or "",
+        )
+        return f"{date_expr} >= {lookback_expr}"
+
     def _resolve_partition_filter(self, config: DatasetConfig) -> str:
         """Resolve filtro de particao para partition pruning nas queries de analise.
 
@@ -149,6 +179,7 @@ class AnalysisService:
             base_filter = sanitize_filter(config.base_filter_sql)
 
         partition_filter = self._resolve_partition_filter(config)
+        date_filter = self._resolve_date_filter(config)
 
         sql = self.builder.build_numeric_history(
             schema=config.schema,
@@ -159,6 +190,7 @@ class AnalysisService:
             base_filter=base_filter,
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
+            date_filter=date_filter,
         )
 
         df = self.client.execute_df(
@@ -210,6 +242,7 @@ class AnalysisService:
             base_filter = sanitize_filter(config.base_filter_sql)
 
         partition_filter = self._resolve_partition_filter(config)
+        date_filter = self._resolve_date_filter(config)
 
         sql = self.builder.build_row_count_history(
             schema=config.schema,
@@ -219,6 +252,7 @@ class AnalysisService:
             base_filter=base_filter,
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
+            date_filter=date_filter,
         )
 
         df = self.client.execute_df(
@@ -272,6 +306,7 @@ class AnalysisService:
             base_filter = sanitize_filter(config.base_filter_sql)
 
         partition_filter = self._resolve_partition_filter(config)
+        date_filter = self._resolve_date_filter(config)
 
         sql = self.builder.build_distinct_count_history(
             schema=config.schema,
@@ -282,6 +317,7 @@ class AnalysisService:
             base_filter=base_filter,
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
+            date_filter=date_filter,
         )
 
         df = self.client.execute_df(
@@ -345,6 +381,7 @@ class AnalysisService:
             base_filter = sanitize_filter(config.base_filter_sql)
 
         partition_filter = self._resolve_partition_filter(config)
+        date_filter = self._resolve_date_filter(config)
 
         sql = self.builder.build_uniqueness_check(
             schema=config.schema,
@@ -355,6 +392,7 @@ class AnalysisService:
             base_filter=base_filter,
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
+            date_filter=date_filter,
         )
 
         df = self.client.execute_df(
@@ -416,6 +454,7 @@ class AnalysisService:
             base_filter = sanitize_filter(config.base_filter_sql)
 
         partition_filter = self._resolve_partition_filter(config)
+        date_filter = self._resolve_date_filter(config)
 
         sql = self.builder.build_categorical_distribution(
             schema=config.schema,
@@ -426,6 +465,7 @@ class AnalysisService:
             base_filter=base_filter,
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
+            date_filter=date_filter,
         )
 
         df = self.client.execute_df(
@@ -480,6 +520,7 @@ class AnalysisService:
             base_filter = sanitize_filter(config.base_filter_sql)
 
         partition_filter = self._resolve_partition_filter(config)
+        date_filter = self._resolve_date_filter(config)
 
         sql = self.builder.build_categorical_domain(
             schema=config.schema,
@@ -491,6 +532,7 @@ class AnalysisService:
             partition_filter=partition_filter,
             limit=limit,
             reference_date=config.reference_date or "",
+            date_filter=date_filter,
         )
 
         df = self.client.execute_df(
