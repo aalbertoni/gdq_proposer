@@ -547,14 +547,14 @@ if needs_date_expression:
     if is_integer_temporal:
         _DATE_PATTERNS = [
             (
-                "yyyyMMdd como inteiro (ex: 20240115)",
-                'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m%d\')',
-                "%Y%m%d",
-            ),
-            (
                 "yyyyMM como inteiro (ex: 202401)",
                 'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m\')',
                 "%Y%m",
+            ),
+            (
+                "yyyyMMdd como inteiro (ex: 20240115)",
+                'DATE_PARSE(CAST("{col}" AS VARCHAR), \'%Y%m%d\')',
+                "%Y%m%d",
             ),
             (
                 "Epoch segundos (ex: 1705276800)",
