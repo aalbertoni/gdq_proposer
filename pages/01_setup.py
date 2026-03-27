@@ -427,7 +427,11 @@ col_type_map = {c["name"]: c["type"].strip().lower() for c in columns}
 detected_partition_cols = st.session_state.get("setup_partition_cols", [])
 
 # Types that can serve as temporal axis
-_TEMPORAL_BASE_TYPES = {"date", "timestamp", "timestamp with time zone", "string", "varchar"}
+_TEMPORAL_BASE_TYPES = {
+    "date", "timestamp", "timestamp with time zone",
+    "string", "varchar", "char",
+    "bigint", "int", "integer", "smallint", "tinyint",
+}
 
 
 def _base_type(t: str) -> str:
