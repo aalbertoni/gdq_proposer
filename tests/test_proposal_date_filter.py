@@ -108,6 +108,81 @@ class TestTableRulesWithDateFilter:
             assert "from primary where" in p.gdq_syntax_preview
 
 
+class TestCategoricalRulesWithDateFilter:
+    def test_allowed_values_has_where(self, svc_with_filter):
+        from core.models.column_profile import ColumnProfile
+        from core.models.enums import SemanticType
+
+        profile = ColumnProfile(
+            column_name="COD_TIPO",
+            athena_type="varchar",
+            inferred_semantic_type=SemanticType.CATEGORICAL_LOW_CARDINALITY,
+            total_count=1000,
+            non_null_count=1000,
+            distinct_count=3,
+        )
+        distribution = pd.DataFrame({
+            "period": pd.date_range("2026-01-01", periods=30, freq="D").repeat(3),
+            "category_value": ["A", "B", "C"] * 30,
+            "value_count": [400, 350, 250] * 30,
+            "value_pct": [40.0, 35.0, 25.0] * 30,
+        })
+        domain = pd.DataFrame({
+            "category_value": ["A", "B", "C"],
+            "value_count": [12000, 10500, 7500],
+            "value_pct": [40.0, 35.0, 25.0],
+        })
+        proposals = svc_with_filter.propose_categorical_rules(
+            distribution, domain, "COD_TIPO", TABLE, profile, BASELINE,
+        )
+        # At least AllowedValues or frequency rules should have WHERE
+        filtered = [p for p in proposals if "from primary where" in p.gdq_syntax_preview]
+        assert len(filtered) > 0
+
+    def test_categorical_without_filter_is_builtin(self, svc_without_filter):
+        from core.models.column_profile import ColumnProfile
+        from core.models.enums import SemanticType
+
+        profile = ColumnProfile(
+            column_name="COD_TIPO",
+            athena_type="varchar",
+            inferred_semantic_type=SemanticType.CATEGORICAL_LOW_CARDINALITY,
+            total_count=1000,
+            non_null_count=1000,
+            distinct_count=3,
+        )
+        distribution = pd.DataFrame({
+            "period": pd.date_range("2026-01-01", periods=30, freq="D").repeat(3),
+            "category_value": ["A", "B", "C"] * 30,
+            "value_count": [400, 350, 250] * 30,
+            "value_pct": [40.0, 35.0, 25.0] * 30,
+        })
+        domain = pd.DataFrame({
+            "category_value": ["A", "B", "C"],
+            "value_count": [12000, 10500, 7500],
+            "value_pct": [40.0, 35.0, 25.0],
+        })
+        proposals = svc_without_filter.propose_categorical_rules(
+            distribution, domain, "COD_TIPO", TABLE, profile, BASELINE,
+        )
+        for p in proposals:
+            assert "from primary where ANO_MES_RFRC_CRED" not in p.gdq_syntax_preview
+
+
+class TestEdgeCases:
+    def test_empty_string_filter_treated_as_no_filter(self, numeric_history):
+        """Empty string is falsy — should behave like None."""
+        svc = ProposalService()
+        svc.set_date_filter("")
+        proposals = svc.propose_numeric_rules(
+            numeric_history, "VLR", TABLE, BASELINE,
+        )
+        mean_proposals = [p for p in proposals if "mean" in p.rule_type.value.lower()]
+        assert len(mean_proposals) > 0
+        for p in mean_proposals:
+            assert "from primary where" not in p.gdq_syntax_preview
+
+
 class TestSetDateFilter:
     def test_set_none_disables(self):
         svc = ProposalService()
