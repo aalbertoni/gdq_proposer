@@ -9,7 +9,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from core.models.enums import GrainType, LookbackMode, PartitionMethod
+from core.models.enums import (
+    DateFilterGranularity,
+    DateReferenceStrategy,
+    GrainType,
+    LookbackMode,
+    PartitionMethod,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +74,16 @@ class DatasetConfig:
     # === Lookback ===
     lookback_mode: LookbackMode = LookbackMode.LAST_N_PERIODS
     lookback_value: int = 30
+
+    # === Filtro de data para regras GDQ (quando partition ≠ date) ===
+    date_filter_granularity: DateFilterGranularity = DateFilterGranularity.NONE
+    date_reference_strategy: DateReferenceStrategy = DateReferenceStrategy.CURRENT
+    date_reference_lag: int = 0
+    gdq_date_filter_expr: Optional[str] = None
+    # Expressão Spark completa para o WHERE das regras GDQ.
+    # Ex: "ANO_MES_RFRC_CRED = date_format(current_date(), 'yyyyMM')"
+    gdq_date_filter_format: Optional[str] = None
+    # Formato strftime Spark da coluna de data (ex: 'yyyyMM', 'yyyyMMdd').
 
     # === Filtros ===
     base_filter_sql: Optional[str] = None
@@ -152,6 +168,11 @@ class DatasetConfig:
         return self.date_column
 
     @property
+    def has_date_filter(self) -> bool:
+        """True se as regras GDQ devem incluir filtro WHERE por data."""
+        return self.date_filter_granularity != DateFilterGranularity.NONE
+
+    @property
     def is_multi_partition(self) -> bool:
         """True se a tabela tem mais de uma coluna de particao."""
         return len(self.partition_columns) > 1
@@ -191,6 +212,11 @@ class DatasetConfig:
             self.date_expression or "",
             self.lookback_mode.value,
             str(self.lookback_value),
+            self.date_filter_granularity.value,
+            self.date_reference_strategy.value,
+            str(self.date_reference_lag),
+            self.gdq_date_filter_expr or "",
+            self.gdq_date_filter_format or "",
             self.base_filter_sql or "",
             self.reference_date or "",
             ",".join(sorted(self.selected_columns or [])),

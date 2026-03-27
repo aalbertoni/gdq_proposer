@@ -20,6 +20,8 @@ from pages.components.breadcrumb import render_breadcrumb
 from config import load_config
 from core.models.dataset_config import DatasetConfig
 from core.models.enums import (
+    DateFilterGranularity,
+    DateReferenceStrategy,
     GrainType,
     LookbackMode,
     PartitionMethod,
@@ -665,10 +667,151 @@ else:
 
 
 # ===================================================================
-# STEP 3: Filtro base
+# STEP 3: Filtro de data para regras GDQ (quando partition ≠ date)
 # ===================================================================
 
-st.header("3. Filtro Base (opcional)")
+# Defaults
+_date_filter_granularity = DateFilterGranularity.NONE
+_date_reference_strategy = DateReferenceStrategy.CURRENT
+_date_reference_lag = 0
+_gdq_date_filter_expr = None
+_gdq_date_filter_format = None
+
+_show_date_filter = (
+    partition_col
+    and partition_col != date_col
+    and partition_col is not None
+)
+
+if _show_date_filter:
+    st.header("3. Filtro de Data nas Regras GDQ")
+
+    st.info(
+        "A coluna de data de negocio (`{}`) e diferente da particao (`{}`). "
+        "Voce pode configurar um filtro para que as regras GDQ avaliem "
+        "apenas os registros de um periodo especifico, em vez do snapshot inteiro.".format(
+            date_col, partition_col
+        ),
+        icon="📅",
+    )
+
+    # --- Granularity selector ---
+    from core.gdq_date_filter import (
+        GRANULARITY_LABELS,
+        STRATEGY_LABELS,
+        build_gdq_date_filter_expr,
+        explain_date_filter,
+        explain_execution_frequency_warning,
+    )
+
+    _gran_options = list(DateFilterGranularity)
+    _gran_labels = [GRANULARITY_LABELS[g] for g in _gran_options]
+
+    _chosen_gran_label = st.selectbox(
+        "Granularidade do filtro de data:",
+        _gran_labels,
+        index=0,
+        key="date_filter_granularity_select",
+        help=(
+            "Define a granularidade do filtro WHERE nas regras GDQ geradas. "
+            "Escolha 'Sem filtro' para avaliar o snapshot inteiro (comportamento padrao)."
+        ),
+    )
+    _date_filter_granularity = _gran_options[_gran_labels.index(_chosen_gran_label)]
+
+    if _date_filter_granularity != DateFilterGranularity.NONE:
+        # --- Reference strategy selector ---
+        col_df1, col_df2 = st.columns(2)
+
+        with col_df1:
+            _strat_options = list(DateReferenceStrategy)
+            _strat_labels = [STRATEGY_LABELS[s] for s in _strat_options]
+
+            _chosen_strat_label = st.selectbox(
+                "Estrategia de referencia temporal:",
+                _strat_labels,
+                index=0,
+                key="date_reference_strategy_select",
+                help=(
+                    "Como identificar qual periodo avaliar a cada execucao do GDQ.\n\n"
+                    "- **Periodo corrente:** Usa current_date() formatado. "
+                    "Ideal quando o GDQ roda no mesmo dia/mes que os dados.\n"
+                    "- **Defasagem fixa:** Usa N periodos atras. "
+                    "Ideal para fechamentos mensais (ex: avaliar mes anterior).\n"
+                    "- **Ultimo valor disponivel:** Usa max(coluna). "
+                    "Ideal quando o delay de atualizacao e variavel."
+                ),
+            )
+            _date_reference_strategy = _strat_options[_strat_labels.index(_chosen_strat_label)]
+
+        with col_df2:
+            if _date_reference_strategy == DateReferenceStrategy.LAG_N:
+                _lag_label = {
+                    DateFilterGranularity.DAY: "dias",
+                    DateFilterGranularity.MONTH: "meses",
+                    DateFilterGranularity.YEAR: "anos",
+                }.get(_date_filter_granularity, "periodos")
+
+                _date_reference_lag = st.number_input(
+                    f"Defasagem ({_lag_label}):",
+                    min_value=1,
+                    max_value=365,
+                    value=1,
+                    key="date_reference_lag_input",
+                    help=f"Quantos {_lag_label} atras do periodo corrente.",
+                )
+            else:
+                _date_reference_lag = 0
+                st.empty()
+
+        # --- Detect column type for integer flag ---
+        _date_col_base_type = _base_type(col_type_map.get(date_col, ""))
+        _date_col_is_integer = _date_col_base_type in _INTEGER_TYPES
+
+        # --- Build expression ---
+        _gdq_date_filter_expr = build_gdq_date_filter_expr(
+            column=date_col,
+            granularity=_date_filter_granularity,
+            strategy=_date_reference_strategy,
+            lag=_date_reference_lag,
+            column_is_integer=_date_col_is_integer,
+        )
+
+        # --- Preview ---
+        if _gdq_date_filter_expr:
+            st.markdown("**Filtro WHERE gerado para as regras GDQ (Spark SQL):**")
+            st.code(f"WHERE {_gdq_date_filter_expr}", language="sql")
+
+            # Explanation
+            _explanation = explain_date_filter(
+                date_col, _date_filter_granularity,
+                _date_reference_strategy, _date_reference_lag,
+            )
+            st.caption(_explanation)
+
+            # Execution frequency warning
+            _freq_warning = explain_execution_frequency_warning(_date_filter_granularity)
+            if _freq_warning:
+                with st.expander("Sobre frequencia de execucao e last(N)", expanded=False):
+                    st.markdown(_freq_warning)
+
+        # Store spark format for later use
+        _SPARK_DATE_FORMATS = {
+            DateFilterGranularity.DAY: "yyyyMMdd",
+            DateFilterGranularity.MONTH: "yyyyMM",
+            DateFilterGranularity.YEAR: "yyyy",
+        }
+        _gdq_date_filter_format = _SPARK_DATE_FORMATS.get(_date_filter_granularity)
+
+    st.divider()
+
+_STEP_OFFSET = 1 if _show_date_filter else 0
+
+# ===================================================================
+# STEP 3/4: Filtro base
+# ===================================================================
+
+st.header(f"{3 + _STEP_OFFSET}. Filtro Base (opcional)")
 
 base_filter = st.text_input(
     "Filtro WHERE aplicado em todas as queries:",
@@ -685,7 +828,7 @@ base_filter = st.text_input(
 # STEP 4: Validar range temporal
 # ===================================================================
 
-st.header("4. Validar Configuracao")
+st.header(f"{4 + _STEP_OFFSET}. Validar Configuracao")
 
 dataset_config = DatasetConfig(
     schema=schema,
@@ -703,6 +846,11 @@ dataset_config = DatasetConfig(
     lookback_mode=LookbackMode(lookback_mode),
     lookback_value=lookback_value,
     date_expression=date_expression or None,
+    date_filter_granularity=_date_filter_granularity,
+    date_reference_strategy=_date_reference_strategy,
+    date_reference_lag=_date_reference_lag,
+    gdq_date_filter_expr=_gdq_date_filter_expr,
+    gdq_date_filter_format=_gdq_date_filter_format,
     base_filter_sql=base_filter or None,
 )
 
@@ -723,6 +871,11 @@ if st.button("Validar Eixo Temporal", type="primary"):
         "lookback_mode": dataset_config.lookback_mode.value,
         "base_filter_sql": dataset_config.base_filter_sql,
         "reference_date": dataset_config.reference_date,
+        "date_filter_granularity": dataset_config.date_filter_granularity.value,
+        "date_reference_strategy": dataset_config.date_reference_strategy.value,
+        "date_reference_lag": dataset_config.date_reference_lag,
+        "gdq_date_filter_expr": dataset_config.gdq_date_filter_expr,
+        "gdq_date_filter_format": dataset_config.gdq_date_filter_format,
     }
     try:
         date_range = _cached_get_date_range(client_id, config_dict)
@@ -888,6 +1041,11 @@ if st.button("Executar Profiling", type="primary"):
         "lookback_mode": dataset_config.lookback_mode.value,
         "base_filter_sql": dataset_config.base_filter_sql,
         "reference_date": dataset_config.reference_date,
+        "date_filter_granularity": dataset_config.date_filter_granularity.value,
+        "date_reference_strategy": dataset_config.date_reference_strategy.value,
+        "date_reference_lag": dataset_config.date_reference_lag,
+        "gdq_date_filter_expr": dataset_config.gdq_date_filter_expr,
+        "gdq_date_filter_format": dataset_config.gdq_date_filter_format,
     }
 
     _BATCH_THRESHOLD = 20
@@ -1174,6 +1332,11 @@ if save_preset:
                 lookback_mode=dataset_config.lookback_mode.value,
                 lookback_value=dataset_config.lookback_value,
                 date_expression=dataset_config.date_expression,
+                date_filter_granularity=dataset_config.date_filter_granularity.value,
+                date_reference_strategy=dataset_config.date_reference_strategy.value,
+                date_reference_lag=dataset_config.date_reference_lag,
+                gdq_date_filter_expr=dataset_config.gdq_date_filter_expr,
+                gdq_date_filter_format=dataset_config.gdq_date_filter_format,
                 base_filter_sql=dataset_config.base_filter_sql,
                 selected_columns=dataset_config.selected_columns,
                 unique_key_columns=dataset_config.unique_key_columns,

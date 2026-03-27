@@ -67,6 +67,11 @@ class Preset:
     lookback_mode: str = "last_n_periods"
     lookback_value: int = 30
     date_expression: Optional[str] = None
+    date_filter_granularity: str = "none"
+    date_reference_strategy: str = "current"
+    date_reference_lag: int = 0
+    gdq_date_filter_expr: Optional[str] = None
+    gdq_date_filter_format: Optional[str] = None
     base_filter_sql: Optional[str] = None
     selected_columns: list[str] = field(default_factory=list)
     unique_key_columns: list[str] = field(default_factory=list)
@@ -161,8 +166,9 @@ class PresetManager:
             "partition_format", "partition_is_integer", "temporal_axis_column",
             "partition_columns", "partition_formats", "partition_is_integer_map",
             "date_column", "grain_type", "lookback_mode", "lookback_value",
-            "date_expression", "base_filter_sql", "selected_columns",
-            "unique_key_columns",
+            "date_expression", "date_filter_granularity", "date_reference_strategy",
+            "date_reference_lag", "gdq_date_filter_expr", "gdq_date_filter_format",
+            "base_filter_sql", "selected_columns", "unique_key_columns",
         ]
 
         for f in compare_fields:

@@ -155,6 +155,21 @@ class GDQCapabilityStatus(str, Enum):
     UNKNOWN = "unknown"          # sem evidencia
 
 
+class DateFilterGranularity(str, Enum):
+    """Granularidade do filtro de data nas regras GDQ."""
+    NONE = "none"        # sem filtro de data (snapshot inteiro)
+    DAY = "day"          # filtrar por dia exato
+    MONTH = "month"      # filtrar por mês (YYYYMM)
+    YEAR = "year"        # filtrar por ano (YYYY)
+
+
+class DateReferenceStrategy(str, Enum):
+    """Estratégia para identificar o período corrente no filtro GDQ."""
+    CURRENT = "current"    # current_date() formatado
+    LAG_N = "lag_n"        # add_months/date_sub com defasagem fixa
+    MAX_VALUE = "max_value" # (select max(col) from primary)
+
+
 class ExportOutputMode(str, Enum):
     """Modo de output do export."""
     GDQ_RUNTIME = "gdq_runtime"       # sintaxe final para cadastro

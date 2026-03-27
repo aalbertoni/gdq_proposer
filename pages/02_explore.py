@@ -75,7 +75,10 @@ def _confidence_badge(level: ConfidenceLevel) -> str:
 
 def _build_config_from_dict(config_dict):
     from core.models.dataset_config import DatasetConfig
-    from core.models.enums import PartitionMethod, GrainType, LookbackMode
+    from core.models.enums import (
+        DateFilterGranularity, DateReferenceStrategy,
+        PartitionMethod, GrainType, LookbackMode,
+    )
     return DatasetConfig(
         schema=config_dict["schema"],
         table=config_dict["table"],
@@ -92,6 +95,15 @@ def _build_config_from_dict(config_dict):
         base_filter_sql=config_dict.get("base_filter_sql"),
         unique_key_columns=config_dict.get("unique_key_columns", []),
         reference_date=config_dict.get("reference_date"),
+        date_filter_granularity=DateFilterGranularity(
+            config_dict.get("date_filter_granularity", "none")
+        ),
+        date_reference_strategy=DateReferenceStrategy(
+            config_dict.get("date_reference_strategy", "current")
+        ),
+        date_reference_lag=config_dict.get("date_reference_lag", 0),
+        gdq_date_filter_expr=config_dict.get("gdq_date_filter_expr"),
+        gdq_date_filter_format=config_dict.get("gdq_date_filter_format"),
     )
 
 
@@ -775,6 +787,11 @@ config_dict = {
     "base_filter_sql": dataset_config.base_filter_sql,
     "unique_key_columns": getattr(dataset_config, "unique_key_columns", []),
     "reference_date": dataset_config.reference_date,
+    "date_filter_granularity": dataset_config.date_filter_granularity.value,
+    "date_reference_strategy": dataset_config.date_reference_strategy.value,
+    "date_reference_lag": dataset_config.date_reference_lag,
+    "gdq_date_filter_expr": dataset_config.gdq_date_filter_expr,
+    "gdq_date_filter_format": dataset_config.gdq_date_filter_format,
 }
 
 
