@@ -255,6 +255,10 @@ class ProposalService:
         if proposal is None:
             return []
 
+        # Re-generate syntax with date filter if configured
+        if self._date_filter_where:
+            proposal.gdq_syntax_preview = self._generate_syntax(proposal)
+
         return self._apply_recommendations([proposal])
 
     def propose_categorical_rules(

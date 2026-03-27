@@ -499,3 +499,62 @@ class TestReferenceDatePropagation:
             reference_date="2024-06-15",
         )
         assert "2024-06-15" in sql
+
+
+# ---------------------------------------------------------------------------
+# date_filter parameter
+# ---------------------------------------------------------------------------
+
+class TestDateFilter:
+    """Testes do parametro date_filter nos metodos build_*."""
+
+    DATE_FILTER = '"ANO_MES_RFRC_CRED" >= \'202509\''
+
+    def test_numeric_history_with_date_filter(self, qb_duckdb):
+        sql = qb_duckdb.build_numeric_history(
+            SCHEMA, TABLE, COL, DATE_EXPR, lookback_value=30,
+            date_filter=self.DATE_FILTER,
+        )
+        assert "ANO_MES_RFRC_CRED" in sql
+        assert "202509" in sql
+
+    def test_numeric_history_without_date_filter(self, qb_duckdb):
+        sql = qb_duckdb.build_numeric_history(
+            SCHEMA, TABLE, COL, DATE_EXPR, lookback_value=30,
+        )
+        assert "ANO_MES_RFRC_CRED" not in sql
+
+    def test_row_count_history_with_date_filter(self, qb_athena):
+        sql = qb_athena.build_row_count_history(
+            SCHEMA, TABLE, DATE_EXPR, lookback_value=30,
+            date_filter=self.DATE_FILTER,
+        )
+        assert "ANO_MES_RFRC_CRED" in sql
+
+    def test_distinct_count_with_date_filter(self, qb_duckdb):
+        sql = qb_duckdb.build_distinct_count_history(
+            SCHEMA, TABLE, COL, DATE_EXPR, lookback_value=30,
+            date_filter=self.DATE_FILTER,
+        )
+        assert "ANO_MES_RFRC_CRED" in sql
+
+    def test_categorical_distribution_with_date_filter(self, qb_athena):
+        sql = qb_athena.build_categorical_distribution(
+            SCHEMA, TABLE, COL, DATE_EXPR, lookback_value=30,
+            date_filter=self.DATE_FILTER,
+        )
+        assert "ANO_MES_RFRC_CRED" in sql
+
+    def test_categorical_domain_with_date_filter(self, qb_duckdb):
+        sql = qb_duckdb.build_categorical_domain(
+            SCHEMA, TABLE, COL, DATE_EXPR, lookback_value=30,
+            date_filter=self.DATE_FILTER,
+        )
+        assert "ANO_MES_RFRC_CRED" in sql
+
+    def test_uniqueness_check_with_date_filter(self, qb_athena):
+        sql = qb_athena.build_uniqueness_check(
+            SCHEMA, TABLE, ["COL1"], DATE_EXPR, lookback_value=30,
+            date_filter=self.DATE_FILTER,
+        )
+        assert "ANO_MES_RFRC_CRED" in sql
