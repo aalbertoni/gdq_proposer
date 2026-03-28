@@ -77,13 +77,21 @@ def build_multi_column_predicate(
     cutoff: date,
     dialect: SQLDialect = SQLDialect.ATHENA,
 ) -> str:
-    """Gera predicado AND combinando multiplas colunas de particao.
+    """Gera predicado hierarquico OR/AND para particoes multi-coluna.
 
-    Cada coluna gera um predicado individual via build_partition_predicate().
-    Predicados sao combinados com AND.
+    Para colunas hierarquicas (ano/mes/dia), um predicado AND simples
+    como '"ano" >= 2026 AND "mes" >= 2 AND "dia" >= 23' e incorreto
+    porque exclui 2026-03-01 (dia=1 < 23).
+
+    O predicado correto usa OR de clausulas com prefixo de igualdade:
+      ("ano" > 2026)
+      OR ("ano" = 2026 AND "mes" > 2)
+      OR ("ano" = 2026 AND "mes" = 2 AND "dia" >= 23)
+
+    Para uma unica coluna, retorna predicado simples (sem OR).
 
     Args:
-        partition_columns: Lista de colunas de particao.
+        partition_columns: Lista de colunas de particao (ordem hierarquica).
         partition_formats: Formato por coluna (chave=coluna, valor=strftime ou None).
         partition_is_integer_map: Tipo por coluna (chave=coluna, valor=True se inteiro).
         cutoff: Data de corte calculada.
@@ -95,11 +103,51 @@ def build_multi_column_predicate(
     if not partition_columns:
         return ""
 
-    predicates = []
+    # Single column: simple predicate (no OR needed)
+    if len(partition_columns) == 1:
+        col = partition_columns[0]
+        return build_partition_predicate(
+            col, partition_formats.get(col), cutoff,
+            dialect=dialect, is_integer=partition_is_integer_map.get(col, False),
+        )
+
+    # Multi-column: build value literals for each column
+    col_literals = []
     for col in partition_columns:
         fmt = partition_formats.get(col)
         is_int = partition_is_integer_map.get(col, False)
-        pred = build_partition_predicate(col, fmt, cutoff, dialect=dialect, is_integer=is_int)
-        predicates.append(pred)
+        quoted_col = f'"{col}"'
+        if fmt is None:
+            # Native date — use DATE literal
+            if dialect == SQLDialect.DUCKDB:
+                literal = f"TRY_CAST('{cutoff.isoformat()}' AS DATE)"
+            else:
+                literal = f"DATE '{cutoff.isoformat()}'"
+        else:
+            formatted = cutoff.strftime(fmt)
+            literal = formatted if is_int else f"'{formatted}'"
+        col_literals.append((quoted_col, literal))
 
-    return " AND ".join(predicates)
+    # Build hierarchical OR/AND predicate:
+    # For N columns, generate N clauses:
+    #   clause_0: col_0 > val_0                          (strictly greater on first)
+    #   clause_1: col_0 = val_0 AND col_1 > val_1        (equal prefix, then strictly greater)
+    #   ...
+    #   clause_N-1: col_0 = val_0 AND ... AND col_N-1 >= val_N-1  (equal prefix, then >=)
+    clauses = []
+    n = len(col_literals)
+    for i in range(n):
+        parts = []
+        # Equality prefix for columns before i
+        for j in range(i):
+            col_q, lit = col_literals[j]
+            parts.append(f"{col_q} = {lit}")
+        # Current column: strict > for all except last (which uses >=)
+        col_q, lit = col_literals[i]
+        if i < n - 1:
+            parts.append(f"{col_q} > {lit}")
+        else:
+            parts.append(f"{col_q} >= {lit}")
+        clauses.append("(" + " AND ".join(parts) + ")")
+
+    return "(" + " OR ".join(clauses) + ")"

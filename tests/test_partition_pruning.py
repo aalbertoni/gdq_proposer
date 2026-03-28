@@ -268,14 +268,18 @@ class TestBuildMultiColumnPredicate:
         assert result == expected
 
     def test_golden_output_ymd_integer(self):
-        """Golden output: ano/mes/dia como inteiros."""
+        """Golden output: ano/mes/dia como inteiros — hierarchical OR/AND."""
         result = build_multi_column_predicate(
             ["ano", "mes", "dia"],
             {"ano": "%Y", "mes": "%m", "dia": "%d"},
             {"ano": True, "mes": True, "dia": True},
             date(2026, 2, 23),
         )
-        assert result == '"ano" >= 2026 AND "mes" >= 02 AND "dia" >= 23'
+        assert result == (
+            '(("ano" > 2026) OR '
+            '("ano" = 2026 AND "mes" > 02) OR '
+            '("ano" = 2026 AND "mes" = 02 AND "dia" >= 23))'
+        )
 
     def test_two_columns(self):
         result = build_multi_column_predicate(
@@ -284,7 +288,7 @@ class TestBuildMultiColumnPredicate:
             {"ano": True, "mes": True},
             date(2026, 2, 23),
         )
-        assert result == '"ano" >= 2026 AND "mes" >= 02'
+        assert result == '(("ano" > 2026) OR ("ano" = 2026 AND "mes" >= 02))'
 
     def test_mixed_types_int_and_string(self):
         """ano integer, mes string."""
@@ -294,9 +298,34 @@ class TestBuildMultiColumnPredicate:
             {"ano": True, "mes": False},
             date(2026, 2, 23),
         )
-        assert '"ano" >= 2026' in result
+        assert '"ano" > 2026' in result
         assert "\"mes\" >= '02'" in result
-        assert " AND " in result
+        assert " OR " in result
+
+    def test_cross_month_includes_next_month(self):
+        """Cutoff 2026-02-23 must include 2026-03-01 (dia=1 < 23 but mes=3 > 2)."""
+        result = build_multi_column_predicate(
+            ["ano", "mes", "dia"],
+            {"ano": "%Y", "mes": "%m", "dia": "%d"},
+            {"ano": True, "mes": True, "dia": True},
+            date(2026, 2, 23),
+        )
+        # The predicate must have an OR clause that catches mes > 2
+        assert '"mes" > 02' in result
+        # And must NOT require dia >= 23 for months after February
+        # Verify via structure: second clause has mes > 02 without dia condition
+        assert '("ano" = 2026 AND "mes" > 02)' in result
+
+    def test_cross_year_includes_next_year(self):
+        """Cutoff 2025-12-15 must include 2026-01-01."""
+        result = build_multi_column_predicate(
+            ["ano", "mes", "dia"],
+            {"ano": "%Y", "mes": "%m", "dia": "%d"},
+            {"ano": True, "mes": True, "dia": True},
+            date(2025, 12, 15),
+        )
+        # First clause: ano > 2025 catches everything in 2026+
+        assert '("ano" > 2025)' in result
 
     def test_native_date_column(self):
         """Coluna com tipo nativo (formato None)."""
@@ -314,8 +343,9 @@ class TestBuildMultiColumnPredicate:
             date(2026, 2, 23),
             dialect=SQLDialect.DUCKDB,
         )
-        assert '"ano" >= 2026' in result
-        assert '"mes" >= 02' in result
+        assert '"ano"' in result
+        assert '"mes"' in result
+        assert " OR " in result
 
     def test_no_function_on_columns(self):
         """Multi-column predicates must never apply functions on columns."""
@@ -350,7 +380,7 @@ class TestBuildMultiColumnPredicate:
 # ---------------------------------------------------------------------------
 
 class TestResolvePartitionFilterMultiColumn:
-    def test_multi_col_generates_and_predicate(self, qb_athena):
+    def test_multi_col_generates_hierarchical_predicate(self, qb_athena):
         result = qb_athena.resolve_partition_filter(
             partition_columns=["ano", "mes"],
             partition_formats={"ano": "%Y", "mes": "%m"},
@@ -358,7 +388,7 @@ class TestResolvePartitionFilterMultiColumn:
             lookback_value=30,
             reference_date="2026-03-20",
         )
-        assert " AND " in result
+        assert " OR " in result
         assert '"ano"' in result
         assert '"mes"' in result
 
