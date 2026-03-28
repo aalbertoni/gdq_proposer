@@ -369,10 +369,10 @@ with st.expander("Opcoes avancadas", expanded=False):
             help="Release train (opcional).",
         )
 
-    # Partition columns
-    default_partitions = []
-    if dataset_config.partition_column:
-        default_partitions = [dataset_config.partition_column]
+    # Partition columns (use canonical list, fallback to legacy singular)
+    default_partitions = dataset_config.partition_columns if dataset_config.partition_columns else (
+        [dataset_config.partition_column] if dataset_config.partition_column else []
+    )
 
     particao_str = st.text_input(
         "Colunas de particao (separadas por virgula)",
