@@ -254,3 +254,59 @@ class TestQueryLoggerRegion:
         us_cost = logger_us.get_session_summary()["estimated_cost_usd"]
         sa_cost = logger_sa.get_session_summary()["estimated_cost_usd"]
         assert sa_cost > us_cost
+
+
+class TestSessionCostMinimumBilling:
+    """Valida que session summary aplica mínimo de 10MB por query."""
+
+    def test_many_small_queries_apply_minimum(self):
+        """10 queries de 1KB cada devem custar 10x o mínimo de 10MB, não 10KB."""
+        logger = QueryLogger(region="us-east-1")
+        for _ in range(10):
+            logger.log_query(QueryLogEntry(
+                query_name="small", dataset="db.tb", column="col",
+                elapsed_ms=50, cache_hit=False, rows_returned=1,
+                bytes_scanned=1024,  # 1KB
+            ))
+        summary = logger.get_session_summary()
+        # Each query billed at 10MB minimum
+        expected_per_query = (10 * 1024 * 1024 / (1024 ** 4)) * 5.0
+        expected_total = round(expected_per_query * 10, 4)
+        assert summary["estimated_cost_usd"] == expected_total
+
+    def test_cache_hit_zero_bytes_no_cost(self):
+        """Cache hits (0 bytes) should contribute zero cost."""
+        logger = QueryLogger(region="us-east-1")
+        logger.log_query(QueryLogEntry(
+            query_name="cached", dataset="db.tb", column="col",
+            elapsed_ms=10, cache_hit=True, rows_returned=5,
+            bytes_scanned=0,
+        ))
+        summary = logger.get_session_summary()
+        assert summary["estimated_cost_usd"] == 0.0
+
+    def test_large_query_no_distortion(self):
+        """Query acima de 10MB deve usar bytes reais, não mínimo."""
+        logger = QueryLogger(region="us-east-1")
+        one_gb = 1024 ** 3
+        logger.log_query(QueryLogEntry(
+            query_name="big", dataset="db.tb", column="col",
+            elapsed_ms=5000, cache_hit=False, rows_returned=1000,
+            bytes_scanned=one_gb,
+        ))
+        summary = logger.get_session_summary()
+        expected = round((one_gb / (1024 ** 4)) * 5.0, 4)
+        assert summary["estimated_cost_usd"] == expected
+
+    def test_session_sum_equals_entry_sum(self):
+        """Session cost must equal sum of individual entry costs."""
+        logger = QueryLogger(region="sa-east-1")
+        for size in [500, 1024, 50_000_000, 0, 1024 * 1024]:
+            logger.log_query(QueryLogEntry(
+                query_name="q", dataset="db.tb", column="col",
+                elapsed_ms=100, cache_hit=(size == 0), rows_returned=1,
+                bytes_scanned=size,
+            ))
+        summary = logger.get_session_summary()
+        entry_sum = round(sum(e.estimated_cost_usd for e in logger.entries), 4)
+        assert summary["estimated_cost_usd"] == entry_sum
