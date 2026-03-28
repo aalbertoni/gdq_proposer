@@ -22,6 +22,7 @@ class AthenaConfig:
     cache_ttl_history: int = 900       # 15min
     cache_ttl_profiling: int = 1800    # 30min
     cost_warning_threshold_usd: float = 0.50
+    cost_hard_limit_usd: float = 3.00    # bloqueio: queries pausam acima deste valor
 
 
 @dataclass
@@ -78,6 +79,8 @@ def load_config() -> AppConfig:
         workgroup=os.getenv("GDQ_ATHENA_WORKGROUP", "analytics-workgroup-v3"),
         s3_output=os.getenv("GDQ_ATHENA_S3_OUTPUT", ""),
         aws_profile=aws_profile,
+        cost_warning_threshold_usd=float(os.getenv("GDQ_COST_WARNING_USD", "0.50")),
+        cost_hard_limit_usd=float(os.getenv("GDQ_COST_HARD_LIMIT_USD", "3.00")),
     )
 
     glue_test = GlueTestConfig(
