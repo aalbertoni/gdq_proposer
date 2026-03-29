@@ -14,7 +14,7 @@ from infra.athena_client import AthenaClient
 from pages.components.breadcrumb import render_breadcrumb
 from pages.components.theme import inject_global_css
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 def get_client() -> AthenaClient:
     """Get or create a cached AthenaClient in session_state."""
