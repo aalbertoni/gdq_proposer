@@ -69,9 +69,17 @@ _GLOBAL_CSS = """
 /* Google Fonts: Inter (fallback for Itau Display) */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* Global font */
-html, body, [class*="st-"] {
+/* Global font — exclude Material Symbols icon elements */
+html, body,
+[class*="st-"]:not([class*="material-symbols"]):not([data-testid="stIconMaterial"]) {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+/* Preserve icon font for Streamlit's Material Symbols */
+span[class*="material-symbols"],
+[data-testid="stIconMaterial"],
+.material-symbols-rounded,
+.material-symbols-outlined {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
 }
 
 /* Headings */
@@ -95,7 +103,7 @@ h1, h2, h3, h4, h5, h6,
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, """ + NAVY + """ 0%, #001A4D 100%) !important;
 }
-[data-testid="stSidebar"] * {
+[data-testid="stSidebar"] *:not([class*="material-symbols"]):not(.material-symbols-rounded):not(.material-symbols-outlined) {
     color: """ + WHITE + """ !important;
 }
 [data-testid="stSidebar"] .stCaption,
