@@ -177,7 +177,7 @@ def ensure_dotenv() -> bool:
     _print_warn("Arquivo .env nao encontrado.")
     print()
     print("     O arquivo .env contem configuracoes obrigatorias como")
-    print("     o profile AWS e o bucket S3 para o Athena.")
+    print("     o profile AWS para o Athena.")
     print()
 
     if setup_script.exists():
@@ -223,7 +223,7 @@ def run_preflight(port: int = 8501) -> str:
 
     Returns:
         "ok" — nenhum erro
-        "blocking" — erros bloqueantes (SSL, credenciais, S3, .env, deps)
+        "blocking" — erros bloqueantes (SSL, credenciais, .env, deps)
         "warn" — apenas erros nao-bloqueantes ou warnings
     """
     venv_python = _get_venv_python()
@@ -351,7 +351,7 @@ def main():
         if preflight_result == "blocking":
             print()
             _print_error(
-                "Erros bloqueantes detectados (credenciais, SSL, S3 ou configuracao)."
+                "Erros bloqueantes detectados (credenciais, SSL ou configuracao)."
             )
             print("     O app nao pode funcionar corretamente com esses erros.")
             print("     Corrija os problemas acima e tente novamente.")
