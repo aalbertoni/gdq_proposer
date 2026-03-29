@@ -4,6 +4,8 @@ Paleta baseada na identidade visual Itau (rebranding 2024 by Pentagram).
 Fonte fallback: Inter (Google Fonts) — substitui a proprietaria Itau Display.
 """
 
+from html import escape as _html_escape
+
 import streamlit as st
 
 # ---------------------------------------------------------------------------
@@ -52,7 +54,7 @@ def badge_html(text: str, variant: str = "default") -> str:
     return (
         f"<span style='{style};padding:2px 8px;border-radius:6px;"
         f"font-size:0.8em;font-weight:600;letter-spacing:0.02em'>"
-        f"{text}</span>"
+        f"{_html_escape(text)}</span>"
     )
 
 
