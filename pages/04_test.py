@@ -11,6 +11,7 @@ import json
 import streamlit as st
 
 from pages.components.breadcrumb import render_breadcrumb
+from pages.components.theme import inject_global_css, badge_html
 
 from core.models.enums import get_rule_label
 
@@ -47,12 +48,9 @@ def _render_rule_result_card(r, idx: int):
             st.markdown(f"<div style='font-size:2rem;text-align:center'>{status_icon}</div>",
                         unsafe_allow_html=True)
         with hcol2:
+            _variant = "success" if passed else "error"
             st.markdown(
-                f"**{title}** &nbsp; "
-                f"<span style='background-color:{'#d4edda' if passed else '#f8d7da'};"
-                f"color:{'#155724' if passed else '#721c24'};"
-                f"padding:2px 8px;border-radius:4px;font-size:0.85em'>"
-                f"{outcome_text}</span>",
+                f"**{title}** &nbsp; {badge_html(outcome_text, _variant)}",
                 unsafe_allow_html=True,
             )
 
@@ -109,6 +107,7 @@ def _render_rule_result_card(r, idx: int):
 # ---------------------------------------------------------------------------
 
 st.set_page_config(page_title="Teste - GDQ Rule Proposer", page_icon=":test_tube:")
+inject_global_css()
 
 st.title("Teste via Thundera")
 render_breadcrumb("Teste")

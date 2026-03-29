@@ -8,12 +8,14 @@ de conceitos, fluxo de trabalho e perguntas frequentes.
 import streamlit as st
 
 from pages.components.breadcrumb import render_breadcrumb
+from pages.components.theme import inject_global_css
 
 
 st.set_page_config(
     page_title="Ajuda - GDQ Rule Proposer",
     page_icon=":question:",
 )
+inject_global_css()
 
 st.title("Ajuda")
 render_breadcrumb("Ajuda")

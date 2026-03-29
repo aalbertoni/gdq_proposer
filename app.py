@@ -12,6 +12,7 @@ import streamlit as st
 from config import load_config
 from infra.athena_client import AthenaClient
 from pages.components.breadcrumb import render_breadcrumb
+from pages.components.theme import inject_global_css
 
 __version__ = "0.2.0"
 
@@ -66,6 +67,7 @@ def main():
         page_icon=":shield:",
         layout="wide",
     )
+    inject_global_css()
 
     # Init client + health check real
     try:

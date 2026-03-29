@@ -2,6 +2,8 @@
 
 import streamlit as st
 
+from pages.components.theme import ORANGE, GRAY_700, NAVY
+
 _STEPS = ["Dashboard", "Setup", "Explore", "Review", "Teste",
           "Ajuda", "Diagnostico", "Query Log"]
 
@@ -15,7 +17,15 @@ def render_breadcrumb(current_page: str) -> None:
     parts = []
     for step in _STEPS:
         if step == current_page:
-            parts.append(f"**{step}**")
+            parts.append(
+                f"<span style='color:{ORANGE};font-weight:700'>{step}</span>"
+            )
         else:
-            parts.append(step)
-    st.caption(" \u203a ".join(parts))
+            parts.append(
+                f"<span style='color:{GRAY_700}'>{step}</span>"
+            )
+    sep = f" <span style='color:{GRAY_700};margin:0 2px'>\u203a</span> "
+    st.markdown(
+        f"<div style='font-size:0.85rem;margin-bottom:4px'>{sep.join(parts)}</div>",
+        unsafe_allow_html=True,
+    )

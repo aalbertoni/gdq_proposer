@@ -10,6 +10,7 @@ Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A2).
 import streamlit as st
 
 from pages.components.breadcrumb import render_breadcrumb
+from pages.components.theme import inject_global_css, badge_html
 
 from core.models.enums import ConfidenceLevel, get_rule_label
 from core.gdq_capability import capability_badge, capability_warning
@@ -22,6 +23,7 @@ from services.export_service import ExportService
 # ---------------------------------------------------------------------------
 
 st.set_page_config(page_title="Review - GDQ Rule Proposer", page_icon=":clipboard:")
+inject_global_css()
 
 st.title("Review & Export")
 render_breadcrumb("Review")
@@ -120,33 +122,17 @@ for i, selection in _sorted_cart:
         _test_badge = ""
         if selection.has_test_result:
             if selection.is_test_stale:
-                _test_badge = (
-                    " <span style='background-color:#fff3cd;color:#856404;"
-                    "padding:1px 6px;border-radius:3px;font-size:0.75em'>"
-                    "Resultado desatualizado</span>"
-                )
+                _test_badge = " " + badge_html("Resultado desatualizado", "warning")
             elif selection.glue_test_result.passed:
-                _test_badge = (
-                    " <span style='background-color:#d4edda;color:#155724;"
-                    "padding:1px 6px;border-radius:3px;font-size:0.75em'>"
-                    "Validada no Glue</span>"
-                )
+                _test_badge = " " + badge_html("Validada no Glue", "success")
             else:
                 # Check if first execution + dynamic rule
                 _is_dynamic = "last(" in selection.final_gdq_syntax.lower()
                 _exec_num = st.session_state.get("glue_run_execution_num", 1)
                 if _is_dynamic and _exec_num <= 1:
-                    _test_badge = (
-                        " <span style='background-color:#fff3cd;color:#856404;"
-                        "padding:1px 6px;border-radius:3px;font-size:0.75em'>"
-                        "Falha esperada (1a execucao)</span>"
-                    )
+                    _test_badge = " " + badge_html("Falha esperada (1a execucao)", "warning")
                 else:
-                    _test_badge = (
-                        " <span style='background-color:#f8d7da;color:#721c24;"
-                        "padding:1px 6px;border-radius:3px;font-size:0.75em'>"
-                        "Falhou no Glue</span>"
-                    )
+                    _test_badge = " " + badge_html("Falhou no Glue", "error")
 
         st.markdown(f"**{label}** — `{target}`{_test_badge}", unsafe_allow_html=True)
         warning_text = capability_warning(p.rule_type)

@@ -14,6 +14,7 @@ import streamlit as st
 import plotly.graph_objects as go
 
 from pages.components.breadcrumb import render_breadcrumb
+from pages.components.theme import inject_global_css
 
 from config import load_config
 from core.models.baseline import BaselineStrategy
@@ -643,6 +644,7 @@ def _render_calibration(proposal_svc, values, dates, rule_key, metric_kind="nume
 # ---------------------------------------------------------------------------
 
 st.set_page_config(page_title="Explore - GDQ Rule Proposer", page_icon=":bar_chart:", layout="wide")
+inject_global_css()
 
 # Aplicar auto-tune pendente ANTES de qualquer widget ser criado
 _pending = st.session_state.pop("_pending_autotune", None)

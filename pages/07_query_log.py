@@ -8,12 +8,14 @@ motivo, detalhes de erro e SQL completo.
 import streamlit as st
 
 from pages.components.breadcrumb import render_breadcrumb
+from pages.components.theme import inject_global_css
 
 st.set_page_config(
     page_title="Query Log — GDQ",
     page_icon=":memo:",
     layout="wide",
 )
+inject_global_css()
 
 st.title("Query Log")
 render_breadcrumb("Query Log")

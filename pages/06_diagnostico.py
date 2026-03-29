@@ -13,6 +13,7 @@ from pathlib import Path
 import streamlit as st
 
 from pages.components.breadcrumb import render_breadcrumb
+from pages.components.theme import inject_global_css
 
 from config import load_config
 
@@ -21,6 +22,7 @@ st.set_page_config(
     page_title="Diagnostico - GDQ Rule Proposer",
     page_icon=":wrench:",
 )
+inject_global_css()
 
 st.title("Diagnostico do Ambiente")
 render_breadcrumb("Diagnostico")
