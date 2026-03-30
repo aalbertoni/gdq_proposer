@@ -118,12 +118,27 @@ h1, h2, h3, h4, h5, h6,
 [data-testid="stSidebar"] [data-testid="stAlert"] p,
 [data-testid="stSidebar"] [data-testid="stAlert"] span,
 [data-testid="stSidebar"] [data-testid="stAlert"] div,
-[data-testid="stSidebar"] [data-testid="stAlert"] code,
 [data-testid="stSidebar"] [data-testid="stAlert"] a,
 [data-testid="stSidebar"] [data-testid="stAlert"] small,
 [data-testid="stSidebar"] [data-testid="stAlert"] .stCaption,
 [data-testid="stSidebar"] [data-testid="stAlert"] [data-testid="stMarkdownContainer"] p {
     color: """ + BLACK + """ !important;
+}
+/* Inline code inside sidebar alerts — dark text on light bg for contrast */
+[data-testid="stSidebar"] [data-testid="stAlert"] code {
+    color: """ + NAVY + """ !important;
+    background-color: rgba(0, 0, 0, 0.08) !important;
+}
+/* Inline code anywhere in sidebar (captions, markdown) — light on dark */
+[data-testid="stSidebar"] code {
+    color: """ + WHITE + """ !important;
+    background-color: rgba(255, 255, 255, 0.15) !important;
+}
+/* Slider value labels in sidebar */
+[data-testid="stSidebar"] [data-testid="stThumbValue"],
+[data-testid="stSidebar"] [data-testid="stTickBarMin"],
+[data-testid="stSidebar"] [data-testid="stTickBarMax"] {
+    color: """ + WHITE + """ !important;
 }
 [data-testid="stSidebar"] hr {
     border-color: rgba(255, 255, 255, 0.15) !important;
