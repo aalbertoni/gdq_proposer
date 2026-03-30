@@ -13,7 +13,53 @@ from pathlib import Path
 from typing import Optional
 
 
+from core.models.enums import SemanticType
+
 _PRESET_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]{1,100}$")
+
+
+def serialize_profiles(profiles) -> list[dict]:
+    """Serialize ColumnProfile list to JSON-safe dicts for preset storage."""
+    result = []
+    for p in profiles:
+        result.append({
+            "column_name": p.column_name,
+            "athena_type": p.athena_type,
+            "inferred_semantic_type": p.inferred_semantic_type.value,
+            "user_override_type": p.user_override_type.value if p.user_override_type else None,
+            "total_count": p.total_count,
+            "non_null_count": p.non_null_count,
+            "distinct_count": p.distinct_count,
+            "null_ratio": p.null_ratio,
+            "distinct_ratio": p.distinct_ratio,
+            "numeric_cast_ratio": p.numeric_cast_ratio,
+            "sample_values": p.sample_values,
+            "warnings": p.warnings,
+        })
+    return result
+
+
+def deserialize_profiles(profile_dicts: list[dict]):
+    """Deserialize profile dicts back to ColumnProfile objects."""
+    from core.models.column_profile import ColumnProfile
+    profiles = []
+    for d in profile_dicts:
+        override = SemanticType(d["user_override_type"]) if d.get("user_override_type") else None
+        profiles.append(ColumnProfile(
+            column_name=d["column_name"],
+            athena_type=d.get("athena_type", ""),
+            inferred_semantic_type=SemanticType(d["inferred_semantic_type"]),
+            user_override_type=override,
+            total_count=d.get("total_count", 0),
+            non_null_count=d.get("non_null_count", 0),
+            distinct_count=d.get("distinct_count", 0),
+            null_ratio=d.get("null_ratio", 0.0),
+            distinct_ratio=d.get("distinct_ratio", 0.0),
+            numeric_cast_ratio=d.get("numeric_cast_ratio", 0.0),
+            sample_values=d.get("sample_values", []),
+            warnings=d.get("warnings", []),
+        ))
+    return profiles
 
 
 def validate_preset_name(name: str) -> str:
@@ -77,6 +123,8 @@ class Preset:
     unique_key_columns: list[str] = field(default_factory=list)
     overrides: dict[str, str] = field(default_factory=dict)
     date_range: dict = field(default_factory=dict)
+    column_profiles: list[dict] = field(default_factory=list)
+    profiles_cached_at: str = ""
     metadata: PresetMetadata = field(default_factory=PresetMetadata)
 
 

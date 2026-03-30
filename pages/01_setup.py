@@ -11,6 +11,7 @@ Definido conforme docs/technical_spec_v1.md secao 12 (Sprint A1).
 """
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -214,6 +215,13 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
     st.session_state["setup_date_range"] = _preset_date_range
     st.session_state["setup_pk_columns"] = data.get("unique_key_columns", [])
 
+    # Restore cached profiles if available
+    _cached_profiles_raw = data.get("column_profiles", [])
+    _profiles_cached_at = data.get("profiles_cached_at", "")
+    if _cached_profiles_raw:
+        st.session_state["_preset_cached_profiles"] = _cached_profiles_raw
+        st.session_state["_preset_profiles_cached_at"] = _profiles_cached_at
+
     return True
 
 
@@ -328,8 +336,46 @@ if preset_files:
                     ok = _load_preset(preset_path, profiling_svc, dataset_svc)
                 if ok:
                     st.success(f"Preset **{chosen_preset}** carregado.")
-                    if "setup_profiles" not in st.session_state:
-                        st.info("Execute o profiling abaixo para ativar a configuracao.")
+                    st.rerun()
+
+        # After load: offer instant activation if cached profiles exist
+        _has_cached = "_preset_cached_profiles" in st.session_state
+        _cached_at = st.session_state.get("_preset_profiles_cached_at", "")
+        if _has_cached and st.session_state.get("setup_config"):
+            _cached_date = _cached_at[:10] if _cached_at else "data desconhecida"
+            _n_profiles = len(st.session_state["_preset_cached_profiles"])
+            st.divider()
+            st.markdown(
+                f"**Dados de profiling em cache** — {_n_profiles} colunas "
+                f"perfiladas em {_cached_date}"
+            )
+            _cache_col1, _cache_col2 = st.columns(2)
+            with _cache_col1:
+                if st.button(
+                    f"Usar cache de {_cached_date} (instantaneo)",
+                    type="primary",
+                    help="Restaura profiling salvo no preset sem executar nenhuma query. "
+                         "Use quando a estrutura da tabela nao mudou.",
+                ):
+                    from services.preset_manager import deserialize_profiles
+                    _profiles = deserialize_profiles(
+                        st.session_state["_preset_cached_profiles"]
+                    )
+                    st.session_state["setup_profiles"] = _profiles
+                    st.session_state.pop("_preset_cached_profiles", None)
+                    st.session_state.pop("_preset_profiles_cached_at", None)
+                    _activate_config()
+                    st.success("Configuracao ativada com dados em cache.")
+                    st.switch_page("pages/02_explore.py")
+            with _cache_col2:
+                if st.button(
+                    "Executar profiling novamente",
+                    help="Ignora o cache e executa profiling fresco via Athena. "
+                         "Use se a tabela mudou desde o ultimo profiling.",
+                ):
+                    st.session_state.pop("_preset_cached_profiles", None)
+                    st.session_state.pop("_preset_profiles_cached_at", None)
+                    st.info("Configure o profiling abaixo para executar novamente.")
                     st.rerun()
 
         with _preset_col2:
@@ -1350,7 +1396,7 @@ with col_btn2:
     save_preset = st.checkbox("Salvar como preset", value=False)
 
 if save_preset:
-    from services.preset_manager import PresetManager, Preset, PresetMetadata
+    from services.preset_manager import PresetManager, Preset, PresetMetadata, serialize_profiles
 
     preset_name = st.text_input(
         "Nome do preset:",
@@ -1395,6 +1441,10 @@ if save_preset:
                 unique_key_columns=dataset_config.unique_key_columns,
                 overrides={k: v.value for k, v in overrides.items()},
                 date_range=date_range,
+                column_profiles=serialize_profiles(
+                    st.session_state.get("setup_profiles", [])
+                ),
+                profiles_cached_at=datetime.now(timezone.utc).isoformat()[:19],
                 metadata=PresetMetadata(notes=preset_notes),
             )
             preset_path = mgr.save(preset_obj)
