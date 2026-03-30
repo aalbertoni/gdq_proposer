@@ -134,6 +134,29 @@ def _semantic_type_label(st_type: SemanticType) -> str:
     return get_semantic_label(st_type)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_sample_column_values(_client_id, schema, table, column, limit=5):
+    """Fetch a small sample of distinct non-null values from a column.
+
+    Uses LIMIT to minimize cost (typically a single partition scan).
+    Returns list of string representations.
+    """
+    from infra.query_safety import validate_identifier
+    _schema = validate_identifier(schema)
+    _table = validate_identifier(table)
+    _col = validate_identifier(column)
+    sql = (
+        f'SELECT DISTINCT "{_col}" FROM "{_schema}"."{_table}" '
+        f'WHERE "{_col}" IS NOT NULL LIMIT {int(limit)}'
+    )
+    client = st.session_state["client"]
+    rows = client.execute(sql, query_name="sample_column_values", dataset=f"{schema}.{table}", column=column)
+    return [str(r[column]) for r in rows if r.get(column) is not None]
+
+
+    # _detect_date_format imported from core.date_format_detector
+
+
 def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
     """Carrega preset e popula session_state. Retorna True se sucesso."""
     try:
@@ -610,13 +633,37 @@ if needs_date_expression:
 
     pattern_labels = [p[0] for p in _DATE_PATTERNS]
 
+    # --- Smart detection: sample real values to suggest the right format ---
+    _suggested_idx = 0
+    _sample_values = []
+    try:
+        _client_id = _get_client_id()
+        _sample_values = _cached_sample_column_values(_client_id, schema, table, date_col, limit=5)
+        if _sample_values:
+            from core.date_format_detector import detect_date_format
+            _suggested_idx, _sample_values = detect_date_format(_sample_values, is_integer_temporal)
+    except Exception:
+        pass  # Fallback to default index 0 if sample fails
+
+    _detection_help = (
+        "Selecione o formato que corresponde aos valores da coluna. "
+        "A expressao SQL sera gerada automaticamente para o backend ativo."
+    )
+    if _sample_values:
+        _sample_display = ", ".join(_sample_values[:3])
+        _detected_label = pattern_labels[_suggested_idx].split(" (")[0]  # "yyyyMMdd como inteiro"
+        st.caption(f"Formato detectado: **{_detected_label}** (amostra: `{_sample_display}`)")
+        _detection_help = (
+            f"Detectado automaticamente a partir de valores reais da coluna "
+            f"(ex: {_sample_display}). Altere se a sugestao nao estiver correta."
+        )
+
     chosen_pattern = st.selectbox(
         "Formato da coluna de data:",
         pattern_labels,
-        index=0,
+        index=_suggested_idx,
         key="date_format_pattern",
-        help="Selecione o formato que corresponde aos valores da coluna. "
-             "A expressao SQL sera gerada automaticamente para o backend ativo.",
+        help=_detection_help,
     )
 
     chosen_idx = pattern_labels.index(chosen_pattern)
