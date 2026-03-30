@@ -839,20 +839,19 @@ config_dict = {
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.subheader("Tabela ativa")
-    st.code(f"{dataset_config.schema}.{dataset_config.table}")
-
     n_sel = len(dataset_config.selected_columns) if dataset_config.selected_columns else 0
     n_num = len(numeric_profiles)
     n_cat = len(cat_profiles)
-    st.caption(f"{n_sel} colunas selecionadas ({n_num} num, {n_cat} cat)")
-
-    if dataset_config.date_expression:
-        st.caption(f"Data: `{dataset_config.date_expression}`")
-    else:
-        st.caption(f"Data: `{dataset_config.date_column}`")
-
-    st.caption(f"Lookback: {dataset_config.lookback_value} periodos")
+    _date_label = dataset_config.date_column
+    st.success(
+        f"Config ativa: `{dataset_config.schema}.{dataset_config.table}` "
+        f"({n_sel} colunas)"
+    )
+    st.caption(
+        f"Data: `{_date_label}` · "
+        f"Lookback: {dataset_config.lookback_value}p · "
+        f"{n_num} num, {n_cat} cat"
+    )
 
     # --- Navegacao rapida entre colunas ---
     _col_health = st.session_state.get("col_health", {})
