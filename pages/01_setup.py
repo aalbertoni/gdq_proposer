@@ -215,6 +215,11 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
     st.session_state["setup_date_range"] = _preset_date_range
     st.session_state["setup_pk_columns"] = data.get("unique_key_columns", [])
 
+    # Clear stale sel_* keys so checkbox defaults from preset take effect
+    _stale_sel_keys = [k for k in st.session_state if isinstance(k, str) and k.startswith("sel_")]
+    for k in _stale_sel_keys:
+        del st.session_state[k]
+
     # Restore cached profiles if available
     _cached_profiles_raw = data.get("column_profiles", [])
     _profiles_cached_at = data.get("profiles_cached_at", "")
