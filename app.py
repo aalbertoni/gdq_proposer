@@ -109,18 +109,105 @@ def main():
             f"Falha na conexao: {connection_error}"
         )
 
-        # Detectar profile para oferecer login
+        # Detectar profile e região para diagnóstico
         profile = ""
+        region = ""
         try:
             cfg = load_config()
             profile = cfg.athena.aws_profile
+            region = cfg.athena.region
         except Exception:
             profile = os.environ.get("GDQ_AWS_PROFILE", "")
+            region = os.environ.get("AWS_DEFAULT_REGION", "")
 
         is_auth_error = any(
             kw in (connection_error or "").lower()
             for kw in ["expirad", "credenci", "token", "expired", "invalid", "autenticacao"]
         )
+
+        # --- Diagnóstico automático ---
+        with st.expander("Diagnostico de conexao", expanded=True):
+            diag_col1, diag_col2 = st.columns(2)
+
+            with diag_col1:
+                st.markdown("**Configuracao do app**")
+                st.markdown(f"- Profile: `{profile or '(nao configurado)'}`")
+                st.markdown(f"- Regiao: `{region or '(nao configurada)'}`")
+
+                # Verificar .env
+                _env_path = os.path.join(os.path.dirname(__file__), ".env")
+                _env_exists = os.path.exists(_env_path)
+                st.markdown(f"- Arquivo .env: {'encontrado' if _env_exists else ':red[nao encontrado]'}")
+
+            with diag_col2:
+                st.markdown("**Verificacao de credenciais**")
+
+                # Testar aws sts get-caller-identity
+                _sts_ok = False
+                _sts_msg = ""
+                try:
+                    _sts_cmd = ["aws", "sts", "get-caller-identity"]
+                    if profile:
+                        _sts_cmd += ["--profile", profile]
+                    _sts_result = subprocess.run(
+                        _sts_cmd, capture_output=True, text=True, timeout=15,
+                    )
+                    if _sts_result.returncode == 0:
+                        _sts_ok = True
+                        import json as _json
+                        try:
+                            _sts_data = _json.loads(_sts_result.stdout)
+                            _sts_msg = f"ARN: `{_sts_data.get('Arn', '?')}`"
+                        except Exception:
+                            _sts_msg = "OK (identidade confirmada)"
+                    else:
+                        _sts_msg = f"Falhou: {_sts_result.stderr.strip()[:100]}"
+                except FileNotFoundError:
+                    _sts_msg = "AWS CLI nao encontrado"
+                except subprocess.TimeoutExpired:
+                    _sts_msg = "Timeout (possivel problema de rede)"
+                except Exception as _e:
+                    _sts_msg = f"Erro: {_e}"
+
+                if _sts_ok:
+                    st.markdown(f"- `aws sts get-caller-identity`: :green[OK]")
+                    st.markdown(f"  {_sts_msg}")
+                else:
+                    st.markdown(f"- `aws sts get-caller-identity`: :red[FALHOU]")
+                    st.markdown(f"  {_sts_msg}")
+
+                # Verificar região do profile
+                try:
+                    _region_cmd = ["aws", "configure", "get", "region"]
+                    if profile:
+                        _region_cmd += ["--profile", profile]
+                    _region_result = subprocess.run(
+                        _region_cmd, capture_output=True, text=True, timeout=5,
+                    )
+                    _profile_region = _region_result.stdout.strip()
+                    if _profile_region:
+                        _region_match = _profile_region == region
+                        _icon = ":green[OK]" if _region_match else ":red[DIFERENTE]"
+                        st.markdown(f"- Regiao do profile: `{_profile_region}` {_icon}")
+                        if not _region_match:
+                            st.markdown(f"  App usa `{region}`, profile usa `{_profile_region}`")
+                    else:
+                        st.markdown("- Regiao do profile: :orange[nao configurada]")
+                except Exception:
+                    pass
+
+            # Diagnóstico contextual
+            if _sts_ok and is_auth_error:
+                st.warning(
+                    "As credenciais AWS estao validas no terminal, mas o app falhou. "
+                    "Isso geralmente acontece porque o app cacheou uma conexao antiga. "
+                    "Clique **Tentar reconectar** abaixo."
+                )
+            elif not _sts_ok:
+                st.info(
+                    f"Execute no terminal: `aws sso login --profile {profile}`\n\n"
+                    f"Depois clique **Tentar reconectar**."
+                )
 
         btn_col1, btn_col2, btn_col3 = st.columns(3)
 
@@ -154,7 +241,7 @@ def main():
                             st.error("AWS CLI nao encontrado. Instale primeiro.")
 
         with btn_col2:
-            if st.button("Tentar reconectar", key="retry_conn"):
+            if st.button("Tentar reconectar", type="primary" if not is_auth_error else "secondary", key="retry_conn"):
                 st.session_state.pop("_health_check_done", None)
                 st.session_state.pop("client", None)
                 st.rerun()
