@@ -164,7 +164,7 @@ class AthenaClient:
         if self.config.athena.aws_profile:
             from infra.aws_session import create_session
             session = create_session(self.config.athena.aws_profile)
-            connect_kwargs["boto3_session"] = session
+            connect_kwargs["session"] = session
 
         self._conn = connect(**connect_kwargs)
 

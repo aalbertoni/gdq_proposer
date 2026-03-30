@@ -85,6 +85,9 @@ def main():
         # Limpar estado para re-testar na proxima tentativa
         st.session_state.pop("_health_check_done", None)
         st.session_state.pop("client", None)
+        # Limpar services que cacheiam referencia ao client antigo
+        for _svc_key in ("dataset_service", "profiling_service", "analysis_service"):
+            st.session_state.pop(_svc_key, None)
 
     render_sidebar()
 
@@ -225,6 +228,8 @@ def main():
                             if result.returncode == 0:
                                 st.session_state.pop("_health_check_done", None)
                                 st.session_state.pop("client", None)
+                                for _k in ("dataset_service", "profiling_service", "analysis_service"):
+                                    st.session_state.pop(_k, None)
                                 st.success("Login realizado! Recarregando...")
                                 st.rerun()
                             else:
@@ -244,6 +249,8 @@ def main():
             if st.button("Tentar reconectar", type="primary" if not is_auth_error else "secondary", key="retry_conn"):
                 st.session_state.pop("_health_check_done", None)
                 st.session_state.pop("client", None)
+                for _k in ("dataset_service", "profiling_service", "analysis_service"):
+                    st.session_state.pop(_k, None)
                 st.rerun()
 
         with btn_col3:
