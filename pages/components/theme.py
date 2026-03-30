@@ -103,15 +103,21 @@ h1, h2, h3, h4, h5, h6,
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, """ + NAVY + """ 0%, #001A4D 100%) !important;
 }
-[data-testid="stSidebar"] *:not([class*="material-symbols"]):not(.material-symbols-rounded):not(.material-symbols-outlined) {
+/* Sidebar text — exclude alerts and their children so they keep native colors */
+[data-testid="stSidebar"] *:not([class*="material-symbols"]):not(.material-symbols-rounded):not(.material-symbols-outlined):not([data-testid="stAlert"]):not([data-testid="stAlert"] *) {
     color: """ + WHITE + """ !important;
 }
-[data-testid="stSidebar"] .stCaption,
-[data-testid="stSidebar"] small {
+[data-testid="stSidebar"] .stCaption:not([data-testid="stAlert"] .stCaption),
+[data-testid="stSidebar"] small:not([data-testid="stAlert"] small) {
     color: rgba(255, 255, 255, 0.65) !important;
 }
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"]:not([data-testid="stAlert"] [data-testid="stMarkdownContainer"]) p {
     color: """ + WHITE + """ !important;
+}
+/* Restore native colors inside sidebar alerts (success, error, warning, info) */
+[data-testid="stSidebar"] [data-testid="stAlert"],
+[data-testid="stSidebar"] [data-testid="stAlert"] * {
+    color: inherit !important;
 }
 [data-testid="stSidebar"] hr {
     border-color: rgba(255, 255, 255, 0.15) !important;
