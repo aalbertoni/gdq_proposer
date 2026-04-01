@@ -220,3 +220,36 @@ class TestValidateReferenceDate:
     def test_rejects_word(self):
         with pytest.raises(ValueError):
             validate_reference_date("today")
+
+
+# ---------------------------------------------------------------------------
+# Subpopulation filter construction safety
+# ---------------------------------------------------------------------------
+
+class TestSubpopulationFilterSafety:
+    """Testa que filtros de subpopulacao sao construidos de forma segura."""
+
+    def _build_filter(self, col: str, val: str) -> str:
+        safe_col = validate_identifier(col)
+        safe_val = val.replace("'", "''")
+        return sanitize_filter(f'"{safe_col}" = \'{safe_val}\'')
+
+    def test_simple_value(self):
+        result = self._build_filter("TIPO_PRODUTO", "CONSIGNADO")
+        assert result == '"TIPO_PRODUTO" = \'CONSIGNADO\''
+
+    def test_value_with_single_quote_escaped(self):
+        result = self._build_filter("NOME", "O'Brien")
+        assert result == '"NOME" = \'O\'\'Brien\''
+
+    def test_invalid_column_name_rejected(self):
+        with pytest.raises(ValueError, match="Identificador"):
+            self._build_filter("col; DROP", "value")
+
+    def test_value_with_semicolon_rejected(self):
+        with pytest.raises(ValueError, match="token bloqueado"):
+            self._build_filter("COL", "val; DROP TABLE x")
+
+    def test_value_with_comment_rejected(self):
+        with pytest.raises(ValueError, match="token bloqueado"):
+            self._build_filter("COL", "val -- comment")

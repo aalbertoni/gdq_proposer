@@ -1634,8 +1634,14 @@ with tab_numericas:
                                 min_history_points=_grain_policy.min_history,
                             )
 
+                            from infra.query_safety import validate_identifier, sanitize_filter
+
                             for _seg_val in _seg_selected:
-                                _seg_filter = f'"{_seg_col}" = \'{_seg_val}\''
+                                _safe_col = validate_identifier(_seg_col)
+                                _safe_val = str(_seg_val).replace("'", "''")
+                                _seg_filter = sanitize_filter(
+                                    f'"{_safe_col}" = \'{_safe_val}\''
+                                )
                                 _seg_label = str(_seg_val)
 
                                 try:

@@ -744,3 +744,13 @@ class TestAnalyticalReport:
         report = service.export_analytical_report(selections)
         assert "Mean" in report
         assert "StdDev" not in report.split("Recomendacoes")[0]
+
+    def test_report_subpopulation_label_in_heading(self, service):
+        """Regra de subpopulacao exibe label no heading."""
+        sel = _make_selection(
+            'CustomSql "select avg(VLR) from primary where TIPO=\'A\'" between 1 and 2',
+            column="VLR",
+        )
+        sel.proposal.subpopulation_label = "CONSIGNADO"
+        report = service.export_analytical_report([sel])
+        assert "VLR [CONSIGNADO]" in report
