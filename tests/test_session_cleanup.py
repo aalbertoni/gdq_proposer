@@ -1,15 +1,24 @@
-"""Testes para invalidacao de estado analitico ao trocar configuracao.
+"""Testes para invalidacao de estado e limpeza de session_state.
 
 Cobre:
 - analysis_fingerprint: determinismo, sensibilidade a mudancas
-- _clear_analysis_state: limpeza correta de chaves analiticas
-- _activate_config: limpeza condicional baseada em fingerprint
+- clear_analysis_state: limpeza de chaves analiticas
+- reset_setup_state: limpeza completa do Setup
+- go_back_column_selection: limpeza para re-selecao de colunas
+- column selection diff: deteccao de mudanca na selecao
 """
 
 import pytest
 
 from core.models.dataset_config import DatasetConfig
 from core.models.enums import GrainType, LookbackMode, PartitionMethod
+from pages.session_helpers import (
+    SETUP_PREFIXES,
+    clear_analysis_state,
+    clear_stale_selections,
+    go_back_column_selection,
+    reset_setup_state,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -95,27 +104,10 @@ class TestAnalysisFingerprint:
 # ---------------------------------------------------------------------------
 
 class TestClearAnalysisState:
-    """Testa a logica de limpeza diretamente (sem importar pagina Streamlit)."""
-
-    # Prefixos analiticos (replicados de 01_setup.py)
-    _ANALYSIS_PREFIXES = (
-        "proposal_mean_", "proposal_stddev_", "proposal_comp_",
-        "proposal_pct_", "proposal_rc_", "proposal_pk_",
-        "cat_proposals_",
-        "series_profile_",
-        "autotune_",
-    )
+    """Testa clear_analysis_state de pages/session_helpers.py."""
 
     def _clear(self, state: dict):
-        """Replica a logica de _clear_analysis_state sobre um dict."""
-        for key in ["rule_cart", "col_health"]:
-            state.pop(key, None)
-        keys_to_remove = [
-            k for k in list(state.keys())
-            if isinstance(k, str) and any(k.startswith(p) for p in self._ANALYSIS_PREFIXES)
-        ]
-        for key in keys_to_remove:
-            del state[key]
+        clear_analysis_state(state)
 
     def _make_state(self) -> dict:
         return {
@@ -144,6 +136,7 @@ class TestClearAnalysisState:
             "series_profile_COL_A_30": "mock_profile",
             "autotune_abc123_mean_COL_A": {"viable": True},
             "proposal_rc_20_2_10_True_30": ["proposal"],
+            "proposal_subpop_COL_A_TIPO_CONSIG_20_2_10_True_30": ["proposal"],
         }
 
     def test_clears_analytical_keys(self):
@@ -157,6 +150,7 @@ class TestClearAnalysisState:
         assert not any(k.startswith("series_profile_") for k in state)
         assert not any(k.startswith("autotune_") for k in state)
         assert not any(k.startswith("proposal_rc_") for k in state)
+        assert not any(k.startswith("proposal_subpop_") for k in state)
 
     def test_preserves_infra_keys(self):
         state = self._make_state()
@@ -182,19 +176,10 @@ class TestClearAnalysisState:
 # ---------------------------------------------------------------------------
 
 class TestResetSetupState:
-    """Testa a logica de limpeza do botao 'Recomecar Setup' (01_setup.py:309-319)."""
-
-    _SETUP_PREFIXES = ("setup_", "prof_", "sel_", "type_", "pcol_")
-    _SETUP_EXACT_KEYS = ("show_compare_ui", "show_clone_ui")
+    """Testa reset_setup_state de pages/session_helpers.py."""
 
     def _reset(self, state: dict):
-        """Replica a logica de reset do Setup."""
-        for k in list(state.keys()):
-            if isinstance(k, str) and (
-                any(k.startswith(p) for p in self._SETUP_PREFIXES)
-                or k in self._SETUP_EXACT_KEYS
-            ):
-                del state[k]
+        reset_setup_state(state)
 
     def _make_state(self) -> dict:
         return {
@@ -224,7 +209,7 @@ class TestResetSetupState:
     def test_clears_all_setup_prefixes(self):
         state = self._make_state()
         self._reset(state)
-        for prefix in self._SETUP_PREFIXES:
+        for prefix in SETUP_PREFIXES:
             assert not any(
                 isinstance(k, str) and k.startswith(prefix) for k in state
             ), f"Found key with prefix {prefix}"
@@ -259,14 +244,10 @@ class TestResetSetupState:
 # ---------------------------------------------------------------------------
 
 class TestGoBackColumnSelection:
-    """Testa a logica de limpeza do botao 'Voltar e re-selecionar' (01_setup.py:1433-1437)."""
+    """Testa go_back_column_selection de pages/session_helpers.py."""
 
     def _go_back(self, state: dict):
-        """Replica a logica de go-back."""
-        state.pop("setup_profiles", None)
-        for k in list(state.keys()):
-            if isinstance(k, str) and (k.startswith("sel_") or k.startswith("type_")):
-                del state[k]
+        go_back_column_selection(state)
 
     def _make_state(self) -> dict:
         return {
@@ -372,3 +353,29 @@ class TestColumnSelectionDiff:
         added, removed, changed = self._detect_changes({"A"}, set())
         assert changed
         assert removed == {"A"}
+
+
+# ---------------------------------------------------------------------------
+# clear_stale_selections (preset load)
+# ---------------------------------------------------------------------------
+
+class TestClearStaleSelections:
+    """Testa clear_stale_selections de pages/session_helpers.py."""
+
+    def test_removes_sel_keys(self):
+        state = {"sel_col_a": True, "sel_col_b": False, "setup_config": "x"}
+        clear_stale_selections(state)
+        assert "sel_col_a" not in state
+        assert "sel_col_b" not in state
+        assert state["setup_config"] == "x"
+
+    def test_preserves_type_keys(self):
+        state = {"sel_x": True, "type_x": "NUMERIC"}
+        clear_stale_selections(state)
+        assert "sel_x" not in state
+        assert state["type_x"] == "NUMERIC"
+
+    def test_empty_noop(self):
+        state = {"other": 1}
+        clear_stale_selections(state)
+        assert state == {"other": 1}

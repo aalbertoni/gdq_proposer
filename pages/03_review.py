@@ -117,6 +117,8 @@ for i, selection in _sorted_cart:
     with col2:
         label = get_rule_label(p.rule_type)
         target = p.target_column or "(tabela)"
+        if p.subpopulation_label:
+            target = f"{target} [{p.subpopulation_label}]"
 
         # Glue test badge (inline after rule name)
         _test_badge = ""

@@ -883,6 +883,8 @@ with st.sidebar:
         for sel in st.session_state["rule_cart"]:
             p = sel.proposal
             target = p.target_column or "(tabela)"
+            if p.subpopulation_label:
+                target = f"{target} [{p.subpopulation_label}]"
             label = get_rule_label(p.rule_type)
             st.caption(f"- {label} `{target}`")
         if st.button("Ir para Review", type="primary", key="sidebar_review"):
@@ -980,6 +982,12 @@ def fetch_uniqueness_history(_config_dict, _key_columns_tuple):
     return analysis_svc.get_uniqueness_history(config, list(_key_columns_tuple))
 
 
+@st.cache_data(ttl=900, show_spinner="Consultando historico filtrado...")
+def fetch_numeric_history_filtered(_config_dict, column, subpop_filter):
+    config = _build_config_from_dict(_config_dict)
+    return analysis_svc.get_numeric_history_filtered(config, column, subpop_filter)
+
+
 # ---------------------------------------------------------------------------
 # Modo de proposta (Completo vs Minimo)
 # ---------------------------------------------------------------------------
@@ -1019,6 +1027,7 @@ def _collect_all_proposals() -> list:
     from core.models.rule_proposal import RuleProposal
     _PROPOSAL_PREFIXES = ("proposal_mean_", "proposal_stddev_", "proposal_comp_",
                           "proposal_pct_", "proposal_rc_", "proposal_pk_",
+                          "proposal_subpop_",
                           "cat_proposals_")
     all_props = []
     for key, val in st.session_state.items():
@@ -1576,6 +1585,116 @@ with tab_numericas:
                     f"comp_{selected_col}",
                     fp=_fp,
                 )
+
+            # ---- Subpopulacao (Fatia 4) ----
+            _seg_col = st.session_state.get("setup_segmentation_column")
+            if _seg_col and _seg_col != selected_col:
+                st.divider()
+                with st.expander(
+                    f"Subpopulacao por `{_seg_col}` (opcional)",
+                    expanded=False,
+                ):
+                    st.caption(
+                        f"Analise a media de `{selected_col}` segmentada por `{_seg_col}`. "
+                        "Isso detecta degradacao em subgrupos mesmo quando o total esta estavel."
+                    )
+
+                    # Fetch distinct values for the segmentation column
+                    try:
+                        _seg_domain_df = fetch_categorical_domain(config_dict, _seg_col)
+                    except Exception as e:
+                        st.warning(f"Erro ao consultar dominio de `{_seg_col}`: {e}")
+                        _seg_domain_df = None
+
+                    if _seg_domain_df is not None and not _seg_domain_df.empty:
+                        _seg_values = _seg_domain_df["category_value"].tolist()
+
+                        if len(_seg_values) > 50:
+                            st.warning(
+                                f"`{_seg_col}` tem {len(_seg_values)} valores distintos. "
+                                "Selecione poucos valores para evitar custo excessivo de queries."
+                            )
+
+                        _seg_selected = st.multiselect(
+                            f"Valores de `{_seg_col}` para analisar:",
+                            options=_seg_values[:50],
+                            default=[],
+                            key=f"seg_vals_{selected_col}_{_seg_col}",
+                            help="Cada valor gera uma query separada de historico filtrado.",
+                        )
+
+                        if _seg_selected:
+                            # Use the same baseline as Mean
+                            _seg_baseline = BaselineStrategy(
+                                method=BaselineMethod.LAST_N_PERIODS,
+                                n_periods=mean_n,
+                                n_sigma=mean_k,
+                                margin_pct=mean_margin,
+                                margin_enabled=mean_margin_on,
+                                min_history_points=_grain_policy.min_history,
+                            )
+
+                            for _seg_val in _seg_selected:
+                                _seg_filter = f'"{_seg_col}" = \'{_seg_val}\''
+                                _seg_label = str(_seg_val)
+
+                                try:
+                                    _seg_hist = fetch_numeric_history_filtered(
+                                        config_dict, selected_col, _seg_filter,
+                                    )
+                                except CostGuardrailTriggered as e:
+                                    _handle_cost_guardrail(e)
+                                except Exception as e:
+                                    st.warning(f"Erro ao consultar `{_seg_val}`: {e}")
+                                    continue
+
+                                if _seg_hist.empty or len(_seg_hist) < _grain_policy.min_history:
+                                    st.caption(
+                                        f"`{_seg_val}`: dados insuficientes "
+                                        f"({len(_seg_hist) if not _seg_hist.empty else 0} periodos)."
+                                    )
+                                    continue
+
+                                # Generate subpopulation proposals
+                                _seg_cache_key = (
+                                    f"proposal_subpop_{selected_col}_{_seg_col}_{_seg_val}"
+                                    f"_{mean_n}_{mean_k}_{mean_margin}_{mean_margin_on}_{effective_lookback}"
+                                )
+                                _seg_proposals = _get_cached_proposals(
+                                    _seg_cache_key,
+                                    lambda _h=_seg_hist, _f=_seg_filter, _l=_seg_label: [
+                                        p for p in proposal_svc.propose_subpopulation_rules(
+                                            _h, selected_col, dataset_config.table,
+                                            _seg_baseline, _f, _l,
+                                        )
+                                        if "mean" in p.rule_type.value
+                                    ],
+                                )
+
+                                if _seg_proposals:
+                                    _sp = _seg_proposals[0]
+                                    _sp_vals = _sp.history_values
+                                    _sp_dates = _sp.history_dates
+                                    _sp_cov = f"{_sp.backtest.coverage_pct:.0f}%" if _sp.backtest else "N/A"
+                                    _sp_conf = _confidence_badge(_sp.confidence)
+
+                                    st.markdown(f"**{_seg_val}** — Cobertura: {_sp_cov} | {_sp_conf}")
+
+                                    if _sp_vals and _sp_dates:
+                                        _render_rolling_chart(
+                                            _sp_vals, _sp_dates, mean_n, mean_k, mean_margin,
+                                            f"Mean ({_seg_val})",
+                                            margin_enabled=mean_margin_on,
+                                            chart_key=f"chart_subpop_{selected_col}_{_seg_val}",
+                                        )
+
+                                    _render_add_to_cart(
+                                        _sp, f"Mean [{_seg_val}]",
+                                        f"subpop_mean_{selected_col}_{_seg_val}",
+                                        fp=_fp,
+                                    )
+                                else:
+                                    st.caption(f"`{_seg_val}`: sem proposta viavel.")
 
 
 # ===========================================================================

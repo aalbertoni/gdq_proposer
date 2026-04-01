@@ -33,6 +33,12 @@ from infra.athena_client import AthenaClient
 from infra.query_builder import QueryBuilder
 from services.dataset_service import DatasetService
 from services.profiling_service import ProfilingService
+from pages.session_helpers import (
+    clear_analysis_state,
+    clear_stale_selections,
+    go_back_column_selection,
+    reset_setup_state,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +228,7 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
     st.session_state["setup_pk_columns"] = data.get("unique_key_columns", [])
 
     # Clear stale sel_* keys so checkbox defaults from preset take effect
-    _stale_sel_keys = [k for k in st.session_state if isinstance(k, str) and k.startswith("sel_")]
-    for k in _stale_sel_keys:
-        del st.session_state[k]
+    clear_stale_selections(st.session_state)
 
     # Restore cached profiles if available
     _cached_profiles_raw = data.get("column_profiles", [])
@@ -237,28 +241,8 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
 
 
 def _clear_analysis_state():
-    """Limpa estado analitico do session_state ao trocar configuracao.
-
-    Remove carrinho, proposals, series profiles, auto-tune e col_health.
-    Nao remove chaves de infraestrutura (client, services, setup_*).
-    """
-    _ANALYSIS_PREFIXES = (
-        "proposal_mean_", "proposal_stddev_", "proposal_comp_",
-        "proposal_pct_", "proposal_rc_", "proposal_pk_",
-        "cat_proposals_",
-        "series_profile_",
-        "autotune_",
-    )
-    # Chaves exatas
-    for key in ["rule_cart", "col_health"]:
-        st.session_state.pop(key, None)
-    # Chaves por prefixo
-    keys_to_remove = [
-        k for k in list(st.session_state.keys())
-        if isinstance(k, str) and any(k.startswith(p) for p in _ANALYSIS_PREFIXES)
-    ]
-    for key in keys_to_remove:
-        del st.session_state[key]
+    """Limpa estado analitico do session_state ao trocar configuracao."""
+    clear_analysis_state(st.session_state)
 
 
 def _activate_config():
@@ -307,16 +291,7 @@ if _has_setup_state:
     _rst_col1, _rst_col2 = st.columns([3, 1])
     with _rst_col2:
         if st.button("Recomecar Setup", type="secondary", help="Limpa toda a configuracao e retorna ao inicio."):
-            for k in list(st.session_state.keys()):
-                if isinstance(k, str) and (
-                    k.startswith("setup_")
-                    or k.startswith("prof_")
-                    or k.startswith("sel_")
-                    or k.startswith("type_")
-                    or k.startswith("pcol_")
-                    or k in ("show_compare_ui", "show_clone_ui")
-                ):
-                    del st.session_state[k]
+            reset_setup_state(st.session_state)
             st.rerun()
 
 
@@ -1430,11 +1405,7 @@ with _step6_col2:
         "Voltar e re-selecionar colunas",
         help="Limpa o profiling para que voce possa alterar a selecao de colunas no passo 5.",
     ):
-        st.session_state.pop("setup_profiles", None)
-        # Limpar sel_* keys para que os checkboxes reflitam as novas escolhas
-        for k in list(st.session_state.keys()):
-            if isinstance(k, str) and (k.startswith("sel_") or k.startswith("type_")):
-                del st.session_state[k]
+        go_back_column_selection(st.session_state)
         st.rerun()
 
 with st.expander("Como funciona a classificacao?", expanded=False):
@@ -1582,6 +1553,72 @@ pk_columns = st.multiselect(
     ),
 )
 st.session_state["setup_pk_columns"] = pk_columns
+
+
+# ===================================================================
+# STEP 6b: Coluna de segmentacao (subpopulacao) — opcional
+# ===================================================================
+
+# Candidatas: colunas categoricas LOW ou MID do profiling (bom para segmentar)
+_seg_candidates = [
+    p.column_name for p in profiles
+    if p.effective_type in (
+        SemanticType.CATEGORICAL_LOW_CARDINALITY,
+        SemanticType.CATEGORICAL_MID_CARDINALITY,
+    )
+]
+
+if _seg_candidates:
+    with st.expander("Segmentacao por subpopulacao (opcional)", expanded=False):
+        st.caption(
+            "Selecione uma coluna categorica para criar regras por segmento. "
+            "Isso permite detectar degradacao em subgrupos mesmo quando o total esta estavel."
+        )
+
+        _seg_options = ["(nenhuma)"] + _seg_candidates
+        _seg_default = st.session_state.get("setup_segmentation_column")
+        _seg_idx = 0
+        if _seg_default and _seg_default in _seg_candidates:
+            _seg_idx = _seg_candidates.index(_seg_default) + 1
+
+        _seg_col = st.selectbox(
+            "Coluna de segmentacao:",
+            options=_seg_options,
+            index=_seg_idx,
+            key="seg_col_select",
+            help=(
+                "Coluna usada para dividir a analise em subpopulacoes. "
+                "Ex: TIPO_PRODUTO, UF, COD_SEGMENTO."
+            ),
+        )
+
+        if _seg_col != "(nenhuma)":
+            # Find the profile for cardinality info
+            _seg_profile = next(
+                (p for p in profiles if p.column_name == _seg_col), None,
+            )
+            if _seg_profile:
+                _n_distinct = _seg_profile.distinct_count
+                if _n_distinct > 100:
+                    st.warning(
+                        f"`{_seg_col}` tem ~{_n_distinct} valores distintos. "
+                        "Isso pode gerar muitas regras. "
+                        "Considere uma coluna com menos categorias."
+                    )
+                elif _n_distinct > 20:
+                    st.info(
+                        f"`{_seg_col}` tem ~{_n_distinct} valores distintos. "
+                        "Na pagina Explore voce podera escolher quais valores analisar."
+                    )
+                else:
+                    st.caption(
+                        f"`{_seg_col}`: ~{_n_distinct} valores distintos."
+                    )
+
+            st.session_state["setup_segmentation_column"] = _seg_col
+        else:
+            st.session_state.pop("setup_segmentation_column", None)
+            st.session_state.pop("setup_segmentation_values", None)
 
 
 # ===================================================================

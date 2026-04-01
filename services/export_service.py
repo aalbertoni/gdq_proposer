@@ -389,6 +389,8 @@ class ExportService:
         for idx, sel in enumerate(enabled, 1):
             p = sel.proposal
             target = p.target_column or "(tabela)"
+            if p.subpopulation_label:
+                target = f"{target} [{p.subpopulation_label}]"
             rule_label = get_rule_label(p.rule_type)
             confidence_map = {
                 ConfidenceLevel.HIGH: "ALTA",
