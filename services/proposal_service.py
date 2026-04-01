@@ -27,7 +27,7 @@ from core.backtest import (
     backtest_frequency_dual_guard,
     backtest_primary_key,
 )
-from core.gdq_filtered_rule_generator import generate_filtered_rule
+from core.gdq_filtered_rule_generator import generate_filtered_rule, generate_rule_with_where
 from core.gdq_rule_generator import GDQRuleGenerator
 from core.models.baseline import BaselineStrategy
 from core.models.enums import (
@@ -230,6 +230,96 @@ class ProposalService:
         )
         if completeness_proposal:
             proposals.append(completeness_proposal)
+
+        return self._apply_recommendations(proposals)
+
+    def propose_subpopulation_rules(
+        self,
+        history: pd.DataFrame,
+        column: str,
+        table: str,
+        baseline: BaselineStrategy,
+        subpopulation_filter: str,
+        subpopulation_label: str,
+    ) -> list[RuleProposal]:
+        """Gera propostas de regra para subpopulacao de coluna numerica.
+
+        Reutiliza a mesma logica de propose_numeric_rules, mas cada proposta
+        recebe o filtro de subpopulacao e a sintaxe GDQ e gerada via
+        CustomSql com WHERE combinando date_filter (se houver) + subpop.
+
+        Args:
+            history: DataFrame do get_numeric_history_filtered (mesmo schema).
+            column: Nome da coluna.
+            table: Nome da tabela.
+            baseline: Estrategia de baseline.
+            subpopulation_filter: Expressao WHERE (sem keyword WHERE).
+                Ex: "TIPO_PRODUTO = 'CONSIGNADO'"
+            subpopulation_label: Label para exibicao (ex: "CONSIGNADO").
+
+        Returns:
+            Lista de RuleProposal com subpopulation_filter preenchido.
+        """
+        proposals: list[RuleProposal] = []
+
+        if history.empty:
+            return proposals
+
+        # --- Mean Dual Guard ---
+        mean_proposal = self._build_dual_guard_proposal(
+            series=history["mean"].tolist(),
+            dates=history["period"].tolist(),
+            column=column,
+            table=table,
+            rule_type=RuleType.MEAN_DUAL_GUARD,
+            metric_name="mean",
+            baseline=baseline,
+        )
+        if mean_proposal:
+            proposals.append(mean_proposal)
+
+        # --- StdDev Dual Guard ---
+        stddev_values = history["stddev"].tolist()
+        has_valid_stddev = any(
+            v is not None and not (isinstance(v, float) and v != v)
+            for v in stddev_values
+        )
+        if has_valid_stddev:
+            stddev_proposal = self._build_dual_guard_proposal(
+                series=stddev_values,
+                dates=history["period"].tolist(),
+                column=column,
+                table=table,
+                rule_type=RuleType.STDDEV_DUAL_GUARD,
+                metric_name="stddev",
+                baseline=baseline,
+            )
+            if stddev_proposal:
+                proposals.append(stddev_proposal)
+
+        # --- Completeness ---
+        completeness_proposal = self._build_completeness_proposal(
+            history=history,
+            column=column,
+            table=table,
+        )
+        if completeness_proposal:
+            proposals.append(completeness_proposal)
+
+        # --- Apply subpopulation metadata + regenerate syntax ---
+        # Build combined WHERE: date_filter AND subpop_filter (when both exist)
+        if self._date_filter_where:
+            combined_where = f"({self._date_filter_where}) AND ({subpopulation_filter})"
+        else:
+            combined_where = subpopulation_filter
+
+        for p in proposals:
+            p.subpopulation_filter = subpopulation_filter
+            p.subpopulation_label = subpopulation_label
+            # Regenerate syntax with combined WHERE clause
+            syntax = generate_rule_with_where(p, combined_where)
+            if syntax is not None:
+                p.gdq_syntax_preview = syntax
 
         return self._apply_recommendations(proposals)
 

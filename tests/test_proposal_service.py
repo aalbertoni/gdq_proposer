@@ -207,3 +207,90 @@ class TestProposeTableRules:
         )
         assert len(proposals) == 1
         assert proposals[0].gdq_syntax_preview == "MOCK_SYNTAX"
+
+
+# ---------------------------------------------------------------------------
+# Subpopulation rules
+# ---------------------------------------------------------------------------
+
+class TestProposeSubpopulationRules:
+    def test_returns_proposals_with_subpop_metadata(self, service, stable_history, baseline):
+        """Proposals have subpopulation_filter and label set."""
+        proposals = service.propose_subpopulation_rules(
+            stable_history, "VLR_SALDO", "tb_test", baseline,
+            subpopulation_filter="TIPO_PRODUTO = 'CONSIGNADO'",
+            subpopulation_label="CONSIGNADO",
+        )
+        assert len(proposals) >= 1
+        for p in proposals:
+            assert p.subpopulation_filter == "TIPO_PRODUTO = 'CONSIGNADO'"
+            assert p.subpopulation_label == "CONSIGNADO"
+
+    def test_returns_mean_stddev_completeness(self, service, stable_history, baseline):
+        """Same rule types as propose_numeric_rules."""
+        proposals = service.propose_subpopulation_rules(
+            stable_history, "VLR_SALDO", "tb_test", baseline,
+            subpopulation_filter="TIPO = 'A'",
+            subpopulation_label="A",
+        )
+        types = [p.rule_type for p in proposals]
+        assert RuleType.MEAN_DUAL_GUARD in types
+        assert RuleType.STDDEV_DUAL_GUARD in types
+        assert RuleType.COMPLETENESS in types
+
+    def test_syntax_contains_where_clause(self, service, stable_history, baseline):
+        """GDQ syntax must include the subpopulation WHERE clause."""
+        proposals = service.propose_subpopulation_rules(
+            stable_history, "VLR_SALDO", "tb_test", baseline,
+            subpopulation_filter="REGIAO = 'SUL'",
+            subpopulation_label="SUL",
+        )
+        for p in proposals:
+            assert "CustomSql" in p.gdq_syntax_preview
+            assert "REGIAO = 'SUL'" in p.gdq_syntax_preview
+
+    def test_combines_date_filter_with_subpop(self, service, stable_history, baseline):
+        """When date_filter is set, WHERE includes both filters."""
+        service.set_date_filter("ANO_MES = date_format(current_date(), 'yyyyMM')")
+        proposals = service.propose_subpopulation_rules(
+            stable_history, "VLR_SALDO", "tb_test", baseline,
+            subpopulation_filter="TIPO = 'X'",
+            subpopulation_label="X",
+        )
+        for p in proposals:
+            syntax = p.gdq_syntax_preview
+            assert "CustomSql" in syntax
+            # Both filters should be present in the WHERE
+            assert "ANO_MES = date_format" in syntax
+            assert "TIPO = 'X'" in syntax
+        # Clean up
+        service.set_date_filter(None)
+
+    def test_empty_history_returns_empty(self, service, baseline):
+        """Empty history returns no proposals."""
+        empty_df = pd.DataFrame(columns=[
+            "period", "mean", "stddev", "min", "max",
+            "p01", "p05", "p25", "p50", "p75", "p95", "p99",
+            "non_null_count", "null_count", "total_count",
+        ])
+        proposals = service.propose_subpopulation_rules(
+            empty_df, "VLR", "tb", baseline,
+            subpopulation_filter="X = 1",
+            subpopulation_label="1",
+        )
+        assert proposals == []
+
+    def test_without_date_filter_uses_subpop_only(self, service, stable_history, baseline):
+        """Without date_filter, WHERE uses only subpop filter."""
+        service.set_date_filter(None)
+        proposals = service.propose_subpopulation_rules(
+            stable_history, "VLR_SALDO", "tb_test", baseline,
+            subpopulation_filter="STATUS = 'ATIVO'",
+            subpopulation_label="ATIVO",
+        )
+        mean_proposals = [p for p in proposals if p.rule_type == RuleType.MEAN_DUAL_GUARD]
+        assert len(mean_proposals) == 1
+        syntax = mean_proposals[0].gdq_syntax_preview
+        assert "STATUS = 'ATIVO'" in syntax
+        # Should NOT have the combined format with date_filter
+        assert "ANO_MES" not in syntax

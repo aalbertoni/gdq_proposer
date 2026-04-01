@@ -1,10 +1,13 @@
-"""Gerador de regras GDQ com filtro de data via CustomSql.
+"""Gerador de regras GDQ com filtro WHERE via CustomSql.
 
-Quando has_date_filter=True, regras built-in (Mean, StdDev, RowCount,
-Completeness, etc.) são convertidas para CustomSql equivalentes com
-cláusula WHERE filtrando por data de negócio.
+Converte regras built-in (Mean, StdDev, RowCount, Completeness, etc.)
+para CustomSql equivalentes com clausula WHERE.
 
-A conversão preserva o dual guard (sigma OR margem%) no between,
+Suporta dois cenarios:
+- Filtro de data: WHERE filtrando por data de negocio (has_date_filter)
+- Subpopulacao: WHERE filtrando por segmento do dado (ex: TIPO_PRODUTO = 'X')
+
+A conversao preserva o dual guard (sigma OR margem%) no between,
 mantendo compatibilidade com avg(last(N)) e std(last(N)).
 
 Validado via Thundera na Fatia 0 (2026-03-26).
@@ -70,6 +73,29 @@ def generate_filtered_rule(
         return _convert_percentile(proposal, date_filter_where, overrides)
     else:
         return None
+
+
+def generate_rule_with_where(
+    proposal: RuleProposal,
+    where_clause: str,
+    overrides: UserOverride | None = None,
+) -> str | None:
+    """Gera regra GDQ com clausula WHERE arbitraria via CustomSql.
+
+    Generaliza generate_filtered_rule para qualquer WHERE — filtro de data,
+    subpopulacao, ou combinacao de ambos.
+
+    Args:
+        proposal: Proposta de regra original.
+        where_clause: Expressao WHERE (sem keyword WHERE).
+            Ex: "TIPO_PRODUTO = 'CONSIGNADO'"
+            Ex: "REGIAO = 'SUL' AND STATUS = 'ATIVO'"
+        overrides: Ajustes manuais do usuario.
+
+    Returns:
+        String GDQ com CustomSql + WHERE, ou None se nao aplicavel.
+    """
+    return generate_filtered_rule(proposal, where_clause, overrides)
 
 
 def _build_select_with_where(sql_select: str, date_filter_where: str) -> str:

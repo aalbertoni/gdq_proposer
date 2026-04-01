@@ -151,3 +151,53 @@ def build_multi_column_predicate(
         clauses.append("(" + " AND ".join(parts) + ")")
 
     return "(" + " OR ".join(clauses) + ")"
+
+
+def build_selective_predicate(
+    partition_columns: list[str],
+    partition_formats: dict[str, str | None],
+    partition_is_integer_map: dict[str, bool],
+    cutoff: date,
+    dialect: SQLDialect = SQLDialect.ATHENA,
+) -> str:
+    """Gera predicado de pruning apenas para colunas temporais, ignorando as demais.
+
+    Para particoes mistas (ex: partition_0="S"/"N", partition_1=20260315),
+    filtra apenas as colunas que tem formato temporal (presentes em
+    partition_formats), e gera predicado so para essas.
+
+    Convencao para distinguir temporal de nao-temporal:
+    - Chave presente em partition_formats (mesmo com valor None) → temporal
+    - Chave ausente em partition_formats → nao-temporal (excluida)
+
+    Args:
+        partition_columns: Lista completa de colunas de particao.
+        partition_formats: Formato por coluna. Chave presente = temporal.
+                          Valor None = native date. Chave ausente = nao-temporal.
+        partition_is_integer_map: Tipo por coluna.
+        cutoff: Data de corte calculada.
+        dialect: Dialeto SQL.
+
+    Returns:
+        Predicado SQL combinado, ou "" se nenhuma coluna temporal.
+    """
+    temporal_cols = [c for c in partition_columns if c in partition_formats]
+
+    if not temporal_cols:
+        return ""
+
+    if len(temporal_cols) == 1:
+        col = temporal_cols[0]
+        return build_partition_predicate(
+            col, partition_formats.get(col), cutoff,
+            dialect=dialect,
+            is_integer=partition_is_integer_map.get(col, False),
+        )
+
+    return build_multi_column_predicate(
+        temporal_cols,
+        partition_formats,
+        partition_is_integer_map,
+        cutoff,
+        dialect=dialect,
+    )

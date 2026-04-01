@@ -170,3 +170,95 @@ class TestGetRowCountHistory:
     def test_row_count_is_float(self, service, base_config):
         df = service.get_row_count_history(base_config)
         assert df["row_count"].dtype == float
+
+
+# ---------------------------------------------------------------------------
+# get_numeric_history_filtered (subpopulation)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def segmented_client(tmp_path):
+    """DuckDBTestClient com coluna de segmentacao TIPO_PRODUTO."""
+    from tests.conftest import DuckDBTestClient
+
+    client = DuckDBTestClient()
+    today = date.today()
+    rows = []
+    for day_offset in range(30):
+        dt = (today - timedelta(days=day_offset)).isoformat()
+        # Subpop A: mean ~100
+        for j in range(50):
+            rows.append({
+                "dt_ref": dt,
+                "TIPO_PRODUTO": "A",
+                "VLR_SALDO": 100.0 + day_offset * 0.5 + j * 0.01,
+            })
+        # Subpop B: mean ~200
+        for j in range(50):
+            rows.append({
+                "dt_ref": dt,
+                "TIPO_PRODUTO": "B",
+                "VLR_SALDO": 200.0 + day_offset * 0.5 + j * 0.01,
+            })
+
+    df = pd.DataFrame(rows)
+    parquet_path = tmp_path / "tb_segmented.parquet"
+    df.to_parquet(parquet_path)
+    client.load_table("mock_db", "tb_segmented", str(parquet_path))
+    return client
+
+
+@pytest.fixture
+def seg_service(segmented_client, builder):
+    return AnalysisService(client=segmented_client, builder=builder)
+
+
+@pytest.fixture
+def seg_config():
+    return DatasetConfig(
+        schema="mock_db",
+        table="tb_segmented",
+        partition_method=PartitionMethod.INCREMENTAL,
+        partition_column="dt_ref",
+        partition_format="%Y-%m-%d",
+        date_column="dt_ref",
+        date_expression='CAST("dt_ref" AS DATE)',
+        lookback_value=60,
+    )
+
+
+class TestGetNumericHistoryFiltered:
+    def test_returns_expected_columns(self, seg_service, seg_config):
+        df = seg_service.get_numeric_history_filtered(
+            seg_config, "VLR_SALDO", "\"TIPO_PRODUTO\" = 'A'",
+        )
+        expected_cols = {
+            "period", "mean", "stddev", "min", "max",
+            "p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99",
+            "non_null_count", "null_count", "total_count",
+        }
+        assert set(df.columns) == expected_cols
+
+    def test_has_30_periods(self, seg_service, seg_config):
+        df = seg_service.get_numeric_history_filtered(
+            seg_config, "VLR_SALDO", "\"TIPO_PRODUTO\" = 'A'",
+        )
+        assert len(df) == 30
+
+    def test_filtered_total_count_is_half(self, seg_service, seg_config):
+        """Subpop A has 50 rows/day, full table has 100."""
+        df_full = seg_service.get_numeric_history(seg_config, "VLR_SALDO")
+        df_a = seg_service.get_numeric_history_filtered(
+            seg_config, "VLR_SALDO", "\"TIPO_PRODUTO\" = 'A'",
+        )
+        assert all(df_a["total_count"] < df_full["total_count"])
+
+    def test_different_subpops_have_different_means(self, seg_service, seg_config):
+        """Subpop B mean (~200) > subpop A mean (~100)."""
+        df_a = seg_service.get_numeric_history_filtered(
+            seg_config, "VLR_SALDO", "\"TIPO_PRODUTO\" = 'A'",
+        )
+        df_b = seg_service.get_numeric_history_filtered(
+            seg_config, "VLR_SALDO", "\"TIPO_PRODUTO\" = 'B'",
+        )
+        assert df_b["mean"].mean() > df_a["mean"].mean() + 50

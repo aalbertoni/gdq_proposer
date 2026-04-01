@@ -219,6 +219,36 @@ class TestGeneratorContract:
 
 
 # ---------------------------------------------------------------------------
+# RuleProposal — subpopulation fields (backward compat)
+# ---------------------------------------------------------------------------
+
+class TestRuleProposalSubpopulationContract:
+    """Novos campos Optional nao quebram instanciacao existente."""
+
+    def test_default_subpopulation_fields_are_none(self):
+        p = _make_numeric_proposal()
+        assert p.subpopulation_filter is None
+        assert p.subpopulation_label is None
+
+    def test_subpopulation_fields_accepted(self):
+        p = _make_numeric_proposal(
+            subpopulation_filter="TIPO = 'A'",
+            subpopulation_label="A",
+        )
+        assert p.subpopulation_filter == "TIPO = 'A'"
+        assert p.subpopulation_label == "A"
+
+    def test_generator_works_without_subpopulation(self):
+        """Generator ignora campos de subpop (backward compat)."""
+        from core.gdq_rule_generator import GDQRuleGenerator
+        gen = GDQRuleGenerator()
+        p = _make_numeric_proposal()
+        result = gen.generate(p)
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
 # classify_series — SeriesProfile shape
 # ---------------------------------------------------------------------------
 

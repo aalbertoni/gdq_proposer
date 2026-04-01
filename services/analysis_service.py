@@ -215,6 +215,78 @@ class AnalysisService:
 
         return self._normalize_df(df)
 
+    def get_numeric_history_filtered(
+        self,
+        config: DatasetConfig,
+        column: str,
+        subpopulation_filter: str,
+    ) -> pd.DataFrame:
+        """Executa query de historico numerico filtrado por subpopulacao.
+
+        Reutiliza o template numeric_history.sql, compondo o filtro de
+        subpopulacao com o base_filter existente.
+
+        Args:
+            config: Configuracao da tabela alvo.
+            column: Nome da coluna numerica.
+            subpopulation_filter: Expressao WHERE (sem keyword WHERE).
+                Ex: "TIPO_PRODUTO = 'CONSIGNADO'"
+
+        Returns:
+            DataFrame com mesmas colunas de get_numeric_history.
+        """
+        validate_identifier(config.schema)
+        validate_identifier(config.table)
+        validate_identifier(column)
+
+        raw_date_expr = config.date_expression or ""
+        if raw_date_expr:
+            raw_date_expr = sanitize_expression(raw_date_expr)
+        date_expr = self.builder.resolve_date_expression(
+            config.effective_temporal_axis, raw_date_expr,
+        )
+
+        # Compose base_filter with subpopulation_filter
+        base_filter = ""
+        if config.base_filter_sql:
+            base_filter = sanitize_filter(config.base_filter_sql)
+        subpop_sanitized = sanitize_filter(subpopulation_filter)
+        if base_filter:
+            base_filter = f"({base_filter}) AND ({subpop_sanitized})"
+        else:
+            base_filter = subpop_sanitized
+
+        partition_filter = self._resolve_partition_filter(config)
+        date_filter = self._resolve_date_filter(config)
+
+        sql = self.builder.build_numeric_history(
+            schema=config.schema,
+            table=config.table,
+            col=column,
+            date_expression=date_expr,
+            lookback_value=config.lookback_value,
+            base_filter=base_filter,
+            partition_filter=partition_filter,
+            reference_date=config.reference_date or "",
+            date_filter=date_filter,
+        )
+
+        df = self.client.execute_df(
+            sql,
+            query_name="numeric_history_subpop",
+            dataset=f"{config.schema}.{config.table}",
+            column=column,
+        )
+
+        if df.empty:
+            return pd.DataFrame(columns=[
+                "period", "mean", "stddev", "min", "max",
+                "p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99",
+                "non_null_count", "null_count", "total_count",
+            ])
+
+        return self._normalize_df(df)
+
     def get_row_count_history(
         self,
         config: DatasetConfig,

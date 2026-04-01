@@ -82,6 +82,10 @@ class RuleProposal:
     # Estatisticas robustas (informacional, nao altera sintaxe GDQ)
     robust_info: Optional[dict] = None  # IQR/MAD analysis results
 
+    # Subpopulacao (filtro por segmento do dado)
+    subpopulation_filter: Optional[str] = None  # WHERE clause (sem keyword WHERE)
+    subpopulation_label: Optional[str] = None  # Label para exibicao ("CONSIGNADO")
+
     # Historico para grafico (dados agregados, nao raw)
     history_dates: list[str] = field(default_factory=list)
     history_values: list[float] = field(default_factory=list)

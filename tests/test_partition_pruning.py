@@ -13,6 +13,7 @@ from datetime import date
 from infra.partition_pruning import (
     build_partition_predicate,
     build_multi_column_predicate,
+    build_selective_predicate,
     compute_cutoff_date,
 )
 from infra.query_builder import QueryBuilder
@@ -436,3 +437,128 @@ class TestResolvePartitionFilterMultiColumn:
         )
         assert " AND " in result
         assert '"ano"' in result
+
+    def test_mixed_temporal_non_temporal_via_qb(self, qb_athena):
+        """QueryBuilder filters out non-temporal columns via selective predicate."""
+        result = qb_athena.resolve_partition_filter(
+            partition_columns=["flag_ativo", "dt_ref"],
+            partition_formats={"dt_ref": "%Y%m%d"},
+            partition_is_integer_map={"dt_ref": True},
+            lookback_value=30,
+            reference_date="2026-03-20",
+        )
+        assert '"dt_ref"' in result
+        assert "flag_ativo" not in result
+        assert "20260218" in result
+
+    def test_all_non_temporal_via_qb_returns_empty(self, qb_athena):
+        """No temporal columns → empty string."""
+        result = qb_athena.resolve_partition_filter(
+            partition_columns=["flag_ativo", "cod_tipo"],
+            partition_formats={},
+            partition_is_integer_map={},
+            lookback_value=30,
+            reference_date="2026-03-20",
+        )
+        assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# build_selective_predicate
+# ---------------------------------------------------------------------------
+
+class TestBuildSelectivePredicate:
+    def test_mixed_temporal_non_temporal(self):
+        """Non-temporal partition_0 ignored, temporal partition_1 used."""
+        result = build_selective_predicate(
+            ["flag_ativo", "dt_ref"],
+            {"dt_ref": "%Y%m%d"},
+            {"dt_ref": True},
+            date(2026, 2, 23),
+        )
+        assert result == '"dt_ref" >= 20260223'
+        assert "flag_ativo" not in result
+
+    def test_all_non_temporal_returns_empty(self):
+        """No temporal columns → empty string."""
+        result = build_selective_predicate(
+            ["flag_ativo", "cod_tipo"],
+            {},
+            {},
+            date(2026, 2, 23),
+        )
+        assert result == ""
+
+    def test_all_temporal_same_as_multi_column(self):
+        """When all columns temporal, same result as build_multi_column_predicate."""
+        cols = ["ano", "mes"]
+        formats = {"ano": "%Y", "mes": "%m"}
+        int_map = {"ano": True, "mes": True}
+        cutoff = date(2026, 2, 23)
+        selective = build_selective_predicate(cols, formats, int_map, cutoff)
+        multi = build_multi_column_predicate(cols, formats, int_map, cutoff)
+        assert selective == multi
+
+    def test_single_temporal_among_multiple(self):
+        """One temporal column among 3 partitions."""
+        result = build_selective_predicate(
+            ["regiao", "flag", "dt_proc"],
+            {"dt_proc": "%Y-%m-%d"},
+            {"dt_proc": False},
+            date(2026, 3, 15),
+        )
+        assert result == "\"dt_proc\" >= '2026-03-15'"
+        assert "regiao" not in result
+        assert "flag" not in result
+
+    def test_native_date_column_key_present(self):
+        """Native date (format=None) included when key present in dict."""
+        result = build_selective_predicate(
+            ["flag", "dt_ref"],
+            {"dt_ref": None},
+            {},
+            date(2026, 2, 23),
+            dialect=SQLDialect.ATHENA,
+        )
+        assert "DATE '2026-02-23'" in result
+        assert "flag" not in result
+
+    def test_empty_columns_returns_empty(self):
+        result = build_selective_predicate([], {}, {}, date(2026, 2, 23))
+        assert result == ""
+
+    def test_two_temporal_among_three_uses_hierarchical(self):
+        """Two temporal columns among three: hierarchical predicate on temporal only."""
+        result = build_selective_predicate(
+            ["flag", "ano", "mes"],
+            {"ano": "%Y", "mes": "%m"},
+            {"ano": True, "mes": True},
+            date(2026, 2, 23),
+        )
+        assert " OR " in result
+        assert '"ano"' in result
+        assert '"mes"' in result
+        assert "flag" not in result
+
+    def test_duckdb_dialect(self):
+        """DuckDB dialect propagated to inner calls."""
+        result = build_selective_predicate(
+            ["flag", "dt_ref"],
+            {"dt_ref": None},
+            {},
+            date(2026, 2, 23),
+            dialect=SQLDialect.DUCKDB,
+        )
+        assert "TRY_CAST" in result
+        assert "flag" not in result
+
+    def test_preserves_column_order(self):
+        """Temporal columns maintain their original hierarchy order."""
+        result = build_selective_predicate(
+            ["flag", "ano", "cod", "mes"],
+            {"ano": "%Y", "mes": "%m"},
+            {"ano": True, "mes": True},
+            date(2026, 2, 23),
+        )
+        # ano comes before mes in the OR/AND hierarchy
+        assert result.index('"ano"') < result.index('"mes"')

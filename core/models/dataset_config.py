@@ -117,7 +117,10 @@ class DatasetConfig:
         if self.partition_column and not self.partition_columns:
             self.partition_columns = [self.partition_column]
             if self.partition_column not in self.partition_formats:
-                self.partition_formats[self.partition_column] = self.partition_format
+                # Only add to partition_formats when format is explicit or column
+                # is the date column (native date). Absent key = non-temporal.
+                if self.partition_format is not None or self.partition_column == self.date_column:
+                    self.partition_formats[self.partition_column] = self.partition_format
             if self.partition_column not in self.partition_is_integer_map:
                 self.partition_is_integer_map[self.partition_column] = self.partition_is_integer
 
@@ -135,19 +138,37 @@ class DatasetConfig:
 
     @property
     def partition_is_temporal(self) -> bool:
-        """True se a partição contém dados temporais e pruning é aplicável.
+        """True se ao menos uma coluna de particao contem dados temporais.
 
         Heurística:
-        - partition_format explícito → caller confirmou que é temporal
-        - Sem formato: temporal apenas se partition_column == date_column
-          (cobre native date onde ambos coincidem)
-        - Sem partition_column → False
+        - Se alguma coluna em partition_columns tem entrada em partition_formats → True
+        - Sem formato explicito: temporal se alguma partition_column == date_column
+        - Sem partition_columns → False
+
+        A presenca da chave em partition_formats indica que a coluna e temporal
+        (valor None = native date, valor string = strftime format).
         """
-        if not self.partition_column:
+        if not self.partition_columns:
             return False
-        if self.partition_format is not None:
-            return True
-        return self.partition_column == self.date_column
+        for col in self.partition_columns:
+            if col in self.partition_formats:
+                return True
+        return self.date_column in self.partition_columns
+
+    @property
+    def temporal_partition_columns(self) -> list[str]:
+        """Lista de colunas de particao que sao temporais.
+
+        Retorna apenas as colunas que tem entrada em partition_formats
+        ou que coincidem com date_column (native date).
+        """
+        result = []
+        for col in self.partition_columns:
+            if col in self.partition_formats:
+                result.append(col)
+            elif col == self.date_column:
+                result.append(col)
+        return result
 
     @property
     def effective_temporal_axis(self) -> str:

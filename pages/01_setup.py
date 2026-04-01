@@ -191,7 +191,13 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
         table=table,
         partition_method=PartitionMethod(data.get("partition_method", "incremental")),
         partition_column=data.get("partition_column"),
+        partition_format=data.get("partition_format"),
+        partition_is_integer=data.get("partition_is_integer", False),
+        partition_columns=data.get("partition_columns", []),
+        partition_formats=data.get("partition_formats", {}),
+        partition_is_integer_map=data.get("partition_is_integer_map", {}),
         date_column=data.get("date_column", ""),
+        temporal_axis_column=data.get("temporal_axis_column"),
         grain_type=GrainType(data.get("grain_type", "daily")),
         lookback_mode=LookbackMode(data.get("lookback_mode", "last_n_periods")),
         lookback_value=data.get("lookback_value", 30),
@@ -291,6 +297,27 @@ st.caption(
     "Configure a tabela alvo, eixo temporal e colunas para analise. "
     "Ao final, ative a configuracao para ir para a calibracao de regras."
 )
+
+# --- Botao de recomecar (visivel quando ha estado parcial) ---
+_has_setup_state = any(
+    st.session_state.get(k)
+    for k in ("setup_validated", "setup_config", "setup_profiles", "setup_date_range")
+)
+if _has_setup_state:
+    _rst_col1, _rst_col2 = st.columns([3, 1])
+    with _rst_col2:
+        if st.button("Recomecar Setup", type="secondary", help="Limpa toda a configuracao e retorna ao inicio."):
+            for k in list(st.session_state.keys()):
+                if isinstance(k, str) and (
+                    k.startswith("setup_")
+                    or k.startswith("prof_")
+                    or k.startswith("sel_")
+                    or k.startswith("type_")
+                    or k.startswith("pcol_")
+                    or k in ("show_compare_ui", "show_clone_ui")
+                ):
+                    del st.session_state[k]
+            st.rerun()
 
 
 # ===================================================================
@@ -616,6 +643,108 @@ _INTEGER_TYPES = {"bigint", "int", "integer", "smallint", "tinyint"}
 needs_date_expression = selected_col_base_type in (_STRING_TYPES | _INTEGER_TYPES)
 is_integer_temporal = selected_col_base_type in _INTEGER_TYPES
 
+# ===================================================================
+# Multi-partition: classify each partition column as temporal or not
+# ===================================================================
+# These dicts will be passed to DatasetConfig.
+# Convention: key present in _all_partition_formats → column is temporal.
+# Key absent → non-temporal (excluded from pruning).
+_all_partition_columns: list[str] = detected_partition_cols if detected_partition_cols else []
+_all_partition_formats: dict[str, str | None] = {}
+_all_partition_is_integer_map: dict[str, bool] = {}
+
+# Mapping from date_format_detector index → strftime format
+_INT_FMT_MAP = {0: "%Y%m%d", 1: "%Y%m"}  # epoch indices (2,3) → None (not temporal)
+_STR_FMT_MAP = {0: "%Y-%m-%d", 1: "%Y%m%d", 2: "%Y%m", 4: "%Y-%m-%d"}  # 3=dd/MM/yyyy → None
+
+if len(detected_partition_cols) > 1:
+    st.markdown("##### Tipo de cada coluna de particao")
+    st.caption(
+        "Multiplas colunas de particao detectadas. "
+        "Marque as que contem **datas** para habilitar partition pruning."
+    )
+
+    for _pcol in detected_partition_cols:
+        _pcol_base = _base_type(col_type_map.get(_pcol, ""))
+        _pcol_is_int = _pcol_base in _INTEGER_TYPES
+        _pcol_is_native_date = _pcol_base in {"date", "timestamp", "timestamp with time zone"}
+        _pcol_is_string = _pcol_base in _STRING_TYPES
+
+        # Fetch sample values
+        _pcol_samples: list[str] = []
+        try:
+            _pcol_samples = _cached_sample_column_values(
+                _get_client_id(), schema, table, _pcol, limit=5
+            )
+        except Exception:
+            pass
+
+        # Auto-detect temporal
+        _auto_temporal = False
+        _auto_format: str | None = None
+
+        if _pcol_is_native_date:
+            _auto_temporal = True
+            _auto_format = None  # native
+        elif _pcol_is_int or _pcol_is_string:
+            if _pcol_samples:
+                from core.date_format_detector import detect_date_format as _detect_fmt
+                _det_idx, _ = _detect_fmt(_pcol_samples, _pcol_is_int)
+                _fmt_map = _INT_FMT_MAP if _pcol_is_int else _STR_FMT_MAP
+                _auto_format = _fmt_map.get(_det_idx)
+                _auto_temporal = _auto_format is not None
+
+        # Display
+        _sample_display = f" — amostra: `{', '.join(_pcol_samples[:3])}`" if _pcol_samples else ""
+        _type_display = col_type_map.get(_pcol, "?")
+
+        _is_temporal = st.checkbox(
+            f"`{_pcol}` ({_type_display}) — coluna temporal?{_sample_display}",
+            value=_auto_temporal,
+            key=f"pcol_temporal_{_pcol}",
+            help=(
+                "Marque se esta coluna contem datas (ex: 20260315, 2026-03-15). "
+                "Desmarque para flags (S/N), codigos, categorias."
+            ),
+        )
+
+        if _is_temporal:
+            if _pcol_is_native_date:
+                _all_partition_formats[_pcol] = None
+                _all_partition_is_integer_map[_pcol] = False
+                st.caption(f"  Tipo nativo `{_type_display}` — pruning direto.")
+            else:
+                # Show detected format or let user pick
+                if _auto_format:
+                    _all_partition_formats[_pcol] = _auto_format
+                    _all_partition_is_integer_map[_pcol] = _pcol_is_int
+                    _fmt_label = _auto_format.replace("%Y", "yyyy").replace("%m", "MM").replace("%d", "dd")
+                    st.caption(f"  Formato detectado: **{_fmt_label}** — pruning: `\"{_pcol}\" >= {_pcol_samples[0] if _pcol_samples else '...'}`")
+                else:
+                    # Fallback: user confirmed temporal but auto-detect failed
+                    _manual_fmt = st.text_input(
+                        f"Formato strftime para `{_pcol}`:",
+                        placeholder="ex: %Y%m%d, %Y-%m-%d",
+                        key=f"pcol_fmt_{_pcol}",
+                        help="Formato Python strftime da coluna. Ex: %Y%m%d para 20260315.",
+                    )
+                    if _manual_fmt.strip():
+                        _all_partition_formats[_pcol] = _manual_fmt.strip()
+                        _all_partition_is_integer_map[_pcol] = _pcol_is_int
+                    else:
+                        st.warning(f"Informe o formato para habilitar pruning em `{_pcol}`.")
+        # Non-temporal: column NOT added to _all_partition_formats (absent = excluded)
+
+    # Warn about non-temporal partitions that won't be pruned
+    _non_temporal_pcols = [c for c in detected_partition_cols if c not in _all_partition_formats]
+    if _non_temporal_pcols:
+        _nt_cols = ", ".join(f"`{c}`" for c in _non_temporal_pcols)
+        st.info(
+            f"Particoes nao-temporais ({_nt_cols}) nao serao usadas no pruning automatico. "
+            "Para filtrar por essas colunas, use o **Filtro Base** abaixo "
+            f"(ex: `{_non_temporal_pcols[0]} = 'valor'`)."
+        )
+
 if needs_date_expression:
     # SQL expressions: (label, athena_expr, partition_format_for_pruning)
     # partition_format: strftime format for raw partition column comparison
@@ -740,6 +869,12 @@ if needs_date_expression:
         from datetime import date as _d
         _preview_cutoff = _d.today().strftime(_partition_format)
         st.caption(f"Partition pruning: `\"{partition_col}\" >= '{_preview_cutoff}'`")
+    elif _all_partition_formats:
+        # Multi-partition: pruning via sub-partition(s) configured above
+        _temporal_cols_preview = ", ".join(f"`{c}`" for c in _all_partition_formats)
+        st.caption(
+            f"Partition pruning via subparticao(es) temporal(is): {_temporal_cols_preview}"
+        )
     elif partition_col and partition_col != date_col:
         st.caption(
             "Particao sem formato de data — "
@@ -934,6 +1069,16 @@ base_filter = st.text_input(
 
 st.header(f"{4 + _STEP_OFFSET}. Validar Configuracao")
 
+# Ensure single-partition date_col case populates _all_partition_formats too
+if len(detected_partition_cols) <= 1 and partition_col and partition_col == date_col:
+    if _partition_format is not None:
+        _all_partition_formats[partition_col] = _partition_format
+        _all_partition_is_integer_map[partition_col] = is_integer_temporal
+    elif not needs_date_expression:
+        # Native date/timestamp — mark as temporal (format=None, key present)
+        _all_partition_formats[partition_col] = None
+        _all_partition_is_integer_map[partition_col] = False
+
 dataset_config = DatasetConfig(
     schema=schema,
     table=table,
@@ -944,6 +1089,10 @@ dataset_config = DatasetConfig(
         partition_col is not None
         and _base_type(col_type_map.get(partition_col, "")) in _INTEGER_TYPES
     ),
+    # Canonical multi-partition fields
+    partition_columns=_all_partition_columns,
+    partition_formats=_all_partition_formats,
+    partition_is_integer_map=_all_partition_is_integer_map,
     date_column=date_col,
     temporal_axis_column=date_col if (partition_col and partition_col != date_col) else None,
     grain_type=GrainType(grain_type),
@@ -958,7 +1107,28 @@ dataset_config = DatasetConfig(
     base_filter_sql=base_filter or None,
 )
 
-if st.button("Validar Eixo Temporal", type="primary"):
+# --- Detectar mudanca de config vs. validacao anterior ---
+_prev_config = st.session_state.get("setup_config")
+_config_changed = False
+_validate_btn_label = "Validar Eixo Temporal"
+if _prev_config and st.session_state.get("setup_date_range"):
+    _new_fp = dataset_config.analysis_fingerprint()
+    _old_fp = _prev_config.analysis_fingerprint()
+    if _new_fp != _old_fp:
+        _config_changed = True
+        _validate_btn_label = "Re-validar Eixo Temporal"
+        st.warning(
+            "A configuracao temporal mudou desde a ultima validacao. "
+            "Clique em **Re-validar Eixo Temporal** para atualizar — "
+            "o profiling e selecao de colunas serao preservados."
+        )
+    else:
+        st.caption("Eixo temporal ja validado. Altere os campos acima se quiser re-validar.")
+
+if st.button(_validate_btn_label, type="primary"):
+    # Limpar profiling se config mudou (pode invalidar resultados)
+    if _config_changed:
+        st.session_state.pop("setup_profiles", None)
     client_id = _get_client_id()
     config_dict = {
         "schema": dataset_config.schema,
@@ -1128,7 +1298,36 @@ if n_profiling == 0:
 
 st.caption(f"**{n_profiling}** coluna(s) selecionada(s) para profiling.")
 
-if st.button("Executar Profiling", type="primary"):
+# --- Detectar se a selecao mudou em relacao ao profiling existente ---
+_existing_profiles = st.session_state.get("setup_profiles")
+_profiling_changed = False
+_profiling_btn_label = "Executar Profiling"
+if _existing_profiles:
+    _profiled_cols = {p.column_name for p in _existing_profiles}
+    _selected_now = {c["name"] for c in profiling_cols_selected}
+    _added = _selected_now - _profiled_cols
+    _removed = _profiled_cols - _selected_now
+    if _added or _removed:
+        _profiling_changed = True
+        _profiling_btn_label = "Re-executar Profiling"
+        _changes = []
+        if _added:
+            _changes.append(f"**+{len(_added)}** nova(s): {', '.join(sorted(_added))}")
+        if _removed:
+            _changes.append(f"**-{len(_removed)}** removida(s): {', '.join(sorted(_removed))}")
+        st.warning(
+            "A selecao de colunas mudou desde o ultimo profiling. "
+            + " | ".join(_changes) + "\n\n"
+            "Clique em **Re-executar Profiling** para atualizar a classificacao, "
+            "ou as etapas seguintes usarao o profiling anterior."
+        )
+    else:
+        st.caption(
+            "Profiling ja executado para estas colunas. "
+            "Altere a selecao acima se quiser re-executar."
+        )
+
+if st.button(_profiling_btn_label, type="primary"):
     client_id = _get_client_id()
     config_dict = {
         "schema": dataset_config.schema,
@@ -1220,10 +1419,23 @@ if not profiles:
 
 st.header("6. Classificacao e Selecao Final")
 
-st.caption(
-    "Revise a classificacao inferida e selecione as colunas para analise. "
-    "Use o dropdown para alterar o tipo semantico se a inferencia estiver incorreta."
-)
+_step6_col1, _step6_col2 = st.columns([3, 1])
+with _step6_col1:
+    st.caption(
+        "Revise a classificacao inferida e selecione as colunas para analise. "
+        "Use o dropdown para alterar o tipo semantico se a inferencia estiver incorreta."
+    )
+with _step6_col2:
+    if st.button(
+        "Voltar e re-selecionar colunas",
+        help="Limpa o profiling para que voce possa alterar a selecao de colunas no passo 5.",
+    ):
+        st.session_state.pop("setup_profiles", None)
+        # Limpar sel_* keys para que os checkboxes reflitam as novas escolhas
+        for k in list(st.session_state.keys()):
+            if isinstance(k, str) and (k.startswith("sel_") or k.startswith("type_")):
+                del st.session_state[k]
+        st.rerun()
 
 with st.expander("Como funciona a classificacao?", expanded=False):
     st.markdown(

@@ -175,3 +175,200 @@ class TestClearAnalysisState:
         self._clear(state)
         assert "proposal_service" in state
         assert "proposal_mode" in state
+
+
+# ---------------------------------------------------------------------------
+# Setup reset — "Recomecar Setup" button logic
+# ---------------------------------------------------------------------------
+
+class TestResetSetupState:
+    """Testa a logica de limpeza do botao 'Recomecar Setup' (01_setup.py:309-319)."""
+
+    _SETUP_PREFIXES = ("setup_", "prof_", "sel_", "type_", "pcol_")
+    _SETUP_EXACT_KEYS = ("show_compare_ui", "show_clone_ui")
+
+    def _reset(self, state: dict):
+        """Replica a logica de reset do Setup."""
+        for k in list(state.keys()):
+            if isinstance(k, str) and (
+                any(k.startswith(p) for p in self._SETUP_PREFIXES)
+                or k in self._SETUP_EXACT_KEYS
+            ):
+                del state[k]
+
+    def _make_state(self) -> dict:
+        return {
+            # Setup keys — DEVE ser limpo
+            "setup_validated": True,
+            "setup_config": "mock_config",
+            "setup_profiles": ["profile1"],
+            "setup_schema": "db",
+            "setup_date_range": "2026-01-01/2026-03-01",
+            "prof_col_a": True,
+            "prof_col_b": False,
+            "sel_col_a": True,
+            "sel_col_b": True,
+            "type_col_a": "NUMERIC",
+            "pcol_temporal_dt_ref": True,
+            "pcol_temporal_flag": False,
+            "show_compare_ui": True,
+            "show_clone_ui": False,
+            # Non-setup keys — NAO deve ser limpo
+            "client": "mock_client",
+            "rule_cart": [],
+            "proposal_mean_COL_A": "proposal",
+            "_analysis_fingerprint": "abc123",
+            123: "numeric_key",  # Non-string key
+        }
+
+    def test_clears_all_setup_prefixes(self):
+        state = self._make_state()
+        self._reset(state)
+        for prefix in self._SETUP_PREFIXES:
+            assert not any(
+                isinstance(k, str) and k.startswith(prefix) for k in state
+            ), f"Found key with prefix {prefix}"
+
+    def test_clears_exact_keys(self):
+        state = self._make_state()
+        self._reset(state)
+        assert "show_compare_ui" not in state
+        assert "show_clone_ui" not in state
+
+    def test_preserves_non_setup_keys(self):
+        state = self._make_state()
+        self._reset(state)
+        assert state["client"] == "mock_client"
+        assert state["rule_cart"] == []
+        assert state["proposal_mean_COL_A"] == "proposal"
+        assert state["_analysis_fingerprint"] == "abc123"
+
+    def test_ignores_non_string_keys(self):
+        state = self._make_state()
+        self._reset(state)
+        assert state[123] == "numeric_key"
+
+    def test_empty_state_noop(self):
+        state = {}
+        self._reset(state)
+        assert state == {}
+
+
+# ---------------------------------------------------------------------------
+# Go-back — "Voltar e re-selecionar colunas" button logic
+# ---------------------------------------------------------------------------
+
+class TestGoBackColumnSelection:
+    """Testa a logica de limpeza do botao 'Voltar e re-selecionar' (01_setup.py:1433-1437)."""
+
+    def _go_back(self, state: dict):
+        """Replica a logica de go-back."""
+        state.pop("setup_profiles", None)
+        for k in list(state.keys()):
+            if isinstance(k, str) and (k.startswith("sel_") or k.startswith("type_")):
+                del state[k]
+
+    def _make_state(self) -> dict:
+        return {
+            "setup_profiles": ["profile1", "profile2"],
+            "setup_validated": True,
+            "setup_config": "mock",
+            "sel_col_a": True,
+            "sel_col_b": False,
+            "type_col_a": "NUMERIC",
+            "type_col_b": "CATEGORICAL_LOW",
+            "prof_col_a": True,
+            "pcol_temporal_dt_ref": True,
+            "rule_cart": [],
+        }
+
+    def test_removes_profiles(self):
+        state = self._make_state()
+        self._go_back(state)
+        assert "setup_profiles" not in state
+
+    def test_clears_sel_prefix(self):
+        state = self._make_state()
+        self._go_back(state)
+        assert not any(isinstance(k, str) and k.startswith("sel_") for k in state)
+
+    def test_clears_type_prefix(self):
+        state = self._make_state()
+        self._go_back(state)
+        assert not any(isinstance(k, str) and k.startswith("type_") for k in state)
+
+    def test_preserves_other_setup_keys(self):
+        state = self._make_state()
+        self._go_back(state)
+        assert state["setup_validated"] is True
+        assert state["setup_config"] == "mock"
+        assert state["prof_col_a"] is True
+        assert state["pcol_temporal_dt_ref"] is True
+
+    def test_preserves_cart(self):
+        state = self._make_state()
+        self._go_back(state)
+        assert "rule_cart" in state
+
+    def test_no_profiles_noop(self):
+        state = {"sel_col": True, "type_col": "NUMERIC"}
+        self._go_back(state)
+        assert "sel_col" not in state
+        assert "type_col" not in state
+
+
+# ---------------------------------------------------------------------------
+# Column selection change detection
+# ---------------------------------------------------------------------------
+
+class TestColumnSelectionDiff:
+    """Testa a logica de deteccao de mudanca na selecao (01_setup.py:1305-1309)."""
+
+    def _detect_changes(
+        self, profiled_col_names: set[str], selected_col_names: set[str],
+    ) -> tuple[set[str], set[str], bool]:
+        """Replica a logica de deteccao de mudanca."""
+        added = selected_col_names - profiled_col_names
+        removed = profiled_col_names - selected_col_names
+        changed = bool(added or removed)
+        return added, removed, changed
+
+    def test_no_change(self):
+        added, removed, changed = self._detect_changes({"A", "B"}, {"A", "B"})
+        assert not changed
+        assert added == set()
+        assert removed == set()
+
+    def test_column_added(self):
+        added, removed, changed = self._detect_changes({"A", "B"}, {"A", "B", "C"})
+        assert changed
+        assert added == {"C"}
+        assert removed == set()
+
+    def test_column_removed(self):
+        added, removed, changed = self._detect_changes({"A", "B", "C"}, {"A", "B"})
+        assert changed
+        assert added == set()
+        assert removed == {"C"}
+
+    def test_column_swapped(self):
+        added, removed, changed = self._detect_changes({"A", "B"}, {"A", "C"})
+        assert changed
+        assert added == {"C"}
+        assert removed == {"B"}
+
+    def test_all_different(self):
+        added, removed, changed = self._detect_changes({"A", "B"}, {"C", "D"})
+        assert changed
+        assert added == {"C", "D"}
+        assert removed == {"A", "B"}
+
+    def test_empty_profiled(self):
+        added, removed, changed = self._detect_changes(set(), {"A"})
+        assert changed
+        assert added == {"A"}
+
+    def test_empty_selected(self):
+        added, removed, changed = self._detect_changes({"A"}, set())
+        assert changed
+        assert removed == {"A"}

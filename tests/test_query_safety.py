@@ -157,6 +157,38 @@ class TestSanitizeFilter:
         result = sanitize_filter("REUNION_TYPE = 'A'")
         assert result == "REUNION_TYPE = 'A'"
 
+    def test_keyword_as_substring_select_allowed(self):
+        result = sanitize_filter("SELECTED_FLAG = 1")
+        assert result == "SELECTED_FLAG = 1"
+
+    # --- SELECT bloqueado (subquery prevention) ---
+
+    def test_select_subquery_blocked(self):
+        with pytest.raises(ValueError, match="keyword bloqueada"):
+            sanitize_filter("col IN (SELECT id FROM users)")
+
+    def test_select_standalone_blocked(self):
+        with pytest.raises(ValueError, match="keyword bloqueada"):
+            sanitize_filter("SELECT * FROM users")
+
+    # --- Parenteses desbalanceados ---
+
+    def test_balanced_parens_allowed(self):
+        result = sanitize_filter("(COL1 = 1 OR COL2 = 2) AND COL3 > 0")
+        assert "COL1" in result
+
+    def test_unbalanced_open_paren_blocked(self):
+        with pytest.raises(ValueError, match="parênteses desbalanceados"):
+            sanitize_filter("(COL = 1 AND COL2 = 2")
+
+    def test_unbalanced_close_paren_blocked(self):
+        with pytest.raises(ValueError, match="parênteses desbalanceados"):
+            sanitize_filter("COL = 1) AND COL2 = 2")
+
+    def test_nested_parens_allowed(self):
+        result = sanitize_filter("((A = 1 OR B = 2) AND (C = 3))")
+        assert "A = 1" in result
+
 
 # ---------------------------------------------------------------------------
 # validate_reference_date

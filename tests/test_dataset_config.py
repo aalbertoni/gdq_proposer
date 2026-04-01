@@ -335,3 +335,148 @@ class TestPartitionIsTemporal:
             date_column="DT_ABERTURA",
         )
         assert cfg.partition_is_temporal is False
+
+    def test_true_when_sub_partition_has_format(self):
+        """Mixed: partition_0 non-temporal, partition_1 temporal via format."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["flag_ativo", "dt_ref"],
+            partition_formats={"dt_ref": "%Y%m%d"},
+            partition_is_integer_map={"dt_ref": True},
+            date_column="dt_ref",
+        )
+        assert cfg.partition_is_temporal is True
+
+    def test_false_when_no_columns_have_format(self):
+        """All partitions non-temporal and no match with date_column."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["flag_ativo", "cod_tipo"],
+            partition_formats={},
+            date_column="some_col",
+        )
+        assert cfg.partition_is_temporal is False
+
+    def test_true_when_date_column_in_partitions_no_format(self):
+        """Native date partition detected by matching date_column."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["flag", "dt_ref"],
+            partition_formats={},
+            date_column="dt_ref",
+        )
+        assert cfg.partition_is_temporal is True
+
+
+# ---------------------------------------------------------------------------
+# temporal_partition_columns
+# ---------------------------------------------------------------------------
+
+class TestTemporalPartitionColumns:
+    def test_mixed_returns_only_temporal(self):
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["flag_ativo", "dt_ref"],
+            partition_formats={"dt_ref": "%Y%m%d"},
+            partition_is_integer_map={"dt_ref": True},
+            date_column="dt_ref",
+        )
+        assert cfg.temporal_partition_columns == ["dt_ref"]
+
+    def test_all_temporal(self):
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["ano", "mes"],
+            partition_formats={"ano": "%Y", "mes": "%m"},
+            date_column="some_col",
+        )
+        assert cfg.temporal_partition_columns == ["ano", "mes"]
+
+    def test_none_temporal(self):
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["flag", "cod"],
+            partition_formats={},
+            date_column="other",
+        )
+        assert cfg.temporal_partition_columns == []
+
+    def test_native_date_via_date_column_match(self):
+        """date_column matches a partition without format → included."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=["flag", "dt_ref"],
+            partition_formats={},
+            date_column="dt_ref",
+        )
+        assert cfg.temporal_partition_columns == ["dt_ref"]
+
+    def test_empty_partitions(self):
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_columns=[],
+            date_column="dt_ref",
+        )
+        assert cfg.temporal_partition_columns == []
+
+
+# ---------------------------------------------------------------------------
+# Preset backward compatibility — legacy single-partition migration
+# ---------------------------------------------------------------------------
+
+class TestPresetBackwardCompat:
+    """Legacy presets with partition_column (singular) migrate correctly."""
+
+    def test_legacy_temporal_with_format(self):
+        """Legacy preset: partition_column=dt_ref, partition_format=%Y%m%d → temporal."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="dt_ref",
+            partition_format="%Y%m%d",
+            date_column="dt_ref",
+        )
+        assert cfg.partition_columns == ["dt_ref"]
+        assert "dt_ref" in cfg.partition_formats
+        assert cfg.partition_formats["dt_ref"] == "%Y%m%d"
+        assert cfg.partition_is_temporal is True
+
+    def test_legacy_non_temporal_no_format(self):
+        """Legacy preset: partition_column=flag, no format, different date_column → non-temporal."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="flag_ativo",
+            partition_format=None,
+            date_column="dt_ref",
+        )
+        assert cfg.partition_columns == ["flag_ativo"]
+        # Non-temporal: key absent from partition_formats
+        assert "flag_ativo" not in cfg.partition_formats
+        assert cfg.partition_is_temporal is False
+
+    def test_legacy_native_date_no_format(self):
+        """Legacy preset: partition_column == date_column, no explicit format → temporal (native)."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="dt_ref",
+            partition_format=None,
+            date_column="dt_ref",
+        )
+        assert cfg.partition_columns == ["dt_ref"]
+        # Native date: key present with None value
+        assert "dt_ref" in cfg.partition_formats
+        assert cfg.partition_formats["dt_ref"] is None
+        assert cfg.partition_is_temporal is True
+
+    def test_legacy_with_modern_fields_no_double_migration(self):
+        """If partition_columns already set, legacy fields don't duplicate."""
+        cfg = DatasetConfig(
+            schema="db", table="tb",
+            partition_column="dt_ref",
+            partition_format="%Y%m%d",
+            partition_columns=["dt_ref", "flag"],
+            partition_formats={"dt_ref": "%Y%m%d"},
+            date_column="dt_ref",
+        )
+        assert cfg.partition_columns == ["dt_ref", "flag"]
+        assert len(cfg.partition_formats) == 1
+        assert cfg.partition_formats["dt_ref"] == "%Y%m%d"

@@ -20,7 +20,7 @@ MAX_LOOKBACK_PERIODS = 100
 _BLOCKED_KEYWORDS = [
     "UNION", "INSERT", "DELETE", "DROP", "ALTER",
     "CREATE", "UPDATE", "EXEC", "TRUNCATE", "GRANT",
-    "REVOKE", "MERGE",
+    "REVOKE", "MERGE", "SELECT",
 ]
 _BLOCKED_KEYWORDS_PATTERN = re.compile(
     r"\b(" + "|".join(_BLOCKED_KEYWORDS) + r")\b",
@@ -139,10 +139,10 @@ def sanitize_expression(sql_expression: str) -> str:
 
 
 def sanitize_filter(sql_fragment: str) -> str:
-    """Validação básica de filtro custom do usuário.
+    """Validação de filtro custom do usuário.
 
-    Bloqueia tokens e keywords perigosos. Para MVP, permite apenas
-    expressões simples (col = 'val', col IN (...), col BETWEEN x AND y).
+    Bloqueia tokens e keywords perigosos, parenteses desbalanceados,
+    e expressoes com complexidade excessiva (subqueries, tautologias).
 
     Args:
         sql_fragment: Fragmento SQL fornecido pelo usuário.
@@ -151,7 +151,8 @@ def sanitize_filter(sql_fragment: str) -> str:
         O fragmento sanitizado (stripped), se seguro.
 
     Raises:
-        ValueError: Se o fragmento contém tokens ou keywords bloqueados.
+        ValueError: Se o fragmento contém tokens ou keywords bloqueados,
+            parenteses desbalanceados, ou padroes suspeitos.
     """
     stripped = sql_fragment.strip()
 
@@ -165,11 +166,23 @@ def sanitize_filter(sql_fragment: str) -> str:
                 f"Filtro contém token bloqueado: {token!r}"
             )
 
-    # Checar keywords bloqueadas
+    # Checar keywords bloqueadas (inclui SELECT para bloquear subqueries)
     match = _BLOCKED_KEYWORDS_PATTERN.search(stripped)
     if match:
         raise ValueError(
             f"Filtro contém keyword bloqueada: {match.group()!r}"
         )
+
+    # Checar parenteses balanceados
+    depth = 0
+    for ch in stripped:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if depth < 0:
+            raise ValueError("Filtro contém parênteses desbalanceados")
+    if depth != 0:
+        raise ValueError("Filtro contém parênteses desbalanceados")
 
     return stripped

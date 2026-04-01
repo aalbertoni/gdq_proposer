@@ -153,13 +153,14 @@ class QueryBuilder:
             String SQL para WHERE ou string vazia se nao aplicavel.
         """
         from infra.partition_pruning import (
-            compute_cutoff_date, build_partition_predicate, build_multi_column_predicate,
+            compute_cutoff_date, build_partition_predicate, build_selective_predicate,
         )
 
-        # Multi-column path (canonical)
+        # Multi-column path (canonical) — uses selective predicate to skip
+        # non-temporal columns (those absent from partition_formats dict).
         if partition_columns:
             cutoff = compute_cutoff_date(reference_date or None, lookback_value)
-            return build_multi_column_predicate(
+            return build_selective_predicate(
                 partition_columns,
                 partition_formats or {},
                 partition_is_integer_map or {},
