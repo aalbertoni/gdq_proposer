@@ -141,8 +141,8 @@ def sanitize_expression(sql_expression: str) -> str:
 def sanitize_filter(sql_fragment: str) -> str:
     """Validação de filtro custom do usuário.
 
-    Bloqueia tokens e keywords perigosos, parenteses desbalanceados,
-    e expressoes com complexidade excessiva (subqueries, tautologias).
+    Bloqueia tokens e keywords perigosos (incluindo SELECT para prevenir
+    subqueries) e parenteses desbalanceados.
 
     Args:
         sql_fragment: Fragmento SQL fornecido pelo usuário.
