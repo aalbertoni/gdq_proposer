@@ -228,3 +228,44 @@ def build_equality_filter(column: str, value, is_numeric_column: bool = False) -
         fragment = f'"{safe_col}" = \'{safe_val}\''
 
     return sanitize_filter(fragment)
+
+
+def build_gdq_equality_filter(column: str, value, is_numeric_column: bool = False) -> str:
+    """Constroi filtro de igualdade para uso em CustomSql GDQ (Spark).
+
+    Diferente de build_equality_filter (Athena), gera nomes de coluna
+    SEM aspas duplas e em UPPERCASE, conforme convencao GDQ.
+
+    Args:
+        column: Nome da coluna (validado como identificador).
+        value: Valor para comparacao.
+        is_numeric_column: Se True, trata valor como numerico (sem aspas).
+
+    Returns:
+        Fragmento SQL sanitizado: 'COL = valor' ou 'COL = \'valor\''.
+
+    Raises:
+        ValueError: Se coluna invalida, valor nao numerico quando esperado,
+            ou fragmento contem tokens perigosos.
+    """
+    safe_col = validate_identifier(column).upper()
+
+    if is_numeric_column:
+        str_val = str(value).strip()
+        try:
+            numeric_val = int(str_val)
+        except (ValueError, TypeError):
+            try:
+                numeric_val = float(str_val)
+                if math.isnan(numeric_val) or math.isinf(numeric_val):
+                    raise ValueError("NaN/Inf")
+            except (ValueError, TypeError):
+                raise ValueError(
+                    f"Valor '{value}' nao e numerico para coluna '{column}'"
+                )
+        fragment = f'{safe_col} = {numeric_val}'
+    else:
+        safe_val = str(value).replace("'", "''")
+        fragment = f"{safe_col} = '{safe_val}'"
+
+    return sanitize_filter(fragment)

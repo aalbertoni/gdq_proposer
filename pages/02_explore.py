@@ -1634,7 +1634,7 @@ with tab_numericas:
                                 min_history_points=_grain_policy.min_history,
                             )
 
-                            from infra.query_safety import build_equality_filter
+                            from infra.query_safety import build_equality_filter, build_gdq_equality_filter
                             from core.column_classifier import ATHENA_NUMERIC_TYPES
 
                             _seg_profile_obj = next(
@@ -1647,7 +1647,13 @@ with tab_numericas:
                             )
 
                             for _seg_val in _seg_selected:
+                                # Athena filter (com aspas duplas) — para queries de analise
                                 _seg_filter = build_equality_filter(
+                                    _seg_col, _seg_val,
+                                    is_numeric_column=_seg_is_numeric_type,
+                                )
+                                # GDQ filter (sem aspas, UPPERCASE) — para regras CustomSql
+                                _seg_gdq_filter = build_gdq_equality_filter(
                                     _seg_col, _seg_val,
                                     is_numeric_column=_seg_is_numeric_type,
                                 )
@@ -1677,7 +1683,7 @@ with tab_numericas:
                                 )
                                 _seg_proposals = _get_cached_proposals(
                                     _seg_cache_key,
-                                    lambda _h=_seg_hist, _f=_seg_filter, _l=_seg_label:
+                                    lambda _h=_seg_hist, _f=_seg_gdq_filter, _l=_seg_label:
                                         proposal_svc.propose_subpopulation_rules(
                                             _h, selected_col, dataset_config.table,
                                             _seg_baseline, _f, _l,

@@ -7,6 +7,7 @@ from infra.query_safety import (
     validate_reference_date,
     sanitize_filter,
     build_equality_filter,
+    build_gdq_equality_filter,
     LookbackMode,
     MAX_LOOKBACK_DAYS,
     MAX_LOOKBACK_PERIODS,
@@ -327,3 +328,49 @@ class TestBuildEqualityFilter:
     def test_numeric_zero(self):
         result = build_equality_filter("FLAG", 0, is_numeric_column=True)
         assert result == '"FLAG" = 0'
+
+
+class TestBuildGdqEqualityFilter:
+    """Testa build_gdq_equality_filter (sem aspas, UPPERCASE para GDQ/Spark)."""
+
+    def test_string_no_quotes_on_column(self):
+        result = build_gdq_equality_filter("TIPO_PRODUTO", "CONSIGNADO")
+        assert result == "TIPO_PRODUTO = 'CONSIGNADO'"
+
+    def test_lowercase_column_uppercased(self):
+        result = build_gdq_equality_filter("tipo_produto", "CONSIGNADO")
+        assert result == "TIPO_PRODUTO = 'CONSIGNADO'"
+
+    def test_string_value_with_single_quote_escaped(self):
+        result = build_gdq_equality_filter("NOME", "O'Brien")
+        assert result == "NOME = 'O''Brien'"
+
+    def test_numeric_int_no_quotes(self):
+        result = build_gdq_equality_filter("COD_SITU", 1, is_numeric_column=True)
+        assert result == "COD_SITU = 1"
+
+    def test_numeric_float(self):
+        result = build_gdq_equality_filter("VALOR", 3.14, is_numeric_column=True)
+        assert result == "VALOR = 3.14"
+
+    def test_numeric_bigint_precision(self):
+        big = 9007199254740993
+        result = build_gdq_equality_filter("ID", big, is_numeric_column=True)
+        assert result == f"ID = {big}"
+
+    def test_rejects_invalid_column(self):
+        with pytest.raises(ValueError, match="Identificador"):
+            build_gdq_equality_filter("col; DROP", "value")
+
+    def test_rejects_injection_in_value(self):
+        with pytest.raises(ValueError, match="token bloqueado"):
+            build_gdq_equality_filter("COL", "val; DROP TABLE x")
+
+    def test_rejects_numeric_nan(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_gdq_equality_filter("COL", "NaN", is_numeric_column=True)
+
+    def test_no_double_quotes_anywhere(self):
+        """Garante que NENHUM resultado contem aspas duplas."""
+        result = build_gdq_equality_filter("VLR_SALDO", "test")
+        assert '"' not in result
