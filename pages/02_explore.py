@@ -1634,7 +1634,7 @@ with tab_numericas:
                                 min_history_points=_grain_policy.min_history,
                             )
 
-                            from infra.query_safety import validate_identifier, sanitize_filter
+                            from infra.query_safety import build_equality_filter
                             from core.column_classifier import ATHENA_NUMERIC_TYPES
 
                             _seg_profile_obj = next(
@@ -1647,17 +1647,10 @@ with tab_numericas:
                             )
 
                             for _seg_val in _seg_selected:
-                                _safe_col = validate_identifier(_seg_col)
-                                if _seg_is_numeric_type:
-                                    # Numeric column: no quotes around value
-                                    _seg_filter = sanitize_filter(
-                                        f'"{_safe_col}" = {_seg_val}'
-                                    )
-                                else:
-                                    _safe_val = str(_seg_val).replace("'", "''")
-                                    _seg_filter = sanitize_filter(
-                                        f'"{_safe_col}" = \'{_safe_val}\''
-                                    )
+                                _seg_filter = build_equality_filter(
+                                    _seg_col, _seg_val,
+                                    is_numeric_column=_seg_is_numeric_type,
+                                )
                                 _seg_label = str(_seg_val)
 
                                 try:

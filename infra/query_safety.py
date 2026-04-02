@@ -186,3 +186,45 @@ def sanitize_filter(sql_fragment: str) -> str:
         raise ValueError("Filtro contém parênteses desbalanceados")
 
     return stripped
+
+
+def build_equality_filter(column: str, value, is_numeric_column: bool = False) -> str:
+    """Constroi filtro de igualdade seguro para uso em WHERE.
+
+    Args:
+        column: Nome da coluna (validado como identificador).
+        value: Valor para comparacao.
+        is_numeric_column: Se True, trata valor como numerico (sem aspas),
+            fazendo cast explicito para int/float.
+
+    Returns:
+        Fragmento SQL sanitizado: '"COL" = valor' ou '"COL" = \'valor\''.
+
+    Raises:
+        ValueError: Se coluna invalida, valor nao numerico quando esperado,
+            ou fragmento contem tokens perigosos.
+    """
+    safe_col = validate_identifier(column)
+
+    if is_numeric_column:
+        # Cast explicito: garante que o valor e de fato numerico
+        import math
+        try:
+            float_val = float(value)
+            if math.isnan(float_val) or math.isinf(float_val):
+                raise ValueError("NaN/Inf")
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"Valor '{value}' nao e numerico para coluna '{column}'"
+            )
+        # Use int if value is a whole number, float otherwise
+        if float_val == int(float_val) and not isinstance(value, float):
+            numeric_val = int(float_val)
+        else:
+            numeric_val = float_val
+        fragment = f'"{safe_col}" = {numeric_val}'
+    else:
+        safe_val = str(value).replace("'", "''")
+        fragment = f'"{safe_col}" = \'{safe_val}\''
+
+    return sanitize_filter(fragment)

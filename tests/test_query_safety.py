@@ -6,6 +6,7 @@ from infra.query_safety import (
     validate_lookback,
     validate_reference_date,
     sanitize_filter,
+    build_equality_filter,
     LookbackMode,
     MAX_LOOKBACK_DAYS,
     MAX_LOOKBACK_PERIODS,
@@ -226,43 +227,85 @@ class TestValidateReferenceDate:
 # Subpopulation filter construction safety
 # ---------------------------------------------------------------------------
 
-class TestSubpopulationFilterSafety:
-    """Testa que filtros de subpopulacao sao construidos de forma segura."""
+class TestBuildEqualityFilter:
+    """Testa build_equality_filter (funcao pura de query_safety)."""
 
-    def _build_filter(self, col: str, val: str) -> str:
-        safe_col = validate_identifier(col)
-        safe_val = val.replace("'", "''")
-        return sanitize_filter(f'"{safe_col}" = \'{safe_val}\'')
+    # --- String path (is_numeric_column=False) ---
 
-    def test_simple_value(self):
-        result = self._build_filter("TIPO_PRODUTO", "CONSIGNADO")
+    def test_string_simple_value(self):
+        result = build_equality_filter("TIPO_PRODUTO", "CONSIGNADO")
         assert result == '"TIPO_PRODUTO" = \'CONSIGNADO\''
 
-    def test_value_with_single_quote_escaped(self):
-        result = self._build_filter("NOME", "O'Brien")
+    def test_string_value_with_single_quote_escaped(self):
+        result = build_equality_filter("NOME", "O'Brien")
         assert result == '"NOME" = \'O\'\'Brien\''
 
-    def test_invalid_column_name_rejected(self):
+    def test_string_invalid_column_rejected(self):
         with pytest.raises(ValueError, match="Identificador"):
-            self._build_filter("col; DROP", "value")
+            build_equality_filter("col; DROP", "value")
 
-    def test_value_with_semicolon_rejected(self):
+    def test_string_semicolon_in_value_rejected(self):
         with pytest.raises(ValueError, match="token bloqueado"):
-            self._build_filter("COL", "val; DROP TABLE x")
+            build_equality_filter("COL", "val; DROP TABLE x")
 
-    def test_value_with_comment_rejected(self):
+    def test_string_comment_in_value_rejected(self):
         with pytest.raises(ValueError, match="token bloqueado"):
-            self._build_filter("COL", "val -- comment")
+            build_equality_filter("COL", "val -- comment")
 
-    def _build_numeric_filter(self, col: str, val) -> str:
-        """Simula construcao de filtro para coluna numerica (sem aspas no valor)."""
-        safe_col = validate_identifier(col)
-        return sanitize_filter(f'"{safe_col}" = {val}')
+    # --- Numeric path (is_numeric_column=True) ---
 
-    def test_numeric_value_no_quotes(self):
-        result = self._build_numeric_filter("COD_SITU", 1)
+    def test_numeric_int(self):
+        result = build_equality_filter("COD_SITU", 1, is_numeric_column=True)
         assert result == '"COD_SITU" = 1'
 
-    def test_numeric_value_bigint(self):
-        result = self._build_numeric_filter("COD_TIPO", 12345)
+    def test_numeric_bigint(self):
+        result = build_equality_filter("COD_TIPO", 12345, is_numeric_column=True)
         assert result == '"COD_TIPO" = 12345'
+
+    def test_numeric_float(self):
+        result = build_equality_filter("VALOR", 3.14, is_numeric_column=True)
+        assert result == '"VALOR" = 3.14'
+
+    def test_numeric_negative(self):
+        result = build_equality_filter("SALDO", -100, is_numeric_column=True)
+        assert result == '"SALDO" = -100'
+
+    def test_numeric_string_castable_to_int(self):
+        result = build_equality_filter("COD", "42", is_numeric_column=True)
+        assert result == '"COD" = 42'
+
+    def test_numeric_string_castable_to_float(self):
+        result = build_equality_filter("TAXA", "0.05", is_numeric_column=True)
+        assert result == '"TAXA" = 0.05'
+
+    def test_numeric_injection_or_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", "1 OR 1=1", is_numeric_column=True)
+
+    def test_numeric_injection_semicolon_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", "1; DROP TABLE x", is_numeric_column=True)
+
+    def test_numeric_injection_comment_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", "1 -- comment", is_numeric_column=True)
+
+    def test_numeric_none_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", None, is_numeric_column=True)
+
+    def test_numeric_nan_string_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", "NaN", is_numeric_column=True)
+
+    def test_numeric_infinity_string_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", "Infinity", is_numeric_column=True)
+
+    def test_numeric_float_nan_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", float("nan"), is_numeric_column=True)
+
+    def test_numeric_empty_string_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", "", is_numeric_column=True)
