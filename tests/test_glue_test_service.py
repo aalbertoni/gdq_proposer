@@ -42,17 +42,22 @@ class MockDatasetConfig:
 
 
 class MockProposal:
-    def __init__(self, rule_type, target_column, syntax="", suggested_values=None):
+    def __init__(self, rule_type, target_column, syntax="", suggested_values=None,
+                 subpopulation_filter=None):
         self.rule_type = rule_type
         self.target_column = target_column
         self.syntax = syntax
         self.suggested_values = suggested_values
+        self.subpopulation_filter = subpopulation_filter
 
 
 class MockSelection:
-    def __init__(self, rule_type, target_column, syntax, enabled=True, suggested_values=None):
+    def __init__(self, rule_type, target_column, syntax, enabled=True,
+                 suggested_values=None, subpopulation_filter=None):
         self.enabled = enabled
-        self.proposal = MockProposal(rule_type, target_column, syntax, suggested_values)
+        self.proposal = MockProposal(
+            rule_type, target_column, syntax, suggested_values, subpopulation_filter,
+        )
         self.final_gdq_syntax = syntax
 
 
@@ -212,6 +217,70 @@ class TestExtractColumns:
         ]
         cols = self.svc._extract_columns(sels)
         assert cols == ["COL_A", "COL_B", "COL_C"]
+
+    def test_subpopulation_column_included(self):
+        sels = [
+            MockSelection(
+                RuleType.MEAN_DUAL_GUARD, "VLR_SALDO", "r1",
+                subpopulation_filter="COD_SITU_OPCR = '1'",
+            ),
+        ]
+        cols = self.svc._extract_columns(sels)
+        assert "COD_SITU_OPCR" in cols
+        assert "VLR_SALDO" in cols
+
+    def test_subpopulation_column_deduplicated(self):
+        sels = [
+            MockSelection(
+                RuleType.MEAN_DUAL_GUARD, "VLR_SALDO", "r1",
+                subpopulation_filter="TIPO_PROD = 'A'",
+            ),
+            MockSelection(
+                RuleType.STDDEV_DUAL_GUARD, "VLR_SALDO", "r2",
+                subpopulation_filter="TIPO_PROD = 'A'",
+            ),
+        ]
+        cols = self.svc._extract_columns(sels)
+        assert cols == ["TIPO_PROD", "VLR_SALDO"]
+
+    def test_subpopulation_numeric_filter(self):
+        sels = [
+            MockSelection(
+                RuleType.MEAN_DUAL_GUARD, "VLR_SALDO", "r1",
+                subpopulation_filter="COD_SITU = 1",
+            ),
+        ]
+        cols = self.svc._extract_columns(sels)
+        assert "COD_SITU" in cols
+
+    def test_no_subpopulation_filter(self):
+        sels = [
+            MockSelection(RuleType.MEAN_DUAL_GUARD, "COL_A", "r1"),
+        ]
+        cols = self.svc._extract_columns(sels)
+        assert cols == ["COL_A"]
+
+
+class TestExtractColumnFromFilter:
+    def test_string_filter(self):
+        from services.glue_test_service import _extract_column_from_filter
+        assert _extract_column_from_filter("COD_SITU_OPCR = '1'") == "COD_SITU_OPCR"
+
+    def test_numeric_filter(self):
+        from services.glue_test_service import _extract_column_from_filter
+        assert _extract_column_from_filter("COD_SITU = 1") == "COD_SITU"
+
+    def test_lowercase_filter(self):
+        from services.glue_test_service import _extract_column_from_filter
+        assert _extract_column_from_filter("tipo_prod = 'X'") == "tipo_prod"
+
+    def test_empty_returns_none(self):
+        from services.glue_test_service import _extract_column_from_filter
+        assert _extract_column_from_filter("") is None
+
+    def test_invalid_returns_none(self):
+        from services.glue_test_service import _extract_column_from_filter
+        assert _extract_column_from_filter("123 = 'abc'") is None
 
 
 class TestThunderaPayloadSerialization:

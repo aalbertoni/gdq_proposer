@@ -12,7 +12,7 @@ import streamlit as st
 from pages.components.breadcrumb import render_breadcrumb
 from pages.components.theme import inject_global_css, badge_html
 
-from core.models.enums import ConfidenceLevel, get_rule_label
+from core.models.enums import ConfidenceLevel, RuleType, get_rule_label
 from core.gdq_capability import capability_badge, capability_warning
 from core.rule_explainer import explain_rule, explain_rule_detail
 from services.export_service import ExportService
@@ -274,6 +274,49 @@ if result.rules_text:
                 st.markdown("---")
 else:
     st.info("Nenhuma regra habilitada.")
+
+
+# ---------------------------------------------------------------------------
+# Colunas necessarias
+# ---------------------------------------------------------------------------
+
+_enabled_sels = [s for s in cart if s.enabled and s.final_gdq_syntax.strip()]
+if _enabled_sels:
+    import re
+    _col_pattern = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+    _all_columns: set[str] = set()
+    for _sel in _enabled_sels:
+        _p = _sel.proposal
+        # Target column
+        if _p.rule_type == RuleType.IS_PRIMARY_KEY:
+            if _p.suggested_values:
+                _all_columns.update(v.upper() for v in _p.suggested_values)
+        elif _p.target_column:
+            _all_columns.add(_p.target_column.upper())
+        # Coluna de subpopulacao (usada no WHERE)
+        if _p.subpopulation_filter:
+            _m = _col_pattern.match(_p.subpopulation_filter.strip())
+            if _m:
+                _all_columns.add(_m.group(1).upper())
+
+    # Coluna de date filter (usada no WHERE das regras filtradas)
+    if "dataset_config" in st.session_state:
+        _dc = st.session_state["dataset_config"]
+        if _dc.gdq_date_filter_expr:
+            _dm = _col_pattern.match(_dc.gdq_date_filter_expr.strip())
+            if _dm:
+                _all_columns.add(_dm.group(1).upper())
+
+    if _all_columns:
+        _sorted_cols = sorted(_all_columns)
+        st.subheader("Colunas")
+        st.caption(
+            "Todas as colunas necessarias para as regras habilitadas "
+            "(alvos, filtros de data e subpopulacao). "
+            "Use esta lista no campo COLUMNS_NAME do payload Thundera."
+        )
+        st.code(", ".join(_sorted_cols), language=None)
 
 
 # ---------------------------------------------------------------------------

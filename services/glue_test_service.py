@@ -6,6 +6,7 @@ Inclui correlacao de resultados com o carrinho (write-back).
 """
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -15,6 +16,19 @@ from core.models.enums import RuleType
 from core.models.rule_selection import _syntax_hash
 
 logger = logging.getLogger(__name__)
+
+# Pattern para extrair nome de coluna de filtro de igualdade: "COL = ..."
+_FILTER_COL_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def _extract_column_from_filter(filter_expr: str) -> str | None:
+    """Extrai nome de coluna de um filtro de igualdade simples.
+
+    Aceita: 'COL = valor', 'COL = 123', etc.
+    Retorna None se não conseguir extrair.
+    """
+    m = _FILTER_COL_PATTERN.match(filter_expr.strip())
+    return m.group(1) if m else None
 
 
 def normalize_syntax(syntax: str) -> str:
@@ -127,8 +141,11 @@ class GlueTestService:
     def _extract_columns(self, selections: list) -> list[str]:
         """Extrai nomes unicos de colunas referenciadas nas regras.
 
+        Inclui: target_column, colunas de IsPrimaryKey, e colunas
+        usadas em filtros de subpopulacao (necessarias no COLUMNS_NAME
+        para o Thundera conseguir executar queries com WHERE).
+
         Formato Thundera: UPPERCASE sem aspas (ex: 'VLR_SALDO').
-        As aspas sao adicionadas pela serializacao JSON.
 
         Args:
             selections: Lista de RuleSelection.
@@ -142,11 +159,16 @@ class GlueTestService:
                 continue
             p = sel.proposal
             if p.rule_type == RuleType.IS_PRIMARY_KEY:
-                # IsPrimaryKey: columns in suggested_values (target_column is None)
                 if p.suggested_values:
                     columns.update(p.suggested_values)
             elif p.target_column:
                 columns.add(p.target_column)
+            # Coluna de subpopulacao (usada no WHERE do CustomSql)
+            subpop_filter = getattr(p, "subpopulation_filter", None)
+            if subpop_filter:
+                subpop_col = _extract_column_from_filter(subpop_filter)
+                if subpop_col:
+                    columns.add(subpop_col)
         return sorted(c.upper() for c in columns)
 
     def run_test(
