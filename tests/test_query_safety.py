@@ -253,3 +253,16 @@ class TestSubpopulationFilterSafety:
     def test_value_with_comment_rejected(self):
         with pytest.raises(ValueError, match="token bloqueado"):
             self._build_filter("COL", "val -- comment")
+
+    def _build_numeric_filter(self, col: str, val) -> str:
+        """Simula construcao de filtro para coluna numerica (sem aspas no valor)."""
+        safe_col = validate_identifier(col)
+        return sanitize_filter(f'"{safe_col}" = {val}')
+
+    def test_numeric_value_no_quotes(self):
+        result = self._build_numeric_filter("COD_SITU", 1)
+        assert result == '"COD_SITU" = 1'
+
+    def test_numeric_value_bigint(self):
+        result = self._build_numeric_filter("COD_TIPO", 12345)
+        assert result == '"COD_TIPO" = 12345'

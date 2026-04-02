@@ -1635,13 +1635,29 @@ with tab_numericas:
                             )
 
                             from infra.query_safety import validate_identifier, sanitize_filter
+                            from core.column_classifier import ATHENA_NUMERIC_TYPES
+
+                            _seg_profile_obj = next(
+                                (p for p in profiles if p.column_name == _seg_col), None,
+                            )
+                            _seg_is_numeric_type = (
+                                _seg_profile_obj is not None
+                                and _seg_profile_obj.athena_type.split("(")[0].strip().lower()
+                                    in ATHENA_NUMERIC_TYPES
+                            )
 
                             for _seg_val in _seg_selected:
                                 _safe_col = validate_identifier(_seg_col)
-                                _safe_val = str(_seg_val).replace("'", "''")
-                                _seg_filter = sanitize_filter(
-                                    f'"{_safe_col}" = \'{_safe_val}\''
-                                )
+                                if _seg_is_numeric_type:
+                                    # Numeric column: no quotes around value
+                                    _seg_filter = sanitize_filter(
+                                        f'"{_safe_col}" = {_seg_val}'
+                                    )
+                                else:
+                                    _safe_val = str(_seg_val).replace("'", "''")
+                                    _seg_filter = sanitize_filter(
+                                        f'"{_safe_col}" = \'{_safe_val}\''
+                                    )
                                 _seg_label = str(_seg_val)
 
                                 try:
