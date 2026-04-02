@@ -22,8 +22,8 @@ from core.models.rule_selection import UserOverride
 
 # Mapeamento: RuleType → função SQL agregada no SELECT
 _RULE_TYPE_SQL_FUNC = {
-    RuleType.MEAN_DUAL_GUARD: 'avg(cast("{col}" as double))',
-    RuleType.STDDEV_DUAL_GUARD: 'stddev(cast("{col}" as double))',
+    RuleType.MEAN_DUAL_GUARD: 'avg(cast({col} as double))',
+    RuleType.STDDEV_DUAL_GUARD: 'stddev(cast({col} as double))',
     RuleType.ROW_COUNT_DUAL_GUARD: 'cast(count(*) as double)',
 }
 
@@ -109,7 +109,7 @@ def _convert_dual_guard(
     overrides: UserOverride | None,
 ) -> str:
     """Converte Mean/StdDev/RowCount dual guard para CustomSql com WHERE."""
-    col = proposal.target_column or ""
+    col = (proposal.target_column or "").upper()
     rt = proposal.rule_type
 
     # Build SELECT expression
@@ -162,13 +162,13 @@ def _convert_completeness(
     overrides: UserOverride | None,
 ) -> str:
     """Converte Completeness para CustomSql count(col)/count(*) com WHERE."""
-    col = proposal.target_column or ""
+    col = (proposal.target_column or "").upper()
     threshold = proposal.suggested_lower or 1.0
     if overrides and overrides.custom_lower is not None:
         threshold = overrides.custom_lower
 
     sql_inner = _build_select_with_where(
-        f'select cast(count("{col}") as double) / nullif(count(*), 0)',
+        f'select cast(count({col}) as double) / nullif(count(*), 0)',
         date_filter_where,
     )
     return f'CustomSql "{sql_inner}" >= {threshold:.2f}'
@@ -180,7 +180,7 @@ def _convert_allowed_values(
     overrides: UserOverride | None,
 ) -> str:
     """Converte AllowedValues para CustomSql count de valores fora do domínio com WHERE."""
-    col = proposal.target_column or ""
+    col = (proposal.target_column or "").upper()
     values = proposal.suggested_values or []
     if overrides and overrides.custom_values is not None:
         values = overrides.custom_values
@@ -201,7 +201,7 @@ def _convert_allowed_values(
     in_list = ", ".join(formatted)
     # Count rows outside allowed values — should be 0
     sql_inner = _build_select_with_where(
-        f'select cast(count(case when cast("{col}" as varchar) not in ({in_list}) then 1 end) as double)',
+        f'select cast(count(case when cast({col} as varchar) not in ({in_list}) then 1 end) as double)',
         date_filter_where,
     )
     return f'CustomSql "{sql_inner}" = 0'
@@ -213,13 +213,13 @@ def _convert_distinct_count(
     overrides: UserOverride | None,
 ) -> str:
     """Converte DistinctValuesCount exato para CustomSql com WHERE."""
-    col = proposal.target_column or ""
+    col = (proposal.target_column or "").upper()
     count = int(proposal.suggested_lower) if proposal.suggested_lower else 0
     if overrides and overrides.custom_lower is not None:
         count = int(overrides.custom_lower)
 
     sql_inner = _build_select_with_where(
-        f'select cast(count(distinct "{col}") as double)',
+        f'select cast(count(distinct {col}) as double)',
         date_filter_where,
     )
     return f'CustomSql "{sql_inner}" = {count}'
@@ -231,7 +231,7 @@ def _convert_distinct_count_range(
     overrides: UserOverride | None,
 ) -> str:
     """Converte DistinctValuesCount range para CustomSql com WHERE."""
-    col = proposal.target_column or ""
+    col = (proposal.target_column or "").upper()
     lower = proposal.suggested_lower or 0
     upper = proposal.suggested_upper or 999999
     if overrides:
@@ -241,7 +241,7 @@ def _convert_distinct_count_range(
             upper = overrides.custom_upper
 
     sql_inner = _build_select_with_where(
-        f'select cast(count(distinct "{col}") as double)',
+        f'select cast(count(distinct {col}) as double)',
         date_filter_where,
     )
     return (
@@ -256,16 +256,16 @@ def _convert_category_frequency(
     overrides: UserOverride | None,
 ) -> str:
     """Converte Category Frequency (static/dynamic/hybrid) para CustomSql com WHERE."""
-    col = proposal.target_column or ""
+    col = (proposal.target_column or "").upper()
     value = proposal.category_value or ""
     athena_type = proposal.target_column_type or "string"
 
     # Build the frequency SQL with WHERE
     if athena_type in ("bigint", "int", "integer", "smallint", "tinyint", "double", "float", "decimal"):
-        cast_expr = f'cast("{col}" as varchar)'
+        cast_expr = f'cast({col} as varchar)'
         val_compare = f"'{value}'"
     else:
-        cast_expr = f'"{col}"'
+        cast_expr = col
         val_compare = f"'{value}'"
 
     freq_sql = (
@@ -327,7 +327,7 @@ def _convert_percentile(
     overrides: UserOverride | None,
 ) -> str:
     """Converte percentile band para CustomSql com WHERE."""
-    col = proposal.target_column or ""
+    col = (proposal.target_column or "").upper()
     # Use approx_percentile for the specific quantile
     quantile = getattr(proposal, "percentile_quantile", 0.99) or 0.99
 
@@ -348,7 +348,7 @@ def _convert_percentile(
             margin_enabled = overrides.margin_enabled
 
     sql_inner = _build_select_with_where(
-        f'select approx_percentile(cast("{col}" as double), {quantile})',
+        f'select approx_percentile(cast({col} as double), {quantile})',
         date_filter_where,
     )
 

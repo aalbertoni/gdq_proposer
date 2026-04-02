@@ -33,7 +33,7 @@ class TestMeanDualGuard:
         result = generate_filtered_rule(proposal, DATE_FILTER)
         assert result is not None
         assert 'from primary where ANO_MES_RFRC_CRED' in result
-        assert 'avg(cast("VLR_CNTR_LIQO_OPCR" as double))' in result
+        assert 'avg(cast(VLR_CNTR_LIQO_OPCR as double))' in result
 
     def test_contains_avg_last_in_between(self):
         proposal = _make_proposal()
@@ -91,7 +91,7 @@ class TestCompleteness:
         )
         result = generate_filtered_rule(proposal, DATE_FILTER)
         assert result is not None
-        assert 'count("VLR_CNTR_LIQO_OPCR")' in result
+        assert 'count(VLR_CNTR_LIQO_OPCR)' in result
         assert "nullif(count(*), 0)" in result
         assert ">= 0.95" in result
         assert "from primary where" in result
@@ -129,7 +129,7 @@ class TestDistinctCount:
         )
         result = generate_filtered_rule(proposal, DATE_FILTER)
         assert result is not None
-        assert 'count(distinct "UF")' in result
+        assert 'count(distinct UF)' in result
         assert "= 27" in result
 
     def test_range_with_where(self):
