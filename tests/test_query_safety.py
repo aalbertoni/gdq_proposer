@@ -306,6 +306,24 @@ class TestBuildEqualityFilter:
         with pytest.raises(ValueError, match="nao e numerico"):
             build_equality_filter("COL", float("nan"), is_numeric_column=True)
 
+    def test_numeric_float_inf_rejected(self):
+        with pytest.raises(ValueError, match="nao e numerico"):
+            build_equality_filter("COL", float("inf"), is_numeric_column=True)
+
     def test_numeric_empty_string_rejected(self):
         with pytest.raises(ValueError, match="nao e numerico"):
             build_equality_filter("COL", "", is_numeric_column=True)
+
+    def test_numeric_bigint_precision_preserved(self):
+        """BIGINT grande nao perde precisao (nao passa por float)."""
+        big = 9007199254740993  # > 2^53
+        result = build_equality_filter("ID", big, is_numeric_column=True)
+        assert result == f'"ID" = {big}'
+
+    def test_numeric_bigint_string_precision_preserved(self):
+        result = build_equality_filter("ID", "9007199254740993", is_numeric_column=True)
+        assert result == '"ID" = 9007199254740993'
+
+    def test_numeric_zero(self):
+        result = build_equality_filter("FLAG", 0, is_numeric_column=True)
+        assert result == '"FLAG" = 0'

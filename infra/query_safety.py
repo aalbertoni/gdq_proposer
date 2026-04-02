@@ -5,6 +5,7 @@ Garante que identificadores, lookback e filtros customizados
 não introduzam SQL injection ou operações destrutivas.
 """
 
+import math
 import re
 from enum import Enum
 
@@ -207,21 +208,20 @@ def build_equality_filter(column: str, value, is_numeric_column: bool = False) -
     safe_col = validate_identifier(column)
 
     if is_numeric_column:
-        # Cast explicito: garante que o valor e de fato numerico
-        import math
+        # Cast explicito: garante que o valor e de fato numerico.
+        # Tenta int primeiro para preservar precisao de BIGINT/DECIMAL.
+        str_val = str(value).strip()
         try:
-            float_val = float(value)
-            if math.isnan(float_val) or math.isinf(float_val):
-                raise ValueError("NaN/Inf")
+            numeric_val = int(str_val)
         except (ValueError, TypeError):
-            raise ValueError(
-                f"Valor '{value}' nao e numerico para coluna '{column}'"
-            )
-        # Use int if value is a whole number, float otherwise
-        if float_val == int(float_val) and not isinstance(value, float):
-            numeric_val = int(float_val)
-        else:
-            numeric_val = float_val
+            try:
+                numeric_val = float(str_val)
+                if math.isnan(numeric_val) or math.isinf(numeric_val):
+                    raise ValueError("NaN/Inf")
+            except (ValueError, TypeError):
+                raise ValueError(
+                    f"Valor '{value}' nao e numerico para coluna '{column}'"
+                )
         fragment = f'"{safe_col}" = {numeric_val}'
     else:
         safe_val = str(value).replace("'", "''")
