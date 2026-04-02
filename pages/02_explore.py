@@ -1670,44 +1670,55 @@ with tab_numericas:
                                     )
                                     continue
 
-                                # Generate subpopulation proposals
+                                # Generate subpopulation proposals (Mean + StdDev + Completeness)
                                 _seg_cache_key = (
                                     f"proposal_subpop_{selected_col}_{_seg_col}_{_seg_val}"
                                     f"_{mean_n}_{mean_k}_{mean_margin}_{mean_margin_on}_{effective_lookback}"
                                 )
                                 _seg_proposals = _get_cached_proposals(
                                     _seg_cache_key,
-                                    lambda _h=_seg_hist, _f=_seg_filter, _l=_seg_label: [
-                                        p for p in proposal_svc.propose_subpopulation_rules(
+                                    lambda _h=_seg_hist, _f=_seg_filter, _l=_seg_label:
+                                        proposal_svc.propose_subpopulation_rules(
                                             _h, selected_col, dataset_config.table,
                                             _seg_baseline, _f, _l,
-                                        )
-                                        if "mean" in p.rule_type.value
-                                    ],
+                                        ),
                                 )
 
                                 if _seg_proposals:
-                                    _sp = _seg_proposals[0]
-                                    _sp_vals = _sp.history_values
-                                    _sp_dates = _sp.history_dates
-                                    _sp_cov = f"{_sp.backtest.coverage_pct:.0f}%" if _sp.backtest else "N/A"
-                                    _sp_conf = _confidence_badge(_sp.confidence)
+                                    with st.expander(
+                                        f"**{_seg_val}** — {len(_seg_proposals)} regras",
+                                        expanded=len(_seg_selected) <= 3,
+                                    ):
+                                        for _sp in _seg_proposals:
+                                            _sp_vals = _sp.history_values
+                                            _sp_dates = _sp.history_dates
+                                            _sp_cov = f"{_sp.backtest.coverage_pct:.0f}%" if _sp.backtest else "N/A"
+                                            _sp_conf = _confidence_badge(_sp.confidence)
+                                            _sp_metric = _sp.metric_name.capitalize()
 
-                                    st.markdown(f"**{_seg_val}** — Cobertura: {_sp_cov} | {_sp_conf}")
+                                            st.markdown(
+                                                f"**{_sp_metric}** — "
+                                                f"Cobertura: {_sp_cov} | {_sp_conf}"
+                                            )
 
-                                    if _sp_vals and _sp_dates:
-                                        _render_rolling_chart(
-                                            _sp_vals, _sp_dates, mean_n, mean_k, mean_margin,
-                                            f"Mean ({_seg_val})",
-                                            margin_enabled=mean_margin_on,
-                                            chart_key=f"chart_subpop_{selected_col}_{_seg_val}",
-                                        )
+                                            if _sp_vals and _sp_dates and _sp.rule_type.value != "completeness":
+                                                _render_rolling_chart(
+                                                    _sp_vals, _sp_dates,
+                                                    mean_n, mean_k, mean_margin,
+                                                    f"{_sp_metric} ({_seg_val})",
+                                                    margin_enabled=mean_margin_on,
+                                                    chart_key=f"chart_subpop_{selected_col}_{_seg_val}_{_sp.metric_name}",
+                                                )
 
-                                    _render_add_to_cart(
-                                        _sp, f"Mean [{_seg_val}]",
-                                        f"subpop_mean_{selected_col}_{_seg_val}",
-                                        fp=_fp,
-                                    )
+                                            _render_add_to_cart(
+                                                _sp,
+                                                f"{_sp_metric} [{_seg_val}]",
+                                                f"subpop_{_sp.metric_name}_{selected_col}_{_seg_val}",
+                                                fp=_fp,
+                                            )
+
+                                            if _sp != _seg_proposals[-1]:
+                                                st.divider()
                                 else:
                                     st.caption(f"`{_seg_val}`: sem proposta viavel.")
 
