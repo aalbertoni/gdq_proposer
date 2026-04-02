@@ -545,6 +545,7 @@ if _run_state != "running" and st.button(
 
     except Exception as e:
         st.session_state["glue_run_state"] = "done"
+        st.session_state["glue_run_error"] = str(e)
         status_placeholder.error(f"Erro ao executar teste: {e}")
 
     st.rerun()
@@ -554,7 +555,13 @@ if _run_state == "done":
     if st.button("Nova execucao", help="Libera para uma nova execucao do teste."):
         st.session_state["glue_run_state"] = "idle"
         st.session_state["glue_run_result"] = None
+        st.session_state.pop("glue_run_error", None)
         st.rerun()
+
+# Show persisted error (exception during execution)
+_run_error = st.session_state.get("glue_run_error")
+if _run_state == "done" and _run_error and not _run_result:
+    st.error(f"Erro ao executar teste: {_run_error}")
 
 # Show persisted result
 if _run_state == "done" and _run_result:
