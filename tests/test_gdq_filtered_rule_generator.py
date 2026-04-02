@@ -198,3 +198,74 @@ class TestLagStrategy:
         result = generate_filtered_rule(proposal, lag_filter)
         assert result is not None
         assert "add_months" in result
+
+
+class TestColumnSanitization:
+    """Testes de sanitizacao de nomes de coluna via validate_identifier."""
+
+    def test_rejects_sql_injection_in_column(self):
+        proposal = _make_proposal(target_column="x); DROP TABLE t--")
+        with pytest.raises(ValueError, match="Identificador"):
+            generate_filtered_rule(proposal, DATE_FILTER)
+
+    def test_rejects_column_with_spaces(self):
+        proposal = _make_proposal(target_column="col name")
+        with pytest.raises(ValueError, match="Identificador"):
+            generate_filtered_rule(proposal, DATE_FILTER)
+
+    def test_rejects_column_with_semicolon(self):
+        proposal = _make_proposal(target_column="col;drop")
+        with pytest.raises(ValueError, match="Identificador"):
+            generate_filtered_rule(proposal, DATE_FILTER)
+
+    def test_rejects_column_with_quotes(self):
+        proposal = _make_proposal(target_column='col"name')
+        with pytest.raises(ValueError, match="Identificador"):
+            generate_filtered_rule(proposal, DATE_FILTER)
+
+    def test_rejects_column_with_parentheses(self):
+        proposal = _make_proposal(target_column="col()")
+        with pytest.raises(ValueError, match="Identificador"):
+            generate_filtered_rule(proposal, DATE_FILTER)
+
+    def test_valid_column_with_underscores(self):
+        proposal = _make_proposal(target_column="VLR_SALD_AVNC_OPCR")
+        result = generate_filtered_rule(proposal, DATE_FILTER)
+        assert result is not None
+        assert "VLR_SALD_AVNC_OPCR" in result
+
+    def test_lowercase_column_uppercased(self):
+        proposal = _make_proposal(target_column="vlr_saldo")
+        result = generate_filtered_rule(proposal, DATE_FILTER)
+        assert result is not None
+        assert "VLR_SALDO" in result
+        assert "vlr_saldo" not in result
+
+    def test_completeness_rejects_injection(self):
+        proposal = _make_proposal(
+            rule_type=RuleType.COMPLETENESS,
+            target_column="x union select 1--",
+            suggested_lower=1.0,
+        )
+        with pytest.raises(ValueError, match="Identificador"):
+            generate_filtered_rule(proposal, DATE_FILTER)
+
+    def test_distinct_count_rejects_injection(self):
+        proposal = _make_proposal(
+            rule_type=RuleType.DISTINCT_COUNT_EXACT,
+            target_column="col; DROP TABLE",
+            suggested_lower=5,
+        )
+        with pytest.raises(ValueError, match="Identificador"):
+            generate_filtered_rule(proposal, DATE_FILTER)
+
+    def test_category_frequency_rejects_injection(self):
+        proposal = _make_proposal(
+            rule_type=RuleType.CATEGORY_FREQUENCY_STATIC,
+            target_column="x' OR 1=1--",
+            category_value="A",
+            suggested_lower=10.0,
+            suggested_upper=90.0,
+        )
+        with pytest.raises(ValueError, match="Identificador"):
+            generate_filtered_rule(proposal, DATE_FILTER)

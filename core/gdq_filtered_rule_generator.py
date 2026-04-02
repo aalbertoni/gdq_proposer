@@ -18,6 +18,15 @@ from core.models.dual_guard import DualGuardSpec, CUSTOM_SQL_PROFILE
 from core.models.enums import MetricRef, RuleType
 from core.models.rule_proposal import RuleProposal
 from core.models.rule_selection import UserOverride
+from infra.query_safety import validate_identifier
+
+
+def _safe_col(proposal_target_column: str | None) -> str:
+    """Valida e normaliza nome de coluna para uso em CustomSql."""
+    col = proposal_target_column or ""
+    if col:
+        validate_identifier(col)
+    return col.upper()
 
 
 # Mapeamento: RuleType → função SQL agregada no SELECT
@@ -109,7 +118,7 @@ def _convert_dual_guard(
     overrides: UserOverride | None,
 ) -> str:
     """Converte Mean/StdDev/RowCount dual guard para CustomSql com WHERE."""
-    col = (proposal.target_column or "").upper()
+    col = _safe_col(proposal.target_column)
     rt = proposal.rule_type
 
     # Build SELECT expression
@@ -162,7 +171,7 @@ def _convert_completeness(
     overrides: UserOverride | None,
 ) -> str:
     """Converte Completeness para CustomSql count(col)/count(*) com WHERE."""
-    col = (proposal.target_column or "").upper()
+    col = _safe_col(proposal.target_column)
     threshold = proposal.suggested_lower or 1.0
     if overrides and overrides.custom_lower is not None:
         threshold = overrides.custom_lower
@@ -180,7 +189,7 @@ def _convert_allowed_values(
     overrides: UserOverride | None,
 ) -> str:
     """Converte AllowedValues para CustomSql count de valores fora do domínio com WHERE."""
-    col = (proposal.target_column or "").upper()
+    col = _safe_col(proposal.target_column)
     values = proposal.suggested_values or []
     if overrides and overrides.custom_values is not None:
         values = overrides.custom_values
@@ -213,7 +222,7 @@ def _convert_distinct_count(
     overrides: UserOverride | None,
 ) -> str:
     """Converte DistinctValuesCount exato para CustomSql com WHERE."""
-    col = (proposal.target_column or "").upper()
+    col = _safe_col(proposal.target_column)
     count = int(proposal.suggested_lower) if proposal.suggested_lower else 0
     if overrides and overrides.custom_lower is not None:
         count = int(overrides.custom_lower)
@@ -231,7 +240,7 @@ def _convert_distinct_count_range(
     overrides: UserOverride | None,
 ) -> str:
     """Converte DistinctValuesCount range para CustomSql com WHERE."""
-    col = (proposal.target_column or "").upper()
+    col = _safe_col(proposal.target_column)
     lower = proposal.suggested_lower or 0
     upper = proposal.suggested_upper or 999999
     if overrides:
@@ -256,7 +265,7 @@ def _convert_category_frequency(
     overrides: UserOverride | None,
 ) -> str:
     """Converte Category Frequency (static/dynamic/hybrid) para CustomSql com WHERE."""
-    col = (proposal.target_column or "").upper()
+    col = _safe_col(proposal.target_column)
     value = proposal.category_value or ""
     athena_type = proposal.target_column_type or "string"
 
@@ -327,7 +336,7 @@ def _convert_percentile(
     overrides: UserOverride | None,
 ) -> str:
     """Converte percentile band para CustomSql com WHERE."""
-    col = (proposal.target_column or "").upper()
+    col = _safe_col(proposal.target_column)
     # Use approx_percentile for the specific quantile
     quantile = getattr(proposal, "percentile_quantile", 0.99) or 0.99
 
