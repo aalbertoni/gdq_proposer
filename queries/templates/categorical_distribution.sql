@@ -7,7 +7,8 @@ SELECT
   CAST("{{ col }}" AS VARCHAR) as category_value,
   COUNT(*) as value_count,
   COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (PARTITION BY {{ date_expression }}) as value_pct
-FROM {{ table_ref }}
+FROM {{ table_ref }}{% if tablesample_clause %} {{ tablesample_clause }}{% endif %}
+
 WHERE {{ date_expression }} >= {{ date_lookback_expr }}
 {% if partition_filter %}
   AND {{ partition_filter }}

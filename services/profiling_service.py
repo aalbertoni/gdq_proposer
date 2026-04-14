@@ -203,6 +203,7 @@ class ProfilingService:
                 base_filter=base_filter,
                 partition_filter=partition_filter,
                 reference_date=config.reference_date or "",
+                sample_pct=config.sampling.sample_pct if config.is_sampling_active else None,
             )
 
             df = self.client.execute_df(
@@ -445,6 +446,7 @@ class ProfilingService:
             base_filter=base_filter,
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
+            sample_pct=config.sampling.sample_pct if config.is_sampling_active else None,
         )
 
         df = self.client.execute_df(
@@ -538,6 +540,7 @@ class ProfilingService:
             base_filter=base_filter,
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
+            sample_pct=config.sampling.sample_pct if config.is_sampling_active else None,
         )
         return self.client.execute_df(
             sql,

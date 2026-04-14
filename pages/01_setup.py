@@ -21,6 +21,8 @@ from pages.components.theme import inject_global_css
 
 from config import load_config
 from core.models.dataset_config import DatasetConfig
+from core.models.sampling_config import SamplingConfig
+from core.sampling_calculator import compute_sample_size, compute_sample_pct, MIN_POPULATION
 from core.models.enums import (
     DateFilterGranularity,
     DateReferenceStrategy,
@@ -128,6 +130,7 @@ def _build_config_from_dict(config_dict):
         lookback_mode=LookbackMode(config_dict.get("lookback_mode", "last_n_periods")),
         base_filter_sql=config_dict.get("base_filter_sql"),
         reference_date=config_dict.get("reference_date"),
+        sampling=st.session_state.get("setup_sampling_config", SamplingConfig()),
     )
 
 
@@ -211,6 +214,7 @@ def _load_preset(path: Path, profiling_svc, dataset_svc) -> bool:
         base_filter_sql=data.get("base_filter_sql"),
         selected_columns=data.get("selected_columns", []),
         unique_key_columns=data.get("unique_key_columns", []),
+        sampling=st.session_state.get("setup_sampling_config", SamplingConfig()),
     )
 
     # Preencher reference_date a partir do date_range do preset
@@ -1080,6 +1084,7 @@ dataset_config = DatasetConfig(
     gdq_date_filter_expr=_gdq_date_filter_expr,
     gdq_date_filter_format=_gdq_date_filter_format,
     base_filter_sql=base_filter or None,
+    sampling=st.session_state.get("setup_sampling_config", SamplingConfig()),
 )
 
 # --- Detectar mudanca de config vs. validacao anterior ---
@@ -1208,6 +1213,94 @@ if _n_periods > 0 and _n_periods < 7:
         f"Regras serao geradas com confianca reduzida. "
         f"Recomendamos recalibrar apos acumular mais historico."
     )
+
+
+# ===================================================================
+# STEP 4b: Amostragem Estatistica (opcional)
+# ===================================================================
+
+_estimated_rows = st.session_state.get("estimated_rows")
+if _estimated_rows is not None:
+    with st.expander("Amostragem Estatistica (opcional)", expanded=False):
+        _sampling_enabled = st.checkbox(
+            "Habilitar amostragem para exploracao",
+            value=st.session_state.get("setup_sampling_config", SamplingConfig()).enabled,
+            key="sampling_enabled_checkbox",
+            help=(
+                "Quando habilitada, queries de analise usam TABLESAMPLE BERNOULLI "
+                "para reduzir volumetria e custo. Regras GDQ finais operam sobre dados completos."
+            ),
+        )
+
+        if _sampling_enabled:
+            _confidence_options = {0.90: "90%", 0.95: "95%", 0.99: "99%"}
+            _prev_sampling = st.session_state.get("setup_sampling_config", SamplingConfig())
+
+            _samp_col1, _samp_col2 = st.columns(2)
+            with _samp_col1:
+                _confidence = st.selectbox(
+                    "Confianca:",
+                    options=list(_confidence_options.keys()),
+                    format_func=lambda x: _confidence_options[x],
+                    index=list(_confidence_options.keys()).index(_prev_sampling.confidence_level),
+                    key="sampling_confidence_select",
+                    help="Nivel de confianca estatistica para o calculo amostral.",
+                )
+            with _samp_col2:
+                _margin = st.slider(
+                    "Margem de erro:",
+                    min_value=1,
+                    max_value=10,
+                    value=int(_prev_sampling.margin_of_error * 100),
+                    format="%d%%",
+                    key="sampling_margin_slider",
+                    help="Margem de erro aceitavel (1% = mais preciso/mais caro, 10% = menos preciso/mais barato).",
+                )
+            _margin_float = _margin / 100.0
+
+            if _estimated_rows < MIN_POPULATION:
+                st.warning(
+                    f"Tabela pequena ({_estimated_rows:,} linhas) "
+                    f"-- amostragem desabilitada automaticamente (minimo: {MIN_POPULATION:,})."
+                )
+                _sampling_config = SamplingConfig(
+                    enabled=False,
+                    confidence_level=_confidence,
+                    margin_of_error=_margin_float,
+                    population_size=_estimated_rows,
+                )
+            else:
+                _sample_n = compute_sample_size(_estimated_rows, _confidence, _margin_float)
+                _sample_pct = compute_sample_pct(_estimated_rows, _confidence, _margin_float)
+
+                st.markdown(f"Populacao estimada: **{_estimated_rows:,}** linhas")
+
+                if _sample_pct is not None:
+                    st.markdown(
+                        f"Amostra calculada: ~**{_sample_n:,}** linhas "
+                        f"(BERNOULLI **{_sample_pct}%**)"
+                    )
+                    st.markdown(
+                        f"Reducao estimada de custo: ~**{100 - _sample_pct:.1f}%** (pode variar)"
+                    )
+                else:
+                    st.warning(
+                        "Margem/confianca exigem amostra grande demais "
+                        "-- amostragem nao sera efetiva com estes parametros."
+                    )
+
+                _sampling_config = SamplingConfig(
+                    enabled=True,
+                    confidence_level=_confidence,
+                    margin_of_error=_margin_float,
+                    population_size=_estimated_rows,
+                    sample_size=_sample_n,
+                    sample_pct=_sample_pct,
+                )
+
+            st.session_state["setup_sampling_config"] = _sampling_config
+        else:
+            st.session_state["setup_sampling_config"] = SamplingConfig(enabled=False)
 
 
 # ===================================================================

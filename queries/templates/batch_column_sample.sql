@@ -14,7 +14,8 @@ SELECT
   , COUNT("{{ col.name }}") as "{{ col.name }}__non_null"
   , {{ col.approx_distinct_expr }} as "{{ col.name }}__distinct"
 {% endfor %}
-FROM {{ table_ref }}
+FROM {{ table_ref }}{% if tablesample_clause %} {{ tablesample_clause }}{% endif %}
+
 WHERE {{ date_expression }} >= {{ date_lookback_expr }}
 {% if partition_filter %}
   AND {{ partition_filter }}

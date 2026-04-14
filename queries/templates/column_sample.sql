@@ -9,7 +9,8 @@ SELECT
   COUNT("{{ col }}") as non_null_count,
   {{ approx_distinct_expr }} as distinct_count,
   SUM(CASE WHEN TRY_CAST("{{ col }}" AS DOUBLE) IS NOT NULL THEN 1 ELSE 0 END) as numeric_cast_count
-FROM {{ table_ref }}
+FROM {{ table_ref }}{% if tablesample_clause %} {{ tablesample_clause }}{% endif %}
+
 WHERE {{ date_expression or '"' ~ temporal_col ~ '"' }} >= {{ date_lookback_expr }}
 {% if partition_filter %}
   AND {{ partition_filter }}

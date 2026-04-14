@@ -682,6 +682,17 @@ if "column_profiles" not in st.session_state:
 dataset_config = st.session_state["dataset_config"]
 profiles = st.session_state["column_profiles"]
 
+# --- Sampling indicator ---
+if dataset_config.is_sampling_active:
+    st.info(
+        f"Analise exploratoria com amostragem (BERNOULLI {dataset_config.sampling.sample_pct}%, "
+        f"~{dataset_config.sampling.sample_size:,} linhas, "
+        f"confianca {int(dataset_config.sampling.confidence_level * 100)}%, "
+        f"margem {int(dataset_config.sampling.margin_of_error * 100)}%). "
+        f"Contagens (RowCount, DistinctCount) usam dados completos. "
+        f"Regras GDQ operam sobre dados completos em producao."
+    )
+
 # Fingerprint para namespace de widgets e cache keys
 _fp = dataset_config.analysis_fingerprint()[:6]
 

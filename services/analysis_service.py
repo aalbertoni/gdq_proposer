@@ -191,6 +191,7 @@ class AnalysisService:
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
             date_filter=date_filter,
+            sample_pct=config.sampling.sample_pct if config.is_sampling_active else None,
         )
 
         df = self.client.execute_df(
@@ -269,6 +270,7 @@ class AnalysisService:
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
             date_filter=date_filter,
+            sample_pct=config.sampling.sample_pct if config.is_sampling_active else None,
         )
 
         df = self.client.execute_df(
@@ -538,6 +540,7 @@ class AnalysisService:
             partition_filter=partition_filter,
             reference_date=config.reference_date or "",
             date_filter=date_filter,
+            sample_pct=config.sampling.sample_pct if config.is_sampling_active else None,
         )
 
         df = self.client.execute_df(

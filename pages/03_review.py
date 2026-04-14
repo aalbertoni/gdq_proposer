@@ -303,8 +303,9 @@ if _enabled_sels:
     # Coluna de date filter (usada no WHERE das regras filtradas)
     if "dataset_config" in st.session_state:
         _dc = st.session_state["dataset_config"]
-        if _dc.gdq_date_filter_expr:
-            _dm = _col_pattern.match(_dc.gdq_date_filter_expr.strip())
+        _date_expr = getattr(_dc, "gdq_date_filter_expr", None)
+        if _date_expr:
+            _dm = _col_pattern.match(_date_expr.strip())
             if _dm:
                 _all_columns.add(_dm.group(1).upper())
 
@@ -337,6 +338,18 @@ if len(enabled_rules) >= 2:
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
+
+# --- Sampling warning ---
+_ds_config = st.session_state.get("dataset_config")
+if _ds_config and _ds_config.is_sampling_active:
+    st.warning(
+        "A analise exploratoria usou amostragem. Os thresholds propostos sao aproximacoes. "
+        "Recomendado: desabilitar amostragem e recalibrar antes de exportar para producao."
+    )
+    st.info(
+        "Regras GDQ exportadas referem a tabela original. "
+        "Em producao, avg(last(N)) e std(last(N)) operam sobre dados completos."
+    )
 
 st.header("Exportar")
 

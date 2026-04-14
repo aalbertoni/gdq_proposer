@@ -25,6 +25,21 @@ class QueryBuilder:
             keep_trailing_newline=True,
         )
 
+    def _tablesample_clause(self, sample_pct: float | None) -> str:
+        """Gera cláusula TABLESAMPLE para injeção nos templates.
+
+        Args:
+            sample_pct: Porcentagem para BERNOULLI (0 < pct <= 100), ou None.
+
+        Returns:
+            String TABLESAMPLE adaptada ao dialeto, ou vazio.
+        """
+        if sample_pct is None:
+            return ""
+        if not (0 < sample_pct <= 100):
+            raise ValueError(f"sample_pct deve estar entre 0 e 100, recebido: {sample_pct}")
+        return adapt_function("TABLESAMPLE", self.dialect, pct=sample_pct)
+
     def date_lookback_expr(self, n: int, reference_date: str = "") -> str:
         """Gera expressao de lookback temporal.
 
@@ -188,6 +203,7 @@ class QueryBuilder:
         base_filter: str = "",
         partition_filter: str = "",
         reference_date: str = "",
+        sample_pct: float | None = None,
     ) -> str:
         """Query para profiling de uma coluna (contagens + cast numérico)."""
         template = self.env.get_template("column_sample.sql")
@@ -204,6 +220,7 @@ class QueryBuilder:
             ),
             partition_filter=partition_filter,
             base_filter=base_filter,
+            tablesample_clause=self._tablesample_clause(sample_pct),
         )
 
     def build_batch_column_sample(
@@ -218,6 +235,7 @@ class QueryBuilder:
         base_filter: str = "",
         partition_filter: str = "",
         reference_date: str = "",
+        sample_pct: float | None = None,
     ) -> str:
         """Batch profiling de múltiplas colunas em uma única query.
 
@@ -254,6 +272,7 @@ class QueryBuilder:
             date_lookback_expr=self.date_lookback_expr(sample_periods, reference_date),
             partition_filter=partition_filter,
             base_filter=base_filter,
+            tablesample_clause=self._tablesample_clause(sample_pct),
         )
 
     def build_row_count_history(
@@ -334,6 +353,7 @@ class QueryBuilder:
         partition_filter: str = "",
         reference_date: str = "",
         date_filter: str = "",
+        sample_pct: float | None = None,
     ) -> str:
         """Query para distribuicao de valores categoricos por periodo."""
         template = self.env.get_template("categorical_distribution.sql")
@@ -347,6 +367,7 @@ class QueryBuilder:
             base_filter=base_filter,
             partition_filter=partition_filter,
             date_filter=date_filter,
+            tablesample_clause=self._tablesample_clause(sample_pct),
         )
 
     def build_categorical_domain(
@@ -388,6 +409,7 @@ class QueryBuilder:
         partition_filter: str = "",
         reference_date: str = "",
         date_filter: str = "",
+        sample_pct: float | None = None,
     ) -> str:
         """Query para análise histórica de coluna numérica."""
         template = self.env.get_template("numeric_history.sql")
@@ -414,6 +436,7 @@ class QueryBuilder:
             base_filter=base_filter,
             partition_filter=partition_filter,
             date_filter=date_filter,
+            tablesample_clause=self._tablesample_clause(sample_pct),
         )
 
     def build_uniqueness_check(

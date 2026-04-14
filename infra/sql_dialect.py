@@ -40,6 +40,10 @@ DIALECT_FUNCTIONS: dict[str, dict[SQLDialect, str]] = {
         SQLDialect.ATHENA: '"{schema}"."{table}"',
         SQLDialect.DUCKDB: '"{table}"',
     },
+    "TABLESAMPLE": {
+        SQLDialect.ATHENA: "TABLESAMPLE BERNOULLI({pct})",
+        SQLDialect.DUCKDB: "TABLESAMPLE BERNOULLI({pct} PERCENT)",
+    },
 }
 
 

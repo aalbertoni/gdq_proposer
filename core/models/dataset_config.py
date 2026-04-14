@@ -16,6 +16,7 @@ from core.models.enums import (
     LookbackMode,
     PartitionMethod,
 )
+from core.models.sampling_config import SamplingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,9 @@ class DatasetConfig:
 
     # === Data ancora ===
     reference_date: Optional[str] = None
+
+    # === Amostragem estatística ===
+    sampling: SamplingConfig = field(default_factory=SamplingConfig)
 
     # === Colunas selecionadas ===
     selected_columns: list[str] = field(default_factory=list)
@@ -199,6 +203,11 @@ class DatasetConfig:
         return len(self.partition_columns) > 1
 
     @property
+    def is_sampling_active(self) -> bool:
+        """True se amostragem estatística está habilitada e configurada."""
+        return self.sampling.enabled and self.sampling.sample_pct is not None
+
+    @property
     def grain_policy(self):
         """Policy de thresholds adaptativos para a granularidade configurada."""
         from core.models.grain_policy import get_grain_policy
@@ -243,4 +252,8 @@ class DatasetConfig:
             ",".join(sorted(self.selected_columns or [])),
             ",".join(sorted(self.unique_key_columns or [])),
         ]
+        # Incluir sampling no fingerprint apenas quando ativo
+        # (default desabilitado não altera fingerprint de configs existentes)
+        if self.sampling.enabled:
+            parts.append(f"sampling:{self.sampling.confidence_level}:{self.sampling.margin_of_error}")
         return hashlib.sha256("|".join(parts).encode()).hexdigest()[:12]
